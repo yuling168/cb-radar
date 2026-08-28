@@ -1,6 +1,8 @@
-# 台股可轉債每日行情 Collector（MVP）
+# CB Radar — 台股可轉債每日行情
 
-本專案只從 TPEx 官方來源抓取與保存台灣可轉換公司債每日行情，不包含雷達策略、轉換價值、溢價率、通知或 Web API。
+目前 Phase 1 從 TPEx 官方來源抓取與保存台灣可轉換公司債每日行情，並提供 GitHub Pages 靜態 Dashboard。現階段仍不包含雷達策略、轉換價值、溢價率、通知或 Web API。
+
+長期交接與目前進度請先閱讀 [`PROJECT_STATUS.md`](PROJECT_STATUS.md)，開發規則見 [`AGENTS.md`](AGENTS.md)，Dashboard 現況規格見 [`SPEC/DASHBOARD_SPEC.md`](SPEC/DASHBOARD_SPEC.md)。
 
 ## 安裝
 
@@ -90,3 +92,11 @@ LIMIT 20;
 ```bash
 pytest -q
 ```
+
+## 自動化與 Dashboard
+
+`.github/workflows/daily-collector.yml` 於星期一至星期五台灣時間 20:30 執行 Collector，成功後以 `scripts/build_dashboard.py` 從既有 SQLite 產生 `docs/data.json`。有追蹤輸出變更時，GitHub Actions 才 commit/push 回 `main`。
+
+Dashboard：<https://yuling168.github.io/cb-radar/>
+
+GitHub Pages 的瀏覽器端只載入 `docs/data.json`，不直接開啟 SQLite binary。頁面支援日期篩選、CB 名稱／代號搜尋、摘要與欄位排序。
