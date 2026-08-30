@@ -6,7 +6,9 @@ CB Radar 的目標是建立台灣可轉換公司債（CB）資料與分析系統
 
 ## 2. Current Phase
 
-目前是 **Phase 1：Daily CB Market Data Collection + Dashboard**，第一階段已完成並上線。第二階段及策略功能尚未實作。
+**Phase 1：Daily CB Market Data Collection + Dashboard** 已完成並上線。
+
+目前進入 **Phase 2：CB Basic Data Layer**。官方 TPEx／MOPS master collector、schema 與首批 5 檔驗證資料已完成，但尚未納入既有每日 GitHub Actions；策略功能仍未實作。
 
 ## 3. Current Data Flow
 
@@ -158,3 +160,21 @@ GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每�
 8. git history
 
 不得只根據使用者口述直接大幅修改架構；描述與 repository 不一致時，以實際程式、schema、workflow 與測試為準並回報差異。
+
+## 14. Phase 2 CB Master Data
+
+- Collector：`master_collector.py`。
+- 規格：`SPEC/CB_MASTER_SPEC.md`。
+- 官方發行資料：TPEx OpenAPI `bond_ISSBD5_data`。
+- 現行債與 MOPS link：TPEx `bond/convSearch`。
+- 下市 lifecycle：TPEx `bond/convDelist`；正式下市日到達後不再列入 active universe，但歷史 master、價格與餘額資料保留。
+- 發行張數、歷史轉換價與月餘額：MOPS `t120sg01` 月申報頁。
+- `cb_master.balance_amount`／`balance_date`：固定採同一筆 TPEx `OutstandingAmount`／`Date`，代表最新官方狀態；不得以 MOPS 月底或 Collector 執行日取代。MOPS `monyr_reg` 僅為報表月份，只有已完整結束月份可使用月底並寫入 `cb_monthly_balance`；未完成月份不得推定月底。
+- 最新有效轉換價補強：MOPS `t108sb08_1` 轉換價格變更公告；僅套用執行日已生效事件。
+- 是否有擔保：TPEx `Guaranteed` 與 `GuaranteeDescription` 結構化欄位。
+- 普通 CB 篩選：以 MOPS 官方債券中文名稱區分「轉換公司債」與「交換公司債」，後者排除。
+- `cb_master.current_conversion_price_effective_date` 與最新有效價格由同一事件同步更新。
+- 新增資料表：`cb_master`、`conversion_price_events`、`cb_monthly_balance`。
+- 正式 DB 目前先保存 5 檔端到端驗證資料；執行時不帶 `--codes` 才會處理官方來源中的全部現行新台幣 CB。
+- Phase 2 尚未加入 GitHub Actions，也尚未開發任何策略。
+- 月申報可能落後已生效公告；Collector 會以 MOPS 官方轉換價格變更公告補強，並以生效日決定目前價格。

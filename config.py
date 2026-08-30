@@ -11,3 +11,8 @@ TPEX_SOURCE = "TPEx:RSta0113"
 HTTP_TIMEOUT_SECONDS = 30
 LOOKBACK_DAYS = 14
 
+TPEX_CB_ISSUE_URL = f"{TPEX_BASE_URL}/openapi/v1/bond_ISSBD5_data"
+TPEX_CB_LISTED_URL = f"{TPEX_BASE_URL}/www/zh-tw/bond/convSearch"
+TPEX_CB_DELISTED_URL = f"{TPEX_BASE_URL}/www/zh-tw/bond/convDelist"
+MOPS_BASE_URL = "https://mopsov.twse.com.tw"
+MOPS_CB_ANNOUNCEMENT_URL = f"{MOPS_BASE_URL}/mops/web/ajax_t108sb08_1"

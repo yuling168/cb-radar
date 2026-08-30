@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -14,6 +15,53 @@ CREATE TABLE IF NOT EXISTS cb_daily (
     collected_at TEXT NOT NULL,
     PRIMARY KEY (trade_date, cb_code)
 );
+
+CREATE TABLE IF NOT EXISTS cb_master (
+    cb_code TEXT PRIMARY KEY,
+    cb_name TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    issue_date TEXT NOT NULL,
+    maturity_date TEXT NOT NULL,
+    put_date TEXT,
+    issue_units INTEGER,
+    issue_amount INTEGER NOT NULL,
+    balance_amount INTEGER,
+    balance_date TEXT,
+    current_conversion_price REAL,
+    current_conversion_price_effective_date TEXT,
+    is_secured INTEGER CHECK (is_secured IN (0, 1) OR is_secured IS NULL),
+    delisting_date TEXT,
+    delisting_reason TEXT CHECK (
+        delisting_reason IN ('提前贖回', '到期', '已下市')
+        OR delisting_reason IS NULL
+    ),
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    collected_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversion_price_events (
+    cb_code TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    conversion_price REAL NOT NULL,
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, effective_date),
+    FOREIGN KEY (cb_code) REFERENCES cb_master(cb_code)
+);
+
+CREATE TABLE IF NOT EXISTS cb_monthly_balance (
+    cb_code TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    balance_amount INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, year_month),
+    FOREIGN KEY (cb_code) REFERENCES cb_master(cb_code)
+);
 """
 
 
@@ -22,9 +70,195 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
-    connection.execute(SCHEMA)
+    connection.executescript(SCHEMA)
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(cb_master)")
+    }
+    if "issue_units" not in columns:
+        connection.execute("ALTER TABLE cb_master ADD COLUMN issue_units INTEGER")
+    if "is_secured" not in columns:
+        connection.execute(
+            "ALTER TABLE cb_master ADD COLUMN is_secured INTEGER "
+            "CHECK (is_secured IN (0, 1) OR is_secured IS NULL)"
+        )
+    if "current_conversion_price_effective_date" not in columns:
+        connection.execute(
+            "ALTER TABLE cb_master ADD COLUMN "
+            "current_conversion_price_effective_date TEXT"
+        )
+    if "balance_date" not in columns:
+        connection.execute("ALTER TABLE cb_master ADD COLUMN balance_date TEXT")
+    if "delisting_date" not in columns:
+        connection.execute("ALTER TABLE cb_master ADD COLUMN delisting_date TEXT")
+    if "delisting_reason" not in columns:
+        connection.execute(
+            "ALTER TABLE cb_master ADD COLUMN delisting_reason TEXT "
+            "CHECK (delisting_reason IN ('提前贖回', '到期', '已下市') "
+            "OR delisting_reason IS NULL)"
+        )
     connection.commit()
     return connection
+
+
+def upsert_master_data(
+    connection: sqlite3.Connection,
+    masters: Iterable[Mapping[str, object]],
+    events: Iterable[Mapping[str, object]],
+    balances: Iterable[Mapping[str, object]],
+    excluded_codes: Iterable[str] = (),
+    lifecycle_updates: Iterable[Mapping[str, object]] = (),
+    as_of_date: date | None = None,
+) -> tuple[int, int, int]:
+    master_rows = [dict(row) for row in masters]
+    if as_of_date is not None:
+        for row in master_rows:
+            balance_date = row.get("balance_date")
+            if balance_date is not None and str(balance_date) > as_of_date.isoformat():
+                raise ValueError(
+                    f"balance_date for {row['cb_code']} is after run date: "
+                    f"{balance_date} > {as_of_date.isoformat()}"
+                )
+    for row in master_rows:
+        row.setdefault("balance_date", None)
+        row.setdefault("delisting_date", None)
+        row.setdefault("delisting_reason", None)
+    event_rows = list(events)
+    balance_rows = list(balances)
+    if as_of_date is not None:
+        for row in balance_rows:
+            year_month = str(row["year_month"])
+            date.fromisoformat(f"{year_month}-01")
+            if year_month >= as_of_date.strftime("%Y-%m"):
+                raise ValueError(
+                    f"monthly balance for {row['cb_code']} is not from a completed "
+                    f"month: {year_month} at {as_of_date.isoformat()}"
+                )
+    excluded_rows = [(code,) for code in excluded_codes]
+    lifecycle_rows = list(lifecycle_updates)
+    with connection:
+        connection.executemany(
+            "DELETE FROM conversion_price_events WHERE cb_code = ?", excluded_rows
+        )
+        connection.executemany(
+            "DELETE FROM cb_monthly_balance WHERE cb_code = ?", excluded_rows
+        )
+        connection.executemany(
+            "DELETE FROM cb_master WHERE cb_code = ?", excluded_rows
+        )
+        connection.executemany(
+            """
+            INSERT INTO cb_master (
+                cb_code, cb_name, stock_code, stock_name, issue_date,
+                maturity_date, put_date, issue_units, issue_amount, balance_amount,
+                balance_date,
+                current_conversion_price, current_conversion_price_effective_date,
+                is_secured, delisting_date, delisting_reason, source, source_url,
+                collected_at
+            ) VALUES (
+                :cb_code, :cb_name, :stock_code, :stock_name, :issue_date,
+                :maturity_date, :put_date, :issue_units, :issue_amount, :balance_amount,
+                :balance_date,
+                :current_conversion_price, :current_conversion_price_effective_date,
+                :is_secured, :delisting_date, :delisting_reason, :source,
+                :source_url, :collected_at
+            )
+            ON CONFLICT(cb_code) DO UPDATE SET
+                cb_name = excluded.cb_name,
+                stock_code = excluded.stock_code,
+                stock_name = excluded.stock_name,
+                issue_date = excluded.issue_date,
+                maturity_date = excluded.maturity_date,
+                put_date = excluded.put_date,
+                issue_units = excluded.issue_units,
+                issue_amount = excluded.issue_amount,
+                balance_amount = excluded.balance_amount,
+                balance_date = excluded.balance_date,
+                current_conversion_price = excluded.current_conversion_price,
+                current_conversion_price_effective_date =
+                    excluded.current_conversion_price_effective_date,
+                is_secured = excluded.is_secured,
+                delisting_date = COALESCE(excluded.delisting_date, cb_master.delisting_date),
+                delisting_reason = CASE
+                    WHEN excluded.delisting_reason IS NULL THEN cb_master.delisting_reason
+                    WHEN cb_master.delisting_reason IS NULL THEN excluded.delisting_reason
+                    WHEN cb_master.delisting_reason = '已下市'
+                         AND excluded.delisting_reason != '已下市'
+                    THEN excluded.delisting_reason
+                    ELSE cb_master.delisting_reason
+                END,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at
+            """,
+            master_rows,
+        )
+        connection.executemany(
+            """
+            UPDATE cb_master
+            SET delisting_date = COALESCE(:delisting_date, delisting_date),
+                delisting_reason = CASE
+                    WHEN :delisting_reason IS NULL THEN delisting_reason
+                    WHEN delisting_reason IS NULL THEN :delisting_reason
+                    WHEN delisting_reason = '已下市'
+                         AND :delisting_reason != '已下市'
+                    THEN :delisting_reason
+                    ELSE delisting_reason
+                END
+            WHERE cb_code = :cb_code
+            """,
+            lifecycle_rows,
+        )
+        connection.executemany(
+            """
+            INSERT INTO conversion_price_events (
+                cb_code, effective_date, conversion_price,
+                source, source_url, collected_at
+            ) VALUES (
+                :cb_code, :effective_date, :conversion_price,
+                :source, :source_url, :collected_at
+            )
+            ON CONFLICT(cb_code, effective_date) DO UPDATE SET
+                conversion_price = excluded.conversion_price,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at
+            """,
+            event_rows,
+        )
+        connection.executemany(
+            """
+            INSERT INTO cb_monthly_balance (
+                cb_code, year_month, balance_amount,
+                source, source_url, collected_at
+            ) VALUES (
+                :cb_code, :year_month, :balance_amount,
+                :source, :source_url, :collected_at
+            )
+            ON CONFLICT(cb_code, year_month) DO UPDATE SET
+                balance_amount = excluded.balance_amount,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                collected_at = excluded.collected_at
+            """,
+            balance_rows,
+        )
+    return len(master_rows), len(event_rows), len(balance_rows)
+
+
+def conversion_price_on(
+    connection: sqlite3.Connection, cb_code: str, on_date: str
+) -> float | None:
+    row = connection.execute(
+        """
+        SELECT conversion_price
+        FROM conversion_price_events
+        WHERE cb_code = ? AND effective_date <= ?
+        ORDER BY effective_date DESC
+        LIMIT 1
+        """,
+        (cb_code, on_date),
+    ).fetchone()
+    return None if row is None else float(row[0])
 
 
 def upsert_daily(
@@ -77,4 +311,3 @@ def query_company_cbs(
         """,
         params,
     ).fetchall()
-

@@ -32,6 +32,18 @@ python collector.py --date 2026-08-28
 
 預設資料庫為 `data/cb_history.db`，可用 `--database` 指定其他路徑。
 
+CB 基本發行資料使用獨立入口，預設處理 TPEx 官方來源中所有仍掛牌的新台幣 CB：
+
+```bash
+python master_collector.py
+```
+
+驗證特定現行 CB 可使用 `--codes`，例如：
+
+```bash
+python master_collector.py --codes 11011,12561
+```
+
 ## 官方資料來源與處理方式
 
 - 報表索引：`https://www.tpex.org.tw/www/zh-tw/bond/cbDaily`
@@ -76,6 +88,18 @@ CREATE TABLE IF NOT EXISTS cb_daily (
 ```
 
 主鍵使同日同代號重跑時更新原列，不產生重複資料。
+
+Phase 2 另建立：
+
+- `cb_master`：CB 基本資料（含歷史已下市債）、發行張數、是否有擔保、最新餘額、最新有效轉換價與下市 lifecycle。
+- `conversion_price_events`：依 `(cb_code, effective_date)` 保存轉換價歷史。
+- `cb_monthly_balance`：依 `(cb_code, year_month)` 保存官方月餘額。
+
+`cb_master.balance_amount` 與 `balance_date` 永遠保存同一筆 TPEx 官方資料的 `OutstandingAmount` 與 `Date`；即使 TPEx 金額與 MOPS 月底餘額相同，master 日期仍使用 TPEx `Date`，也不得以 Collector 執行日代替。MOPS `monyr_reg` 只代表報表月份，僅已完整結束的月份可寫入 `cb_monthly_balance` 並以月底作為正式歷史 snapshot 日期；未完成月份不得推定月底。顯示層以每檔官方發行總額與發行張數驗證單張面額後，換算並顯示「餘額張數」；剩餘比率仍使用 `balance_amount / issue_amount`。
+
+基本資料顯示時，發行總額以 `issue_amount / 100000000` 顯示億元；擔保顯示為「有／無／未知」；最新轉換價格所對應日期顯示為「轉換價格生效日」；`balance_date` 顯示為「餘額日期」。`delisting_date`／`delisting_reason` 分別顯示為「下市日期／下市原因」，其 `NULL` 一律留白。MOPS 官方中文名稱屬於交換公司債者不納入普通 CB master；已下市普通 CB 則保留作歷史研究，且不屬於執行日的 active universe。
+
+完整欄位、來源與驗證規則見 [`SPEC/CB_MASTER_SPEC.md`](SPEC/CB_MASTER_SPEC.md)。
 
 查詢某 CB 最近 20 筆：
 
