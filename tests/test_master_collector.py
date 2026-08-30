@@ -27,6 +27,7 @@ from master_collector import (
     parse_mops_conversion_announcements,
     parse_mops_rules_conversion_events,
     parse_mops_snapshot,
+    parse_tdcc_book_entries,
     parse_tpex_issues,
     parse_tpex_delistings,
     parse_tpex_mops_links,
@@ -54,6 +55,15 @@ ISSUE_ROW = {
     "GuaranteeDescription": "",
     "Conversion/ExchangePriceAtIssuance": "109.5000",
 }
+TDCC_CSV = """資料日期,證券代號,證券名稱,市場別,證券種類,登錄數額
+20260827,30882,艾訊二,上櫃,可轉債(千股),1683
+"""
+TDCC_REGRESSION_CSV = """資料日期,證券代號,證券名稱,市場別,證券種類,登錄數額
+20260827,31311,弘塑一,上櫃,可轉債(千股),1968
+20260827,31312,弘塑二,上櫃,可轉債(千股),3013
+20260827,37171,聯嘉投控一,上櫃,可轉債(千股),6340
+20260827,0050,元大台灣50,上市,普通(千股),123
+"""
 MOPS_URL = (
     "https://mopsov.twse.com.tw/mops/web/t120sg01?bond_id=30882"
     "&issuer_stock_code=3088&monyr_reg=202607"
@@ -83,11 +93,9 @@ ANNOUNCEMENT_HTML = """
 def test_tpex_master_fields_are_normalized():
     row = parse_tpex_issues([ISSUE_ROW])["30882"]
     assert row["issue_date"] == "2023-08-28"
-    assert row["tpex_data_date"] == "2026-08-28"
     assert row["maturity_date"] == "2026-08-28"
     assert row["put_date"] is None
     assert row["issue_amount"] == 800_000_000
-    assert row["balance_amount"] == 168_300_000
     assert row["is_secured"] == 0
     assert row["issue_conversion_price"] == 109.5
     assert row["series_number"] == 2
@@ -103,36 +111,30 @@ def test_mops_latest_price_and_monthly_balance_are_parsed():
     assert row["instrument_kind"] == "convertible"
 
 
-def test_balance_date_uses_tpex_date_when_mops_balance_matches():
-    master = parse_tpex_issues([ISSUE_ROW])["30882"]
-    assert select_current_balance(master, date(2026, 8, 30)) == (
-        168_300_000, "2026-08-28"
+def test_tdcc_book_entry_balance_uses_csv_amount_and_date():
+    tdcc_balance = parse_tdcc_book_entries(TDCC_CSV)["30882"]
+    assert select_current_balance(tdcc_balance, date(2026, 8, 30)) == (
+        168_300_000, "2026-08-27"
     )
     assert month_end_date("2024-02") == "2024-02-29"
 
 
-def test_newer_changed_tpex_balance_uses_confirmed_tpex_data_date():
-    master = parse_tpex_issues([dict(ISSUE_ROW, Date="20260829", OutstandingAmount="168200000")])["30882"]
-    assert select_current_balance(master, date(2026, 8, 30)) == (
-        168_200_000, "2026-08-29"
-    )
-
-
-def test_tpex_date_is_used_even_when_older_than_mops_month_end():
-    master = parse_tpex_issues([dict(ISSUE_ROW, Date="20260730", OutstandingAmount="168200000")])["30882"]
-    assert select_current_balance(master, date(2026, 8, 30)) == (
-        168_200_000, "2026-07-30"
-    )
+def test_tdcc_book_entry_regression_balances_are_converted_to_dollars():
+    balances = parse_tdcc_book_entries(TDCC_REGRESSION_CSV)
+    assert {
+        code: (row["balance_amount"], row["balance_date"])
+        for code, row in balances.items()
+    } == {
+        "31311": (196_800_000, "2026-08-27"),
+        "31312": (301_300_000, "2026-08-27"),
+        "37171": (634_000_000, "2026-08-27"),
+    }
 
 
 def test_incomplete_mops_month_is_not_a_verified_month_end():
-    master = parse_tpex_issues([ISSUE_ROW])["30882"]
     august = parse_mops_snapshot(MOPS_HTML, MOPS_URL.replace("202607", "202608"))
     assert not is_complete_reporting_month("2026-08", date(2026, 8, 30))
     assert august["year_month"] == "2026-08"
-    assert select_current_balance(master, date(2026, 8, 30)) == (
-        168_300_000, "2026-08-28"
-    )
 
 
 def test_incomplete_mops_month_is_not_returned_as_monthly_history():
@@ -153,17 +155,10 @@ def test_incomplete_mops_month_is_not_returned_as_monthly_history():
     assert balances == []
 
 
-def test_new_issue_without_completed_mops_month_uses_tpex_date():
-    master = parse_tpex_issues([dict(ISSUE_ROW, Date="20260828")])["30882"]
-    assert select_current_balance(master, date(2026, 8, 30)) == (
-        168_300_000, "2026-08-28"
-    )
-
-
-def test_future_tpex_balance_date_is_rejected():
-    master = parse_tpex_issues([dict(ISSUE_ROW, Date="20260831")])["30882"]
+def test_future_tdcc_balance_date_is_rejected():
+    tdcc_balance = parse_tdcc_book_entries(TDCC_CSV.replace("20260827", "20260831"))["30882"]
     with pytest.raises(MasterFormatError, match="after run date"):
-        select_current_balance(master, date(2026, 8, 30))
+        select_current_balance(tdcc_balance, date(2026, 8, 30))
 
 
 def test_issue_units_uses_official_mops_count():
@@ -444,7 +439,7 @@ def test_official_terms_support_gregorian_initial_price_without_adjustment(monke
 
 def test_required_official_field_missing_fails_loudly():
     malformed = dict(ISSUE_ROW)
-    malformed.pop("OutstandingAmount")
+    malformed.pop("IssueAmount")
     with pytest.raises(MasterFormatError, match="required fields changed"):
         parse_tpex_issues([malformed])
     with pytest.raises(MasterFormatError, match="MOPS required field missing"):
@@ -748,6 +743,8 @@ class IncrementalSession:
                 "stat": "ok",
                 "tables": [{"fields": TPEX_DELISTED_FIELDS, "data": []}],
             })
+        if "opendata.tdcc.com.tw/getOD.ashx?id=1-16" in url:
+            return FakeResponse(text=TDCC_CSV)
         return FakeResponse(text=MOPS_HTML)
 
     def post(self, url, **_kwargs):
@@ -797,6 +794,7 @@ def test_incremental_run_skips_existing_mops_history_and_reports_request_counts(
     )
 
     assert result["tpex_requests"] == 3
+    assert result["tdcc_requests"] == 1
     assert result["mops_detail_requests"] == 0
     assert result["mops_announcement_requests"] == 1
     assert result["bootstrap_cbs"] == 0
@@ -807,7 +805,7 @@ def test_incremental_run_skips_existing_mops_history_and_reports_request_counts(
         ).fetchone()[0] == 3
         assert connection.execute(
             "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
-        ).fetchone()[0] == "2026-08-28"
+        ).fetchone()[0] == "2026-08-27"
 
 
 def test_incremental_run_fetches_only_missing_latest_completed_month(tmp_path):

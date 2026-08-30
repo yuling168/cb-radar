@@ -1,6 +1,7 @@
 .venv*/
 __pycache__/
 .pytest_cache/
+.pytest-dashboard-verify/
 .pytest-tmp*/
 .pytest-zero-volume/
 tmp/

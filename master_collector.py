@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import csv
 from dataclasses import dataclass
 from decimal import Decimal
 import html
-from io import BytesIO
+from io import BytesIO, StringIO
 import json
 import re
 import sqlite3
@@ -31,12 +32,12 @@ from config import (
     TPEX_CB_DELISTED_URL,
     TPEX_CB_ISSUE_URL,
     TPEX_CB_LISTED_URL,
+    TDCC_BOOK_ENTRY_URL,
 )
 from db import connect, upsert_master_data
 
 
 TPEX_REQUIRED_FIELDS = {
-    "Date",
     "IssuerCode",
     "IssuerName",
     "BondCode",
@@ -45,7 +46,6 @@ TPEX_REQUIRED_FIELDS = {
     "IssueDate",
     "MaturityDate",
     "IssueAmount",
-    "OutstandingAmount",
     "ShortName",
     "ListingStatus",
     "PutOptionDate",
@@ -56,7 +56,7 @@ TPEX_REQUIRED_FIELDS = {
 }
 TPEX_LIST_FIELDS = ["發行機構代碼", "發行機構名稱", "債券名稱", "掛牌日期", "發行資料"]
 TPEX_DELISTED_FIELDS = ["代碼", "簡稱", "下櫃日期"]
-MASTER_SOURCE = "TPEx:bond_ISSBD5_data+MOPS:t120sg01+t108sb08_1"
+MASTER_SOURCE = "TPEx:bond_ISSBD5_data+MOPS:t120sg01+t108sb08_1+TDCC:bookEntry"
 MOPS_SOURCE = "MOPS:t120sg01"
 MOPS_ANNOUNCEMENT_SOURCE = "MOPS:t108sb08_1"
 TPEX_ISSUE_SOURCE = "TPEx:bond_ISSBD5_data"
@@ -74,6 +74,7 @@ class MopsNoDataError(MasterFormatError):
 @dataclass
 class RequestCounts:
     tpex: int = 0
+    tdcc: int = 0
     mops_detail: int = 0
     mops_announcement: int = 0
 
@@ -174,15 +175,11 @@ def parse_tpex_issues(payload: object) -> dict[str, dict[str, object]]:
             "stock_code": str(raw["IssuerCode"]).strip(),
             "stock_name": str(raw["IssuerName"]).strip(),
             "issue_date": _parse_yyyymmdd(str(raw["IssueDate"]), "IssueDate"),
-            "tpex_data_date": _parse_yyyymmdd(str(raw["Date"]), "TPEx Date"),
             "maturity_date": _parse_yyyymmdd(str(raw["MaturityDate"]), "MaturityDate"),
             "put_date": _parse_yyyymmdd(put_raw, "PutOptionDate") if put_raw else None,
             "issue_amount": _positive_int(str(raw["IssueAmount"]), "IssueAmount"),
             "tpex_reported_issue_amount": _positive_int(
                 str(raw["IssueAmount"]), "IssueAmount"
-            ),
-            "balance_amount": _positive_int(
-                str(raw["OutstandingAmount"]), "OutstandingAmount", allow_zero=True
             ),
             "is_secured": is_secured,
             "issue_conversion_price": _positive_float(
@@ -277,19 +274,56 @@ def is_complete_reporting_month(year_month: str, as_of: date) -> bool:
     return month_end_date(year_month) < as_of.isoformat()
 
 
+def parse_tdcc_book_entries(content: str) -> dict[str, dict[str, object]]:
+    """Parse TDCC's current book-entry CSV for all convertible bonds."""
+    reader = csv.DictReader(StringIO(content.lstrip("\ufeff")))
+    required_fields = {
+        "資料日期", "證券代號", "證券名稱", "市場別", "證券種類", "登錄數額",
+    }
+    if reader.fieldnames is None or not required_fields.issubset(reader.fieldnames):
+        raise MasterFormatError("TDCC book-entry endpoint required fields changed")
+
+    parsed: dict[str, dict[str, object]] = {}
+    for row in reader:
+        if not isinstance(row, dict):
+            raise MasterFormatError("TDCC book-entry endpoint contains a malformed row")
+        security_type = str(row["證券種類"] or "").strip()
+        if not security_type.startswith("可轉債"):
+            continue
+        cb_code = str(row["證券代號"] or "").strip()
+        if not cb_code:
+            raise MasterFormatError("TDCC convertible-bond row is missing a code")
+        if cb_code in parsed:
+            raise MasterFormatError(f"TDCC book-entry response has duplicate CB code: {cb_code}")
+        units = _positive_int(
+            str(row["登錄數額"] or ""), "TDCC 登錄數額", allow_zero=True
+        )
+        parsed[cb_code] = {
+            "cb_code": cb_code,
+            "cb_name": str(row["證券名稱"] or "").strip(),
+            "balance_amount": units * 100_000,
+            "balance_date": _parse_yyyymmdd(
+                str(row["資料日期"] or ""), "TDCC 資料日期"
+            ),
+        }
+    if not parsed:
+        raise MasterFormatError("TDCC book-entry endpoint contained no convertible bonds")
+    return parsed
+
+
 def select_current_balance(
-    master: dict[str, object],
+    tdcc_balance: dict[str, object],
     as_of: date,
 ) -> tuple[int, str]:
-    """Return the TPEx balance and date from the same verified official row."""
-    tpex_balance = int(master["balance_amount"])
-    tpex_date = str(master["tpex_data_date"])
-    if tpex_date > as_of.isoformat():
+    """Return a TDCC book-entry balance and its verified as-of date."""
+    balance_amount = int(tdcc_balance["balance_amount"])
+    balance_date = str(tdcc_balance["balance_date"])
+    if balance_date > as_of.isoformat():
         raise MasterFormatError(
-            f"TPEx balance date for {master['cb_code']} is after run date: "
-            f"{tpex_date} > {as_of.isoformat()}"
+            f"TDCC balance date for {tdcc_balance['cb_code']} is after run date: "
+            f"{balance_date} > {as_of.isoformat()}"
         )
-    return tpex_balance, tpex_date
+    return balance_amount, balance_date
 
 
 def _url_for_month(url: str, year_month: str) -> str:
@@ -590,6 +624,20 @@ def _get_json(
         return json.loads(response.content.decode("utf-8-sig"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise MasterFormatError(f"Official endpoint returned invalid JSON: {url}") from exc
+
+
+def _get_tdcc_book_entries(
+    session: requests.Session, request_counts: RequestCounts | None = None
+) -> dict[str, dict[str, object]]:
+    if request_counts is not None:
+        request_counts.tdcc += 1
+    response = session.get(TDCC_BOOK_ENTRY_URL, timeout=HTTP_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    try:
+        content = response.content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise MasterFormatError("TDCC book-entry endpoint returned non-UTF-8 CSV") from exc
+    return parse_tdcc_book_entries(content)
 
 
 def _get_mops_snapshot(
@@ -964,6 +1012,7 @@ def _master_from_existing(
     tpex_master: dict[str, object],
     existing_master: dict[str, object],
     current_event: dict[str, object],
+    tdcc_balance: dict[str, object],
     delisting_date: str | None,
     collected_at: str,
     as_of: date,
@@ -978,15 +1027,18 @@ def _master_from_existing(
             "current_conversion_price_effective_date": current_event["effective_date"],
             "delisting_date": delisting_date,
             "delisting_reason": None,
-            "source": existing_master["source"],
-            "source_url": existing_master["source_url"],
+            "source": MASTER_SOURCE,
+            "source_url": (
+                f"{TPEX_CB_ISSUE_URL} | {TDCC_BOOK_ENTRY_URL} | "
+                f"{current_event['source_url']}"
+            ),
             "collected_at": collected_at,
         }
     )
     master["balance_amount"], master["balance_date"] = select_current_balance(
-        master, as_of
+        tdcc_balance, as_of
     )
-    for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount", "tpex_data_date"):
+    for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount"):
         master.pop(key, None)
     return master
 
@@ -1020,6 +1072,7 @@ def collect_master(
     delistings = parse_tpex_delistings(
         _get_json(http, TPEX_CB_DELISTED_URL, request_counts)
     )
+    tdcc_balances = _get_tdcc_book_entries(http, request_counts)
     source_selected = sorted(codes if codes is not None else issues.keys())
     missing = [code for code in source_selected if code not in issues]
     if missing:
@@ -1114,6 +1167,10 @@ def collect_master(
                     }
                 )
                 continue
+            if code not in tdcc_balances:
+                raise MasterFormatError(
+                    f"TDCC book-entry endpoint is missing active CB: {code}"
+                )
             cb_events, cb_balances, ambiguities = _history_for_cb(
                 http, master, current_url, snapshot, collected_at, as_of, request_counts
             )
@@ -1149,7 +1206,9 @@ def collect_master(
             )
             latest_event = latest_effective_event(list(event_by_date.values()), as_of)
             master["issue_amount"] = snapshot["issue_amount"]
-            master["balance_amount"], master["balance_date"] = select_current_balance(master, as_of)
+            master["balance_amount"], master["balance_date"] = select_current_balance(
+                tdcc_balances[code], as_of
+            )
             master.update(
                 {
                     "issue_units": snapshot["issue_units"],
@@ -1158,11 +1217,14 @@ def collect_master(
                     "delisting_date": delistings.get(code, {}).get("delisting_date"),
                     "delisting_reason": None,
                     "source": MASTER_SOURCE,
-                    "source_url": f"{TPEX_CB_ISSUE_URL} | {snapshot['source_url']} | {latest_event['source_url']}",
+                    "source_url": (
+                        f"{TPEX_CB_ISSUE_URL} | {TDCC_BOOK_ENTRY_URL} | "
+                        f"{snapshot['source_url']} | {latest_event['source_url']}"
+                    ),
                     "collected_at": collected_at,
                 }
             )
-            for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount", "tpex_data_date"):
+            for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount"):
                 master.pop(key, None)
             masters.append(master)
             events.extend(event_by_date.values())
@@ -1170,6 +1232,10 @@ def collect_master(
             continue
 
         existing_master = existing_state.masters[code]
+        if code not in tdcc_balances:
+            raise MasterFormatError(
+                f"TDCC book-entry endpoint is missing active CB: {code}"
+            )
         existing_events = existing_state.events.get(code, [])
         if not existing_events:
             raise MasterFormatError(
@@ -1227,6 +1293,7 @@ def collect_master(
         masters.append(
             _master_from_existing(
                 master, existing_master, latest_event,
+                tdcc_balances[code],
                 delistings.get(code, {}).get("delisting_date"), collected_at, as_of,
             )
         )
@@ -1246,6 +1313,7 @@ def collect_master(
         "conversion_price_events": event_count,
         "monthly_balance_records": balance_count,
         "tpex_requests": request_counts.tpex,
+        "tdcc_requests": request_counts.tdcc,
         "mops_detail_requests": request_counts.mops_detail,
         "mops_announcement_requests": request_counts.mops_announcement,
         "bootstrap_cbs": len(bootstrap_codes),
@@ -1285,7 +1353,7 @@ def main(argv: list[str] | None = None) -> int:
         "official_active_twd_bond_type_5", "ordinary_convertible_bonds",
         "exchangeable_bonds", "delisted_bonds", "other_excluded_types", "master_records",
         "conversion_price_events", "monthly_balance_records",
-        "tpex_requests", "mops_detail_requests", "mops_announcement_requests",
+        "tpex_requests", "tdcc_requests", "mops_detail_requests", "mops_announcement_requests",
         "bootstrap_cbs", "monthly_incremental_cbs", "database",
     ):
         print(f"{key}: {result[key]}")
