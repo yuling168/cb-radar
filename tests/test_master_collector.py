@@ -18,6 +18,7 @@ from master_collector import (
     _merge_conversion_events,
     _validate_ambiguous_monthly_prices,
     balance_units_for_display,
+    collect_phase2_modules,
     collect_master,
     latest_effective_event,
     issue_amount_yi_for_display,
@@ -33,6 +34,8 @@ from master_collector import (
     parse_tpex_mops_links,
     secured_for_display,
     select_current_balance,
+    sync_tdcc_balances,
+    sync_tpex_lifecycle,
 )
 
 
@@ -612,6 +615,108 @@ def test_upsert_rejects_balance_date_after_run_date(tmp_path):
             upsert_master_data(
                 connection, [master], [], [], as_of_date=date(2026, 8, 30)
             )
+
+
+def test_tdcc_module_updates_only_balance_fields_atomically(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    balances = parse_tdcc_book_entries(TDCC_CSV)
+    updated, warnings = sync_tdcc_balances(
+        db_path, balances, date(2026, 8, 30), "2026-08-30T00:00:00+00:00"
+    )
+    assert updated == 1
+    assert warnings == []
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT balance_amount, balance_date, current_conversion_price "
+            "FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()
+    assert tuple(row) == (168_300_000, "2026-08-27", 86.7)
+
+
+def test_tdcc_module_rejects_future_snapshot_without_update(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    balances = parse_tdcc_book_entries(TDCC_CSV.replace("20260827", "20260831"))
+    with pytest.raises(MasterFormatError, match="after run date"):
+        sync_tdcc_balances(
+            db_path, balances, date(2026, 8, 30), "2026-08-30T00:00:00+00:00"
+        )
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()[0] == "2026-07-31"
+
+
+def test_tdcc_missing_active_cb_clears_unverified_tpex_balance(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    with connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO cb_master (
+                cb_code, cb_name, stock_code, stock_name, issue_date, maturity_date,
+                put_date, issue_units, issue_amount, balance_amount, balance_date,
+                current_conversion_price, current_conversion_price_effective_date,
+                is_secured, source, source_url, collected_at
+            ) SELECT
+                '66722', '騰輝電子二KY', '6672', '騰輝電子-KY', issue_date, maturity_date,
+                put_date, issue_units, issue_amount, 8100000, '2026-08-30',
+                current_conversion_price, current_conversion_price_effective_date,
+                is_secured, source, source_url, collected_at
+            FROM cb_master WHERE cb_code = '30882'
+            """
+        )
+    _updated, warnings = sync_tdcc_balances(
+        db_path, parse_tdcc_book_entries(TDCC_CSV), date(2026, 8, 30),
+        "2026-08-30T00:00:00+00:00",
+    )
+    assert warnings == ["active CB missing from TDCC data: 66722"]
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT balance_amount, balance_date FROM cb_master WHERE cb_code = '66722'"
+        ).fetchone()
+    assert tuple(row) == (None, None)
+
+
+def test_tpex_lifecycle_module_does_not_touch_balance(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    assert sync_tpex_lifecycle(
+        db_path, {"30882": {"delisting_date": "2026-09-01"}}, date(2026, 8, 30)
+    ) == 1
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT balance_date, delisting_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()
+    assert tuple(row) == ("2026-07-31", "2026-09-01")
+
+
+def test_tdcc_and_mops_modules_run_when_tpex_module_fails(tmp_path):
+    class TpexFailingSession:
+        def __init__(self):
+            self.headers = {}
+
+        def get(self, url, **_kwargs):
+            if "opendata.tdcc.com.tw" in url:
+                return FakeResponse(text=TDCC_CSV)
+            raise requests.ConnectionError("TPEx unavailable")
+
+        def post(self, _url, **_kwargs):
+            return FakeResponse(text=ANNOUNCEMENT_HTML)
+
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    results = collect_phase2_modules(
+        db_path, session=TpexFailingSession(), as_of_date=date(2026, 8, 30)
+    )
+    assert results["tdcc"]["status"] == "success"
+    assert results["tpex"]["status"] == "failed"
+    assert results["mops"]["status"] == "success"
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()[0] == "2026-08-27"
 
 
 def test_upsert_rejects_unfinished_monthly_balance(tmp_path):

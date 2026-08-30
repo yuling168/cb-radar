@@ -50,7 +50,13 @@ jobs:
           echo "trade_date=$trade_date" >> "$GITHUB_OUTPUT"
 
       - name: Run CB master collector
-        run: python master_collector.py --database data/cb_history.db
+        id: master
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python master_collector.py --database data/cb_history.db 2>&1 | tee phase2-modules.log
+          exit "${PIPESTATUS[0]}"
 
       - name: Validate CB history database
         shell: bash
@@ -121,3 +127,19 @@ jobs:
           git add data/cb_history.db docs/data.json docs/index.html
           git commit -m "Update CB history $trade_date"
           git push origin HEAD:main
+
+      - name: Report Phase 2 module status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Phase 2 module status"
+            echo
+            if [[ -f phase2-modules.log ]]; then
+              grep '^phase2_module_' phase2-modules.log || true
+            else
+              echo "master collector did not start"
+            fi
+            echo
+            echo "Master collector step outcome: ${{ steps.master.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"

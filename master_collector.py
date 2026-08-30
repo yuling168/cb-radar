@@ -71,6 +71,10 @@ class MopsNoDataError(MasterFormatError):
     """MOPS explicitly reports that a requested historical month has no row."""
 
 
+class ModuleDependencyError(MasterFormatError):
+    """A Phase 2 module cannot run because its verified inputs are unavailable."""
+
+
 @dataclass
 class RequestCounts:
     tpex: int = 0
@@ -640,6 +644,85 @@ def _get_tdcc_book_entries(
     return parse_tdcc_book_entries(content)
 
 
+def sync_tdcc_balances(
+    db_path: Path | str,
+    balances: dict[str, dict[str, object]],
+    as_of: date,
+    collected_at: str,
+) -> tuple[int, list[str]]:
+    """Atomically update only TDCC-verified latest balances for known CBs."""
+    rows = [
+        (int(row["balance_amount"]), str(row["balance_date"]), collected_at, code)
+        for code, row in balances.items()
+        if str(row["balance_date"]) <= as_of.isoformat()
+    ]
+    if len(rows) != len(balances):
+        raise MasterFormatError("TDCC book-entry balance date is after run date")
+    warnings: list[str] = []
+    with connect(db_path) as connection:
+        existing = {
+            str(row["cb_code"]): dict(row)
+            for row in connection.execute("SELECT * FROM cb_master")
+        }
+        tdcc_date = next(iter(balances.values()))["balance_date"]
+        missing_rows = []
+        for code, master in existing.items():
+            if code in balances or "opendata.tdcc.com.tw/getOD.ashx?id=1-16" in str(master["source_url"]):
+                continue
+            missing_rows.append((code,))
+            if str(master["issue_date"]) > str(tdcc_date):
+                warnings.append(
+                    f"new CB awaiting TDCC data: {code} issue_date={master['issue_date']}"
+                )
+            elif master.get("delisting_date") is None or str(master["delisting_date"]) > as_of.isoformat():
+                warnings.append(f"active CB missing from TDCC data: {code}")
+        with connection:
+            cursor = connection.executemany(
+                """
+                UPDATE cb_master
+                SET balance_amount = ?, balance_date = ?, collected_at = ?,
+                    source = ?,
+                    source_url = CASE
+                        WHEN instr(source_url, ?) > 0 THEN source_url
+                        ELSE source_url || ' | ' || ?
+                    END
+                WHERE cb_code = ?
+                """,
+                [
+                    (
+                        amount, balance_date, timestamp, MASTER_SOURCE,
+                        TDCC_BOOK_ENTRY_URL, TDCC_BOOK_ENTRY_URL, code,
+                    )
+                    for amount, balance_date, timestamp, code in rows
+                ],
+            )
+            connection.executemany(
+                "UPDATE cb_master SET balance_amount = NULL, balance_date = NULL WHERE cb_code = ?",
+                missing_rows,
+            )
+            return cursor.rowcount, warnings
+
+
+def sync_tpex_lifecycle(
+    db_path: Path | str,
+    delistings: dict[str, dict[str, str]],
+    as_of: date,
+) -> int:
+    """Atomically apply TPEx delisting facts without touching balances or MOPS data."""
+    lifecycle_updates = [
+        {
+            "cb_code": code,
+            "delisting_date": row["delisting_date"],
+            "delisting_reason": "已下市"
+            if row["delisting_date"] <= as_of.isoformat() else None,
+        }
+        for code, row in delistings.items()
+    ]
+    with connect(db_path) as connection:
+        upsert_master_data(connection, [], [], [], lifecycle_updates=lifecycle_updates)
+    return len(lifecycle_updates)
+
+
 def _get_mops_snapshot(
     session: requests.Session,
     url: str,
@@ -1043,11 +1126,129 @@ def _master_from_existing(
     return master
 
 
+def _existing_mops_detail_url(
+    master: dict[str, object], events: list[dict[str, object]]
+) -> str | None:
+    """Find a previously verified MOPS detail URL without needing TPEx convSearch."""
+    for event in events:
+        source_url = str(event.get("source_url", ""))
+        if event.get("source") == MOPS_SOURCE and "t120sg01" in source_url:
+            return source_url
+    for source_url in str(master.get("source_url", "")).split(" | "):
+        if "t120sg01" in source_url:
+            return source_url
+    return None
+
+
+def sync_mops_from_existing(
+    db_path: Path | str,
+    session: requests.Session,
+    as_of: date,
+    collected_at: str,
+) -> tuple[int, int]:
+    """Atomically sync MOPS updates using only previously verified master state."""
+    state = _load_existing_master_state(db_path)
+    latest_month = _latest_completed_year_month(as_of)
+    events_to_write: list[dict[str, object]] = []
+    balances_to_write: list[dict[str, object]] = []
+    master_updates: list[tuple[float, str, str]] = []
+    announcement_pages: dict[tuple[str, int], tuple[str, str]] = {}
+
+    for code, master in state.masters.items():
+        if not is_active_on(
+            str(master["issue_date"]), master.get("delisting_date"), as_of
+        ):
+            continue
+        existing_events = state.events.get(code, [])
+        if not existing_events:
+            continue
+        monthly_events: list[dict[str, object]] = []
+        if latest_month not in state.monthly_year_months.get(code, set()):
+            detail_url = _existing_mops_detail_url(master, existing_events)
+            if detail_url is not None:
+                try:
+                    snapshot = _get_mops_snapshot(
+                        session, _url_for_month(detail_url, latest_month)
+                    )
+                except MopsNoDataError:
+                    snapshot = None
+                if snapshot is not None:
+                    if (
+                        snapshot["issue_date"] != master["issue_date"]
+                        or snapshot["maturity_date"] != master["maturity_date"]
+                    ):
+                        raise MasterFormatError(f"MOPS existing-master identity mismatch: {code}")
+                    balance_units_for_display(
+                        int(master["issue_amount"]), int(master["issue_units"]),
+                        int(snapshot["balance_amount"]),
+                    )
+                    balances_to_write.append(
+                        {
+                            "cb_code": code, "year_month": latest_month,
+                            "balance_amount": snapshot["balance_amount"],
+                            "source": MOPS_SOURCE, "source_url": snapshot["source_url"],
+                            "collected_at": collected_at,
+                        }
+                    )
+                    monthly_events.append(_mops_event_from_snapshot(code, snapshot, collected_at))
+        announcements = _get_mops_announcements(
+            session, str(master["stock_code"]), code, as_of.year, collected_at,
+            announcement_pages,
+        )
+        merged = _merge_conversion_events(code, existing_events, [*monthly_events, *announcements])
+        existing_by_date = {str(event["effective_date"]): event for event in existing_events}
+        events_to_write.extend(
+            event for effective, event in merged.items()
+            if effective not in existing_by_date
+            or float(event["conversion_price"]) != float(existing_by_date[effective]["conversion_price"])
+            or event["source"] != existing_by_date[effective]["source"]
+        )
+        latest = latest_effective_event(list(merged.values()), as_of)
+        master_updates.append((
+            float(latest["conversion_price"]), str(latest["effective_date"]), code
+        ))
+
+    with connect(db_path) as connection:
+        with connection:
+            connection.executemany(
+                """
+                INSERT INTO conversion_price_events (
+                    cb_code, effective_date, conversion_price, source, source_url, collected_at
+                ) VALUES (:cb_code, :effective_date, :conversion_price, :source, :source_url, :collected_at)
+                ON CONFLICT(cb_code, effective_date) DO UPDATE SET
+                    conversion_price = excluded.conversion_price, source = excluded.source,
+                    source_url = excluded.source_url, collected_at = excluded.collected_at
+                """, events_to_write,
+            )
+            connection.executemany(
+                """
+                INSERT INTO cb_monthly_balance (
+                    cb_code, year_month, balance_amount, source, source_url, collected_at
+                ) VALUES (:cb_code, :year_month, :balance_amount, :source, :source_url, :collected_at)
+                ON CONFLICT(cb_code, year_month) DO UPDATE SET
+                    balance_amount = excluded.balance_amount, source = excluded.source,
+                    source_url = excluded.source_url, collected_at = excluded.collected_at
+                """, balances_to_write,
+            )
+            connection.executemany(
+                """
+                UPDATE cb_master
+                SET current_conversion_price = ?, current_conversion_price_effective_date = ?
+                WHERE cb_code = ?
+                """, master_updates,
+            )
+    return len(events_to_write), len(balances_to_write)
+
+
 def collect_master(
     db_path: Path | str = DEFAULT_DB_PATH,
     codes: set[str] | None = None,
     session: requests.Session | None = None,
     as_of_date: date | None = None,
+    source_data: tuple[
+        dict[str, dict[str, object]], dict[str, str], dict[str, dict[str, str]],
+        dict[str, dict[str, object]],
+    ] | None = None,
 ) -> dict[str, object]:
     http = session or requests.Session()
     if session is None:
@@ -1065,14 +1266,17 @@ def collect_master(
     )
     existing_state = _load_existing_master_state(db_path)
     request_counts = RequestCounts()
-    issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL, request_counts))
-    links = parse_tpex_mops_links(
-        _get_json(http, TPEX_CB_LISTED_URL, request_counts)
-    )
-    delistings = parse_tpex_delistings(
-        _get_json(http, TPEX_CB_DELISTED_URL, request_counts)
-    )
-    tdcc_balances = _get_tdcc_book_entries(http, request_counts)
+    if source_data is None:
+        issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL, request_counts))
+        links = parse_tpex_mops_links(
+            _get_json(http, TPEX_CB_LISTED_URL, request_counts)
+        )
+        delistings = parse_tpex_delistings(
+            _get_json(http, TPEX_CB_DELISTED_URL, request_counts)
+        )
+        tdcc_balances = _get_tdcc_book_entries(http, request_counts)
+    else:
+        issues, links, delistings, tdcc_balances = source_data
     source_selected = sorted(codes if codes is not None else issues.keys())
     missing = [code for code in source_selected if code not in issues]
     if missing:
@@ -1338,55 +1542,94 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--codes",
         help="comma-separated active CB codes; omit to collect all active TWD CBs",
     )
+    parser.add_argument(
+        "--module",
+        choices=("all", "tpex", "tdcc", "mops"),
+        default="all",
+        help="run one independently-atomic Phase 2 module, or all modules",
+    )
     return parser.parse_args(argv)
+
+
+def collect_phase2_modules(
+    db_path: Path | str,
+    codes: set[str] | None = None,
+    session: requests.Session | None = None,
+    as_of_date: date | None = None,
+    module: str = "all",
+) -> dict[str, dict[str, object]]:
+    """Run Phase 2 modules independently and report every module outcome."""
+    http = session or requests.Session()
+    if session is None:
+        retry = Retry(
+            total=4, connect=4, read=4, backoff_factor=1,
+            status_forcelist=(429, 500, 502, 503, 504, 520),
+            allowed_methods=frozenset({"GET", "POST"}),
+        )
+        http.mount("https://", HTTPAdapter(max_retries=retry))
+    http.headers.update({"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"})
+    as_of = as_of_date or datetime.now(ZoneInfo("Asia/Taipei")).date()
+    collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    results: dict[str, dict[str, object]] = {}
+
+    if module in {"all", "tdcc"}:
+        try:
+            tdcc_balances = _get_tdcc_book_entries(http)
+            updated, warnings = sync_tdcc_balances(
+                db_path, tdcc_balances, as_of, collected_at
+            )
+            results["tdcc"] = {
+                "status": "success", "updated": updated, "warnings": warnings,
+            }
+        except (requests.RequestException, MasterFormatError, ValueError) as exc:
+            results["tdcc"] = {"status": "failed", "error": str(exc)}
+
+    if module in {"all", "tpex"}:
+        try:
+            parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
+            delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
+            if module in {"all", "tpex"}:
+                results["tpex"] = {
+                    "status": "success",
+                    "updated": sync_tpex_lifecycle(db_path, delistings, as_of),
+                }
+        except (requests.RequestException, MasterFormatError, ValueError) as exc:
+            if module in {"all", "tpex"}:
+                results["tpex"] = {"status": "failed", "error": str(exc)}
+
+    if module in {"all", "mops"}:
+        print("phase2_module_mops: start", flush=True)
+        try:
+            event_count, balance_count = sync_mops_from_existing(
+                db_path, http, as_of, collected_at
+            )
+            results["mops"] = {
+                "status": "success", "events": event_count, "monthly": balance_count,
+            }
+        except (requests.RequestException, MasterFormatError, ValueError) as exc:
+            results["mops"] = {"status": "failed", "error": str(exc)}
+    return results
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     codes = {code.strip() for code in args.codes.split(",") if code.strip()} if args.codes else None
-    try:
-        result = collect_master(args.database, codes)
-    except (requests.RequestException, MasterFormatError) as exc:
-        print(f"master_collector_error: {exc}", file=sys.stderr)
+    results = collect_phase2_modules(args.database, codes, module=args.module)
+    for name in ("tpex", "tdcc", "mops"):
+        if name in results:
+            result = results[name]
+            print(f"phase2_module_{name}: {result['status']}")
+            if "updated" in result:
+                print(f"phase2_module_{name}_updated: {result['updated']}")
+            if "error" in result:
+                print(f"phase2_module_{name}_error: {result['error']}")
+            for warning in result.get("warnings", []):
+                print(f"phase2_module_{name}_warning: {warning}")
+            if name == "mops" and result["status"] == "success":
+                print(f"phase2_module_mops_events: {result['events']}")
+                print(f"phase2_module_mops_monthly: {result['monthly']}")
+    if any(result["status"] != "success" for result in results.values()):
         return 1
-    for key in (
-        "official_active_twd_bond_type_5", "ordinary_convertible_bonds",
-        "exchangeable_bonds", "delisted_bonds", "other_excluded_types", "master_records",
-        "conversion_price_events", "monthly_balance_records",
-        "tpex_requests", "tdcc_requests", "mops_detail_requests", "mops_announcement_requests",
-        "bootstrap_cbs", "monthly_incremental_cbs", "database",
-    ):
-        print(f"{key}: {result[key]}")
-    for excluded in result["excluded_exchangeables"]:
-        print(
-            "  excluded_exchangeable: "
-            f"cb_code={excluded['cb_code']}, "
-            f"official_name={excluded['official_name']}, "
-            f"reason={excluded['reason']}"
-        )
-    for row in result["records"]:
-        balance_units = balance_units_for_display(
-            int(row["issue_amount"]),
-            int(row["issue_units"]),
-            int(row["balance_amount"]),
-        )
-        issue_amount_yi = issue_amount_yi_for_display(int(row["issue_amount"]))
-        secured = secured_for_display(row["is_secured"])
-        print(
-            "  " + ", ".join(
-                f"{key}={row[key]}"
-                for key in (
-                    "cb_code", "cb_name", "stock_code", "stock_name", "issue_date",
-                    "maturity_date", "put_date", "issue_units",
-                    "balance_date",
-                    "current_conversion_price",
-                    "current_conversion_price_effective_date",
-                )
-            )
-            + f", issue_amount_yi_display={issue_amount_yi}"
-            + f", balance_units_display={balance_units:,}"
-            + f", secured_display={secured}"
-        )
     return 0
 
 
