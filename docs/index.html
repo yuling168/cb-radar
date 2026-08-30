@@ -146,7 +146,8 @@
     .table-wrap {
       width: 100%;
       max-width: 100%;
-      overflow-x: auto;
+      max-height: min(70vh, 720px);
+      overflow: auto;
       overscroll-behavior-x: contain;
       -webkit-overflow-scrolling: touch;
       border-top: 1px solid var(--line);
@@ -177,9 +178,10 @@
       box-shadow: 2px 0 0 var(--line);
     }
 
-    th {
+    thead th {
       position: sticky;
       top: 0;
+      z-index: 2;
       background: #f6f9f6;
       color: #4e5c54;
       font-size: 0.77rem;
@@ -287,18 +289,18 @@
             <tr>
               <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="cb_code">CB代號 <span class="sort-mark"></span></button></th>
-              <th>發行日</th>
-              <th>到期日</th>
-              <th>首次賣回日</th>
-              <th>發行張數</th>
-              <th>發行總額（億元）</th>
-              <th>餘額張數</th>
-              <th>餘額日期</th>
-              <th>最新轉換價</th>
-              <th>轉換價生效日</th>
-              <th>擔保</th>
-              <th>下市日期</th>
-              <th>下市原因</th>
+              <th aria-sort="none"><button type="button" data-sort="issue_date">發行日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="maturity_date">到期日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="put_date">首次賣回日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="issue_units">發行張數 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="issue_amount_yi">發行總額（億元） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_units">餘額張數 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_date">餘額日期 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="current_conversion_price">最新轉換價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="current_conversion_price_effective_date">轉換價生效日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="is_secured">擔保 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="delisting_date">下市日期 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="delisting_reason">下市原因 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
             </tr>
@@ -313,6 +315,24 @@
   <script>
     const state = { records: [], selectedDate: "", query: "", sortKey: "cb_code", sortDirection: "asc" };
     const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 4 });
+    const SORT_TYPES = {
+      cb_name: "text",
+      cb_code: "text",
+      issue_date: "date",
+      maturity_date: "date",
+      put_date: "date",
+      issue_units: "number",
+      issue_amount_yi: "number",
+      balance_units: "number",
+      balance_date: "date",
+      current_conversion_price: "number",
+      current_conversion_price_effective_date: "date",
+      is_secured: "text",
+      delisting_date: "date",
+      delisting_reason: "text",
+      close_price: "number",
+      volume_lots: "number"
+    };
     const elements = {
       dateSelect: document.querySelector("#dateSelect"),
       searchInput: document.querySelector("#searchInput"),
@@ -321,15 +341,23 @@
       activeFilter: document.querySelector("#activeFilter")
     };
 
+    function hasValue(value) {
+      return value !== null && value !== undefined && value !== "";
+    }
+
     function compareValues(a, b) {
       const aValue = a[state.sortKey];
       const bValue = b[state.sortKey];
-      if (aValue === null && bValue === null) return 0;
-      if (aValue === null) return 1;
-      if (bValue === null) return -1;
-      const result = typeof aValue === "number"
-        ? aValue - bValue
-        : String(aValue).localeCompare(String(bValue), "zh-Hant", { numeric: true, sensitivity: "base" });
+      if (!hasValue(aValue) && !hasValue(bValue)) return 0;
+      if (!hasValue(aValue)) return 1;
+      if (!hasValue(bValue)) return -1;
+
+      const sortType = SORT_TYPES[state.sortKey];
+      const result = sortType === "number"
+        ? Number(aValue) - Number(bValue)
+        : sortType === "date"
+          ? new Date(`${aValue}T00:00:00Z`) - new Date(`${bValue}T00:00:00Z`)
+          : String(aValue).localeCompare(String(bValue), "zh-Hant", { numeric: true, sensitivity: "base" });
       return state.sortDirection === "asc" ? result : -result;
     }
 

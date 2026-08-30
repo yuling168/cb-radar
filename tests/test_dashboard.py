@@ -1,9 +1,33 @@
 import json
 import sqlite3
+from html.parser import HTMLParser
+from pathlib import Path
 
 import pytest
 
 from scripts import build_dashboard
+
+
+DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "docs" / "index.html"
+
+
+class DashboardHeaderParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.headers = []
+        self.current_header = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "th":
+            self.current_header = {"aria-sort": attributes.get("aria-sort")}
+        elif tag == "button" and self.current_header is not None:
+            self.current_header["sort"] = attributes.get("data-sort")
+
+    def handle_endtag(self, tag):
+        if tag == "th" and self.current_header is not None:
+            self.headers.append(self.current_header)
+            self.current_header = None
 
 
 def create_dashboard_database(path, *, include_master=True):
@@ -108,3 +132,37 @@ def test_dashboard_data_requires_cb_master(tmp_path, monkeypatch):
 def test_balance_units_requires_exact_official_par_value():
     with pytest.raises(RuntimeError, match="whole CB unit"):
         build_dashboard.balance_units_for_display(200_000_000, 2_000, 198_350_000)
+
+
+def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
+    source = DASHBOARD_PATH.read_text(encoding="utf-8")
+    parser = DashboardHeaderParser()
+    parser.feed(source)
+
+    assert [header["sort"] for header in parser.headers] == [
+        "cb_name",
+        "cb_code",
+        "issue_date",
+        "maturity_date",
+        "put_date",
+        "issue_units",
+        "issue_amount_yi",
+        "balance_units",
+        "balance_date",
+        "current_conversion_price",
+        "current_conversion_price_effective_date",
+        "is_secured",
+        "delisting_date",
+        "delisting_reason",
+        "close_price",
+        "volume_lots",
+    ]
+    assert all(header["aria-sort"] == "none" for header in parser.headers)
+    assert "thead th {\n      position: sticky;\n      top: 0;" in source
+    assert ".sticky-name {\n      position: sticky;\n      left: 0;" in source
+    assert 'issue_units: "number"' in source
+    assert 'balance_date: "date"' in source
+    assert "if (!hasValue(aValue)) return 1;" in source
+    assert 'sortType === "number"' in source
+    assert 'sortType === "date"' in source
+    assert 'state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";' in source
