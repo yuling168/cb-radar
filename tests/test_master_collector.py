@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from datetime import date
 
 import pytest
@@ -8,8 +9,11 @@ from db import connect, conversion_price_on, upsert_master_data
 from master_collector import (
     MasterFormatError,
     MOPS_ANNOUNCEMENT_SOURCE,
+    MOPS_SOURCE,
     MOPS_RULES_SOURCE,
+    TPEX_DELISTED_FIELDS,
     TPEX_ISSUE_SOURCE,
+    TPEX_LIST_FIELDS,
     _history_for_cb,
     _merge_conversion_events,
     _validate_ambiguous_monthly_prices,
@@ -705,3 +709,158 @@ def test_master_source_failure_does_not_create_database(tmp_path):
     with pytest.raises(requests.ConnectionError, match="official sources unavailable"):
         collect_master(db_path=db_path, session=FailedSession())
     assert not db_path.exists()
+
+
+class FakeResponse:
+    def __init__(self, *, json_payload=None, text=""):
+        self.content = (
+            json.dumps(json_payload).encode("utf-8")
+            if json_payload is not None
+            else text.encode("utf-8")
+        )
+        self.text = text
+        self.encoding = None
+
+    def raise_for_status(self):
+        return None
+
+
+class IncrementalSession:
+    def __init__(self):
+        self.headers = {}
+        self.get_urls = []
+        self.post_urls = []
+
+    def get(self, url, **_kwargs):
+        self.get_urls.append(url)
+        if url.endswith("bond_ISSBD5_data"):
+            return FakeResponse(json_payload=[ISSUE_ROW])
+        if url.endswith("bond/convSearch"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{
+                    "fields": TPEX_LIST_FIELDS,
+                    "data": [["3088", "艾訊", "艾訊二", "112/08/28", MOPS_URL]],
+                }],
+            })
+        if url.endswith("bond/convDelist"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{"fields": TPEX_DELISTED_FIELDS, "data": []}],
+            })
+        return FakeResponse(text=MOPS_HTML)
+
+    def post(self, url, **_kwargs):
+        self.post_urls.append(url)
+        return FakeResponse(text=ANNOUNCEMENT_HTML)
+
+
+def _seed_incremental_master(db_path, *, monthly=True):
+    collected = "2026-08-29T00:00:00+00:00"
+    master = {
+        "cb_code": "30882", "cb_name": "艾訊二", "stock_code": "3088",
+        "stock_name": "艾訊", "issue_date": "2023-08-28",
+        "maturity_date": "2026-08-28", "put_date": None,
+        "issue_units": 8_000, "issue_amount": 800_000_000,
+        "balance_amount": 168_300_000, "balance_date": "2026-07-31",
+        "current_conversion_price": 86.7,
+        "current_conversion_price_effective_date": "2026-07-31",
+        "is_secured": 0, "source": "official", "source_url": MOPS_URL,
+        "collected_at": collected,
+    }
+    events = [
+        {"cb_code": "30882", "effective_date": "2023-08-28",
+         "conversion_price": 109.5, "source": TPEX_ISSUE_SOURCE,
+         "source_url": "official-url", "collected_at": collected},
+        {"cb_code": "30882", "effective_date": "2026-07-31",
+         "conversion_price": 86.7, "source": MOPS_SOURCE,
+         "source_url": MOPS_URL, "collected_at": collected},
+    ]
+    balances = []
+    if monthly:
+        balances.append({
+            "cb_code": "30882", "year_month": "2026-07",
+            "balance_amount": 168_300_000, "source": MOPS_SOURCE,
+            "source_url": MOPS_URL, "collected_at": collected,
+        })
+    with connect(db_path) as connection:
+        upsert_master_data(connection, [master], events, balances)
+
+
+def test_incremental_run_skips_existing_mops_history_and_reports_request_counts(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    session = IncrementalSession()
+
+    result = collect_master(
+        db_path=db_path, session=session, as_of_date=date(2026, 8, 30)
+    )
+
+    assert result["tpex_requests"] == 3
+    assert result["mops_detail_requests"] == 0
+    assert result["mops_announcement_requests"] == 1
+    assert result["bootstrap_cbs"] == 0
+    assert result["monthly_incremental_cbs"] == 0
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversion_price_events WHERE cb_code = '30882'"
+        ).fetchone()[0] == 3
+        assert connection.execute(
+            "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()[0] == "2026-08-28"
+
+
+def test_incremental_run_fetches_only_missing_latest_completed_month(tmp_path):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path, monthly=False)
+    session = IncrementalSession()
+
+    result = collect_master(
+        db_path=db_path, session=session, as_of_date=date(2026, 8, 30)
+    )
+
+    assert result["mops_detail_requests"] == 1
+    assert result["monthly_incremental_cbs"] == 1
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT balance_amount FROM cb_monthly_balance "
+            "WHERE cb_code = '30882' AND year_month = '2026-07'"
+        ).fetchone()[0] == 168_300_000
+
+
+def test_new_cb_uses_mops_bootstrap(tmp_path, monkeypatch):
+    monkeypatch.setattr("master_collector.time.sleep", lambda _seconds: None)
+    session = IncrementalSession()
+
+    result = collect_master(
+        db_path=tmp_path / "master.db",
+        session=session,
+        as_of_date=date(2026, 8, 30),
+    )
+
+    assert result["bootstrap_cbs"] == 1
+    assert result["mops_detail_requests"] > 1
+    assert result["mops_announcement_requests"] == 4
+
+
+def test_incremental_mops_announcement_failure_aborts_without_database_update(tmp_path):
+    class FailingAnnouncementSession(IncrementalSession):
+        def post(self, url, **_kwargs):
+            self.post_urls.append(url)
+            raise requests.ConnectionError("MOPS announcement connection refused")
+
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+    with pytest.raises(requests.ConnectionError, match="connection refused"):
+        collect_master(
+            db_path=db_path,
+            session=FailingAnnouncementSession(),
+            as_of_date=date(2026, 8, 30),
+        )
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()[0] == "2026-07-31"
+        assert connection.execute(
+            "SELECT COUNT(*) FROM conversion_price_events WHERE cb_code = '30882'"
+        ).fetchone()[0] == 2

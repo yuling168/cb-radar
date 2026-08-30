@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import calendar
+from dataclasses import dataclass
 from decimal import Decimal
 import html
 from io import BytesIO
 import json
 import re
+import sqlite3
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -67,6 +69,20 @@ class MasterFormatError(RuntimeError):
 
 class MopsNoDataError(MasterFormatError):
     """MOPS explicitly reports that a requested historical month has no row."""
+
+
+@dataclass
+class RequestCounts:
+    tpex: int = 0
+    mops_detail: int = 0
+    mops_announcement: int = 0
+
+
+@dataclass
+class ExistingMasterState:
+    masters: dict[str, dict[str, object]]
+    monthly_year_months: dict[str, set[str]]
+    events: dict[str, list[dict[str, object]]]
 
 
 def _compact_html(content: str) -> str:
@@ -563,7 +579,11 @@ def secured_for_display(is_secured: int | None) -> str:
     raise MasterFormatError(f"Invalid is_secured value: {is_secured!r}")
 
 
-def _get_json(session: requests.Session, url: str) -> object:
+def _get_json(
+    session: requests.Session, url: str, request_counts: RequestCounts | None = None
+) -> object:
+    if request_counts is not None:
+        request_counts.tpex += 1
     response = session.get(url, timeout=HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     try:
@@ -572,11 +592,17 @@ def _get_json(session: requests.Session, url: str) -> object:
         raise MasterFormatError(f"Official endpoint returned invalid JSON: {url}") from exc
 
 
-def _get_mops_snapshot(session: requests.Session, url: str) -> dict[str, object]:
+def _get_mops_snapshot(
+    session: requests.Session,
+    url: str,
+    request_counts: RequestCounts | None = None,
+) -> dict[str, object]:
     absolute = urljoin(MOPS_BASE_URL, url)
     last_error: MasterFormatError | None = None
     for attempt in range(5):
         time.sleep(0.15)
+        if request_counts is not None:
+            request_counts.mops_detail += 1
         response = session.get(absolute, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
         response.encoding = "utf-8"
@@ -596,11 +622,14 @@ def _latest_fallback_mops_snapshot(
     session: requests.Session,
     master: dict[str, object],
     as_of: date,
+    request_counts: RequestCounts | None = None,
 ) -> tuple[str, dict[str, object]]:
     year_month = as_of.strftime("%Y-%m")
     issue_month = str(master["issue_date"])[:7]
     while year_month >= issue_month:
         url = _fallback_mops_url(master, year_month)
+        if request_counts is not None:
+            request_counts.mops_detail += 1
         response = session.get(url, timeout=HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
         response.encoding = "utf-8"
@@ -621,6 +650,7 @@ def _get_mops_announcements(
     year: int,
     collected_at: str,
     page_cache: dict[tuple[str, int], tuple[str, str]],
+    request_counts: RequestCounts | None = None,
 ) -> list[dict[str, object]]:
     roc_year = year - 1911
     parameters = {
@@ -642,12 +672,13 @@ def _get_mops_announcements(
         content = ""
         for attempt in range(6):
             time.sleep(0.15)
+            if request_counts is not None:
+                request_counts.mops_announcement += 1
             response = session.post(
                 MOPS_CB_ANNOUNCEMENT_URL,
                 data=parameters,
                 headers={
                     "User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2)",
-                    "Connection": "close",
                 },
                 timeout=HTTP_TIMEOUT_SECONDS,
             )
@@ -726,6 +757,7 @@ def _history_for_cb(
     current: dict[str, object],
     collected_at: str,
     as_of: date,
+    request_counts: RequestCounts | None = None,
 ) -> tuple[
     list[dict[str, object]],
     list[dict[str, object]],
@@ -786,7 +818,7 @@ def _history_for_cb(
         while search_month >= issue_date[:7]:
             prior_url = _url_for_month(current_url, search_month)
             try:
-                candidate = _get_mops_snapshot(session, prior_url)
+                candidate = _get_mops_snapshot(session, prior_url, request_counts)
             except MopsNoDataError:
                 search_month = _month_before(search_month)
                 continue
@@ -880,6 +912,85 @@ def _merge_conversion_events(
     return event_by_date
 
 
+def _load_existing_master_state(db_path: Path | str) -> ExistingMasterState:
+    """Read prior verified Phase 2 state without creating or changing the database."""
+    path = Path(db_path)
+    if not path.exists():
+        return ExistingMasterState({}, {}, {})
+    try:
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        masters = {
+            str(row["cb_code"]): dict(row)
+            for row in connection.execute("SELECT * FROM cb_master")
+        }
+        monthly_year_months: dict[str, set[str]] = {}
+        for row in connection.execute("SELECT cb_code, year_month FROM cb_monthly_balance"):
+            monthly_year_months.setdefault(str(row["cb_code"]), set()).add(
+                str(row["year_month"])
+            )
+        events: dict[str, list[dict[str, object]]] = {}
+        for row in connection.execute("SELECT * FROM conversion_price_events"):
+            events.setdefault(str(row["cb_code"]), []).append(dict(row))
+        return ExistingMasterState(masters, monthly_year_months, events)
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
+        # Phase 1 databases do not yet have the Phase 2 tables.
+        return ExistingMasterState({}, {}, {})
+    finally:
+        if "connection" in locals():
+            connection.close()
+
+
+def _latest_completed_year_month(as_of: date) -> str:
+    return _month_before(as_of.strftime("%Y-%m"))
+
+
+def _mops_event_from_snapshot(
+    cb_code: str, snapshot: dict[str, object], collected_at: str
+) -> dict[str, object]:
+    return {
+        "cb_code": cb_code,
+        "effective_date": snapshot["effective_date"],
+        "conversion_price": snapshot["conversion_price"],
+        "source": MOPS_SOURCE,
+        "source_url": snapshot["source_url"],
+        "collected_at": collected_at,
+    }
+
+
+def _master_from_existing(
+    tpex_master: dict[str, object],
+    existing_master: dict[str, object],
+    current_event: dict[str, object],
+    delisting_date: str | None,
+    collected_at: str,
+    as_of: date,
+) -> dict[str, object]:
+    """Apply daily TPEx state while retaining the prior MOPS-verified fields."""
+    master = dict(tpex_master)
+    master.update(
+        {
+            "issue_units": existing_master["issue_units"],
+            "issue_amount": existing_master["issue_amount"],
+            "current_conversion_price": current_event["conversion_price"],
+            "current_conversion_price_effective_date": current_event["effective_date"],
+            "delisting_date": delisting_date,
+            "delisting_reason": None,
+            "source": existing_master["source"],
+            "source_url": existing_master["source_url"],
+            "collected_at": collected_at,
+        }
+    )
+    master["balance_amount"], master["balance_date"] = select_current_balance(
+        master, as_of
+    )
+    for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount", "tpex_data_date"):
+        master.pop(key, None)
+    return master
+
+
 def collect_master(
     db_path: Path | str = DEFAULT_DB_PATH,
     codes: set[str] | None = None,
@@ -900,9 +1011,15 @@ def collect_master(
     http.headers.update(
         {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
     )
-    issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
-    links = parse_tpex_mops_links(_get_json(http, TPEX_CB_LISTED_URL))
-    delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
+    existing_state = _load_existing_master_state(db_path)
+    request_counts = RequestCounts()
+    issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL, request_counts))
+    links = parse_tpex_mops_links(
+        _get_json(http, TPEX_CB_LISTED_URL, request_counts)
+    )
+    delistings = parse_tpex_delistings(
+        _get_json(http, TPEX_CB_DELISTED_URL, request_counts)
+    )
     source_selected = sorted(codes if codes is not None else issues.keys())
     missing = [code for code in source_selected if code not in issues]
     if missing:
@@ -910,6 +1027,7 @@ def collect_master(
 
     collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     as_of = as_of_date or datetime.now(ZoneInfo("Asia/Taipei")).date()
+    latest_completed_month = _latest_completed_year_month(as_of)
     not_yet_effective = [
         {
             "cb_code": code,
@@ -958,109 +1076,160 @@ def collect_master(
     balances: list[dict[str, object]] = []
     announcement_pages: dict[tuple[str, int], tuple[str, str]] = {}
     excluded_exchangeables: list[dict[str, str]] = []
+    bootstrap_codes = {
+        code for code in selected if code not in existing_state.masters
+    }
+    monthly_incremental_codes = {
+        code
+        for code in selected
+        if (
+            code in existing_state.masters
+            and str(issues[code]["issue_date"])[:7] <= latest_completed_month
+            and latest_completed_month
+            not in existing_state.monthly_year_months.get(code, set())
+        )
+    }
     for code in selected:
         master = dict(issues[code])
-        try:
-            if code in links:
-                current_url = links[code]
-                snapshot = _get_mops_snapshot(http, current_url)
-            else:
-                current_url, snapshot = _latest_fallback_mops_snapshot(
-                    http, master, as_of
+        if code in bootstrap_codes:
+            try:
+                if code in links:
+                    current_url = links[code]
+                    snapshot = _get_mops_snapshot(http, current_url, request_counts)
+                else:
+                    current_url, snapshot = _latest_fallback_mops_snapshot(
+                        http, master, as_of, request_counts
+                    )
+            except MasterFormatError as exc:
+                raise MasterFormatError(
+                    f"MOPS bootstrap snapshot failed for {code}: {exc}"
+                ) from exc
+            _validate_snapshot(master, snapshot)
+            if snapshot["instrument_kind"] == "exchangeable":
+                excluded_exchangeables.append(
+                    {
+                        "cb_code": code,
+                        "official_name": str(snapshot["official_name"]),
+                        "reason": "MOPS official name identifies an exchangeable bond",
+                    }
                 )
-        except MasterFormatError as exc:
-            raise MasterFormatError(f"MOPS current snapshot failed for {code}: {exc}") from exc
-        _validate_snapshot(master, snapshot)
-        if snapshot["instrument_kind"] == "exchangeable":
-            excluded_exchangeables.append(
+                continue
+            cb_events, cb_balances, ambiguities = _history_for_cb(
+                http, master, current_url, snapshot, collected_at, as_of, request_counts
+            )
+            announcements: list[dict[str, object]] = []
+            for year in range(int(str(master["issue_date"])[:4]), as_of.year + 1):
+                announcements.extend(
+                    _get_mops_announcements(
+                        http, str(master["stock_code"]), code, year, collected_at,
+                        announcement_pages, request_counts,
+                    )
+                )
+            rules_events: list[dict[str, object]] = []
+            try:
+                _validate_ambiguous_monthly_prices(code, ambiguities, [*cb_events, *announcements])
+            except MasterFormatError:
+                rules_url = snapshot.get("rules_url")
+                if not rules_url:
+                    raise
+                rules_events = _get_mops_rules_events(http, str(rules_url), code, collected_at)
+                if any(
+                    ambiguity["reported_effective_date"] == master["issue_date"]
+                    for ambiguity in ambiguities
+                ) and any(
+                    str(event["effective_date"]) <= str(master["issue_date"])
+                    for event in rules_events
+                ):
+                    cb_events = [event for event in cb_events if event["source"] != TPEX_ISSUE_SOURCE]
+                _validate_ambiguous_monthly_prices(
+                    code, ambiguities, [*cb_events, *announcements, *rules_events]
+                )
+            event_by_date = _merge_conversion_events(
+                code, cb_events, [*rules_events, *announcements]
+            )
+            latest_event = latest_effective_event(list(event_by_date.values()), as_of)
+            master["issue_amount"] = snapshot["issue_amount"]
+            master["balance_amount"], master["balance_date"] = select_current_balance(master, as_of)
+            master.update(
                 {
-                    "cb_code": code,
-                    "official_name": str(snapshot["official_name"]),
-                    "reason": "MOPS official name identifies an exchangeable bond",
+                    "issue_units": snapshot["issue_units"],
+                    "current_conversion_price": latest_event["conversion_price"],
+                    "current_conversion_price_effective_date": latest_event["effective_date"],
+                    "delisting_date": delistings.get(code, {}).get("delisting_date"),
+                    "delisting_reason": None,
+                    "source": MASTER_SOURCE,
+                    "source_url": f"{TPEX_CB_ISSUE_URL} | {snapshot['source_url']} | {latest_event['source_url']}",
+                    "collected_at": collected_at,
                 }
             )
+            for key in ("issue_conversion_price", "series_number", "tpex_reported_issue_amount", "tpex_data_date"):
+                master.pop(key, None)
+            masters.append(master)
+            events.extend(event_by_date.values())
+            balances.extend(cb_balances)
             continue
-        cb_events, cb_balances, ambiguous_monthly_prices = _history_for_cb(
-            http, master, current_url, snapshot, collected_at, as_of
-        )
-        master["issue_amount"] = snapshot["issue_amount"]
-        master["balance_amount"], master["balance_date"] = select_current_balance(
-            master, as_of
-        )
-        announcement_events: list[dict[str, object]] = []
-        rules_events: list[dict[str, object]] = []
-        issue_year = int(str(master["issue_date"])[:4])
-        for year in range(issue_year, as_of.year + 1):
-            announcement_events.extend(
-                _get_mops_announcements(
-                    http,
-                    str(master["stock_code"]),
-                    code,
-                    year,
-                    collected_at,
-                    announcement_pages,
+
+        existing_master = existing_state.masters[code]
+        existing_events = existing_state.events.get(code, [])
+        if not existing_events:
+            raise MasterFormatError(
+                f"Existing CB {code} has no conversion-price event history; a full MOPS bootstrap is required"
+            )
+        monthly_events: list[dict[str, object]] = []
+        if code in monthly_incremental_codes:
+            monthly_url = (
+                _url_for_month(links[code], latest_completed_month)
+                if code in links
+                else _fallback_mops_url(master, latest_completed_month)
+            )
+            try:
+                snapshot = _get_mops_snapshot(http, monthly_url, request_counts)
+            except MopsNoDataError:
+                snapshot = None
+            if snapshot is not None:
+                _validate_snapshot(
+                    master, snapshot, verified_issue_units=int(existing_master["issue_units"])
                 )
-            )
-        try:
-            _validate_ambiguous_monthly_prices(
-                code,
-                ambiguous_monthly_prices,
-                [*cb_events, *announcement_events],
-            )
-        except MasterFormatError:
-            rules_url = snapshot.get("rules_url")
-            if not rules_url:
-                raise
-            rules_events = _get_mops_rules_events(
-                http, str(rules_url), code, collected_at
-            )
-            issue_date_is_ambiguous = any(
-                ambiguity["reported_effective_date"] == master["issue_date"]
-                for ambiguity in ambiguous_monthly_prices
-            )
-            if issue_date_is_ambiguous and any(
-                str(event["effective_date"]) <= str(master["issue_date"])
-                for event in rules_events
-            ):
-                cb_events = [
-                    event
-                    for event in cb_events
-                    if event["source"] != TPEX_ISSUE_SOURCE
-                ]
-            _validate_ambiguous_monthly_prices(
-                code,
-                ambiguous_monthly_prices,
-                [*cb_events, *announcement_events, *rules_events],
-            )
+                if str(snapshot["year_month"]) != latest_completed_month:
+                    raise MasterFormatError(
+                        f"MOPS incremental month mismatch for {code}: {snapshot['year_month']} != {latest_completed_month}"
+                    )
+                balances.append(
+                    {
+                        "cb_code": code,
+                        "year_month": latest_completed_month,
+                        "balance_amount": snapshot["balance_amount"],
+                        "source": MOPS_SOURCE,
+                        "source_url": snapshot["source_url"],
+                        "collected_at": collected_at,
+                    }
+                )
+                monthly_events.append(_mops_event_from_snapshot(code, snapshot, collected_at))
+        announcements = _get_mops_announcements(
+            http, str(master["stock_code"]), code, as_of.year, collected_at,
+            announcement_pages, request_counts,
+        )
         event_by_date = _merge_conversion_events(
-            code, cb_events, [*rules_events, *announcement_events]
+            code, existing_events, [*announcements, *monthly_events]
         )
-        try:
-            latest_event = latest_effective_event(list(event_by_date.values()), as_of)
-        except MasterFormatError as exc:
-            raise MasterFormatError(f"Current conversion price failed for {code}: {exc}") from exc
-        master.update(
-            {
-                "issue_units": snapshot["issue_units"],
-                "current_conversion_price": latest_event["conversion_price"],
-                "current_conversion_price_effective_date": latest_event["effective_date"],
-                "delisting_date": delistings.get(code, {}).get("delisting_date"),
-                "delisting_reason": None,
-                "source": MASTER_SOURCE,
-                "source_url": (
-                    f"{TPEX_CB_ISSUE_URL} | {snapshot['source_url']} | "
-                    f"{latest_event['source_url']}"
-                ),
-                "collected_at": collected_at,
-            }
+        existing_by_date = {str(event["effective_date"]): event for event in existing_events}
+        events.extend(
+            event
+            for effective_date, event in event_by_date.items()
+            if (
+                effective_date not in existing_by_date
+                or float(event["conversion_price"])
+                != float(existing_by_date[effective_date]["conversion_price"])
+                or event["source"] != existing_by_date[effective_date]["source"]
+            )
         )
-        master.pop("issue_conversion_price")
-        master.pop("series_number")
-        master.pop("tpex_reported_issue_amount")
-        master.pop("tpex_data_date")
-        masters.append(master)
-        events.extend(event_by_date.values())
-        balances.extend(cb_balances)
+        latest_event = latest_effective_event(list(event_by_date.values()), as_of)
+        masters.append(
+            _master_from_existing(
+                master, existing_master, latest_event,
+                delistings.get(code, {}).get("delisting_date"), collected_at, as_of,
+            )
+        )
 
     with connect(db_path) as connection:
         master_count, event_count, balance_count = upsert_master_data(
@@ -1076,6 +1245,11 @@ def collect_master(
         "master_records": master_count,
         "conversion_price_events": event_count,
         "monthly_balance_records": balance_count,
+        "tpex_requests": request_counts.tpex,
+        "mops_detail_requests": request_counts.mops_detail,
+        "mops_announcement_requests": request_counts.mops_announcement,
+        "bootstrap_cbs": len(bootstrap_codes),
+        "monthly_incremental_cbs": len(monthly_incremental_codes),
         "database": str(db_path),
         "records": masters,
         "official_active_twd_bond_type_5": len(source_selected),
@@ -1110,7 +1284,9 @@ def main(argv: list[str] | None = None) -> int:
     for key in (
         "official_active_twd_bond_type_5", "ordinary_convertible_bonds",
         "exchangeable_bonds", "delisted_bonds", "other_excluded_types", "master_records",
-        "conversion_price_events", "monthly_balance_records", "database",
+        "conversion_price_events", "monthly_balance_records",
+        "tpex_requests", "mops_detail_requests", "mops_announcement_requests",
+        "bootstrap_cbs", "monthly_incremental_cbs", "database",
     ):
         print(f"{key}: {result[key]}")
     for excluded in result["excluded_exchangeables"]:
