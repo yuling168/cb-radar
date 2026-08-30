@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: cb-daily-collector-main
+  group: cb-history-db-main
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          output="$(python collector.py)"
+          output="$(python collector.py --database data/cb_history.db)"
           printf '%s\n' "$output"
 
           trade_date="$(printf '%s\n' "$output" | sed -n 's/^trade_date: //p' | tail -n 1)"
@@ -49,12 +49,62 @@ jobs:
           fi
           echo "trade_date=$trade_date" >> "$GITHUB_OUTPUT"
 
+      - name: Run CB master collector
+        run: python master_collector.py --database data/cb_history.db
+
+      - name: Validate CB history database
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sqlite3
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          run_date = datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
+          connection = sqlite3.connect("data/cb_history.db")
+          try:
+              integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+              if integrity != "ok":
+                  raise SystemExit(f"SQLite integrity_check failed: {integrity}")
+
+              foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+              if foreign_keys:
+                  raise SystemExit(f"SQLite foreign_key_check failed: {foreign_keys}")
+
+              future_balances = connection.execute(
+                  "SELECT cb_code, balance_date FROM cb_master "
+                  "WHERE balance_date > ? ORDER BY cb_code",
+                  (run_date,),
+              ).fetchall()
+              if future_balances:
+                  raise SystemExit(
+                      "Future balance_date rows: "
+                      + ", ".join(f"{code}={balance_date}" for code, balance_date in future_balances)
+                  )
+
+              unfinished_months = connection.execute(
+                  "SELECT cb_code, year_month FROM cb_monthly_balance "
+                  "WHERE year_month >= ? ORDER BY cb_code",
+                  (run_date[:7],),
+              ).fetchall()
+              if unfinished_months:
+                  raise SystemExit(
+                      "Unfinished monthly balance rows: "
+                      + ", ".join(f"{code}={year_month}" for code, year_month in unfinished_months)
+                  )
+          finally:
+              connection.close()
+
+          print(f"SQLite validation passed for Asia/Taipei run date {run_date}")
+          PY
+
       - name: Build dashboard data
         run: python scripts/build_dashboard.py
 
       - name: Commit and push updated data
         shell: bash
         run: |
+          set -euo pipefail
           if git diff --quiet -- data/cb_history.db docs/data.json docs/index.html; then
             echo "Database and dashboard have no changes; nothing to commit."
             exit 0
