@@ -1,0 +1,110 @@
+import json
+import sqlite3
+
+import pytest
+
+from scripts import build_dashboard
+
+
+def create_dashboard_database(path, *, include_master=True):
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE cb_daily (
+            trade_date TEXT NOT NULL,
+            cb_code TEXT NOT NULL,
+            cb_name TEXT NOT NULL,
+            close_price REAL,
+            volume_lots INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO cb_daily VALUES ('2026-08-29', '12345', '測試 CB', 101.5, 12)"
+    )
+    connection.execute(
+        "INSERT INTO cb_daily VALUES ('2026-08-29', '99999', '尚未同步', NULL, 0)"
+    )
+    if include_master:
+        connection.execute(
+            """
+            CREATE TABLE cb_master (
+                cb_code TEXT PRIMARY KEY,
+                issue_date TEXT,
+                maturity_date TEXT,
+                put_date TEXT,
+                issue_units INTEGER,
+                issue_amount INTEGER,
+                balance_amount INTEGER,
+                balance_date TEXT,
+                current_conversion_price REAL,
+                current_conversion_price_effective_date TEXT,
+                is_secured INTEGER,
+                delisting_date TEXT,
+                delisting_reason TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO cb_master VALUES (
+                '12345', '2024-01-01', '2027-01-01', NULL, 2000, 200000000,
+                198300000, '2026-08-29', 35.5, '2026-07-31', 1, NULL, NULL
+            )
+            """
+        )
+    connection.commit()
+    connection.close()
+
+
+def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    records, _ = build_dashboard.build_dashboard_data()
+
+    assert records == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    row = payload["records"][0]
+    assert row == {
+        "trade_date": "2026-08-29",
+        "cb_code": "12345",
+        "cb_name": "測試 CB",
+        "close_price": 101.5,
+        "volume_lots": 12,
+        "issue_date": "2024-01-01",
+        "maturity_date": "2027-01-01",
+        "put_date": None,
+        "issue_units": 2000,
+        "balance_date": "2026-08-29",
+        "current_conversion_price": 35.5,
+        "current_conversion_price_effective_date": "2026-07-31",
+        "is_secured": "有",
+        "delisting_date": None,
+        "delisting_reason": None,
+        "issue_amount_yi": 2.0,
+        "balance_units": 1983,
+    }
+    missing_master = payload["records"][1]
+    assert missing_master["issue_amount_yi"] is None
+    assert missing_master["balance_units"] is None
+    assert missing_master["is_secured"] == "未知"
+
+
+def test_dashboard_data_requires_cb_master(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    create_dashboard_database(database_path, include_master=False)
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+
+    with pytest.raises(RuntimeError, match="cb_master"):
+        build_dashboard.load_rows()
+
+
+def test_balance_units_requires_exact_official_par_value():
+    with pytest.raises(RuntimeError, match="whole CB unit"):
+        build_dashboard.balance_units_for_display(200_000_000, 2_000, 198_350_000)

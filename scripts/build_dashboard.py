@@ -11,13 +11,45 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "cb_history.db"
 OUTPUT_PATH = ROOT / "docs" / "data.json"
 TABLE_NAME = "cb_daily"
-REQUIRED_COLUMNS = {
+MASTER_TABLE_NAME = "cb_master"
+DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
     "cb_name",
     "close_price",
     "volume_lots",
 }
+MASTER_REQUIRED_COLUMNS = {
+    "cb_code",
+    "issue_date",
+    "maturity_date",
+    "put_date",
+    "issue_units",
+    "issue_amount",
+    "balance_amount",
+    "balance_date",
+    "current_conversion_price",
+    "current_conversion_price_effective_date",
+    "is_secured",
+    "delisting_date",
+    "delisting_reason",
+}
+
+
+def balance_units_for_display(
+    issue_amount: int | None, issue_units: int | None, balance_amount: int | None
+) -> int | None:
+    """Return whole CB units only when the official amounts define them exactly."""
+    if balance_amount is None:
+        return None
+    if issue_amount is None or issue_units is None:
+        raise RuntimeError("cb_master balance is missing its official issue basis")
+    if issue_amount <= 0 or issue_units <= 0 or issue_amount % issue_units != 0:
+        raise RuntimeError("cb_master issue amount/units cannot define a par value")
+    par_value = issue_amount // issue_units
+    if balance_amount < 0 or balance_amount % par_value != 0:
+        raise RuntimeError("cb_master balance amount is not a whole CB unit")
+    return balance_amount // par_value
 
 
 def load_rows() -> list[dict[str, object]]:
@@ -33,27 +65,71 @@ def load_rows() -> list[dict[str, object]]:
                 "SELECT name FROM sqlite_schema WHERE type = 'table'"
             )
         }
-        if TABLE_NAME not in tables:
-            raise RuntimeError(f"Required SQLite table not found: {TABLE_NAME}")
-
-        columns = {
-            row[1]
-            for row in connection.execute(f"PRAGMA table_info({TABLE_NAME})")
-        }
-        missing = REQUIRED_COLUMNS - columns
-        if missing:
-            raise RuntimeError(
-                f"Required SQLite columns missing from {TABLE_NAME}: {sorted(missing)}"
-            )
+        for table_name, required_columns in (
+            (TABLE_NAME, DAILY_REQUIRED_COLUMNS),
+            (MASTER_TABLE_NAME, MASTER_REQUIRED_COLUMNS),
+        ):
+            if table_name not in tables:
+                raise RuntimeError(f"Required SQLite table not found: {table_name}")
+            columns = {
+                row[1]
+                for row in connection.execute(f"PRAGMA table_info({table_name})")
+            }
+            missing = required_columns - columns
+            if missing:
+                raise RuntimeError(
+                    f"Required SQLite columns missing from {table_name}: {sorted(missing)}"
+                )
 
         cursor = connection.execute(
             """
-            SELECT trade_date, cb_code, cb_name, close_price, volume_lots
-            FROM cb_daily
-            ORDER BY trade_date DESC, cb_code ASC
+            SELECT
+                daily.trade_date,
+                daily.cb_code,
+                daily.cb_name,
+                daily.close_price,
+                daily.volume_lots,
+                master.issue_date,
+                master.maturity_date,
+                master.put_date,
+                master.issue_units,
+                master.issue_amount,
+                master.balance_amount,
+                master.balance_date,
+                master.current_conversion_price,
+                master.current_conversion_price_effective_date,
+                master.is_secured,
+                master.delisting_date,
+                master.delisting_reason
+            FROM cb_daily AS daily
+            LEFT JOIN cb_master AS master ON master.cb_code = daily.cb_code
+            ORDER BY daily.trade_date DESC, daily.cb_code ASC
             """
         )
-        return [dict(row) for row in cursor]
+        records = []
+        for row in cursor:
+            record = dict(row)
+            issue_amount = record.pop("issue_amount")
+            issue_units = record["issue_units"]
+            balance_amount = record.pop("balance_amount")
+            record["issue_amount_yi"] = (
+                issue_amount / 100_000_000 if issue_amount is not None else None
+            )
+            record["balance_units"] = balance_units_for_display(
+                issue_amount, issue_units, balance_amount
+            )
+            record["is_secured"] = (
+                "有" if record["is_secured"] == 1
+                else "無" if record["is_secured"] == 0
+                else "未知" if record["is_secured"] is None
+                else _invalid_is_secured(record["is_secured"])
+            )
+            records.append(record)
+        return records
+
+
+def _invalid_is_secured(value: object) -> None:
+    raise RuntimeError(f"Invalid cb_master.is_secured value: {value!r}")
 
 
 def build_dashboard_data() -> tuple[int, int]:

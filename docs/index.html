@@ -39,7 +39,7 @@
 
     .page {
       width: 100%;
-      max-width: 1180px;
+      max-width: 1600px;
       margin: 0 auto;
       padding: 46px 16px 64px;
     }
@@ -86,40 +86,6 @@
       color: var(--green);
       font-size: 0.82rem;
       font-weight: 700;
-    }
-
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 18px;
-    }
-
-    .metric {
-      min-height: 112px;
-      padding: 20px;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      background: var(--card);
-      box-shadow: var(--shadow);
-    }
-
-    .metric-label {
-      display: block;
-      min-height: 2.4em;
-      color: var(--muted);
-      font-size: 0.78rem;
-      line-height: 1.35;
-    }
-
-    .metric-value {
-      display: block;
-      margin-top: 9px;
-      color: var(--green);
-      font-family: Georgia, serif;
-      font-size: clamp(1.4rem, 3vw, 2rem);
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
     }
 
     .panel {
@@ -188,7 +154,7 @@
 
     table {
       width: 100%;
-      min-width: 720px;
+      min-width: 1900px;
       border-collapse: collapse;
     }
 
@@ -199,11 +165,16 @@
       white-space: nowrap;
     }
 
-    th:nth-child(3),
-    td:nth-child(3) {
-      min-width: 140px;
+    .sticky-name {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      min-width: 150px;
+      max-width: 240px;
       white-space: normal;
       overflow-wrap: anywhere;
+      background: var(--card);
+      box-shadow: 2px 0 0 var(--line);
     }
 
     th {
@@ -214,6 +185,13 @@
       font-size: 0.77rem;
       letter-spacing: 0.03em;
     }
+
+    th.sticky-name {
+      z-index: 3;
+      background: #f6f9f6;
+    }
+
+    tbody tr:hover .sticky-name { background: #fbfcfa; }
 
     th button {
       display: inline-flex;
@@ -249,24 +227,17 @@
       text-align: right;
     }
 
-    @media (max-width: 880px) {
-      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .metric:first-child { grid-column: 1 / -1; }
-    }
-
     @media (max-width: 768px) {
       .page { padding: 28px 12px 48px; }
       header { align-items: start; flex-direction: column; }
       h1 { font-size: clamp(1.85rem, 8vw, 2.5rem); }
       .subtitle { margin-top: 8px; font-size: 0.9rem; }
       .source-badge { align-self: start; }
-      .summary { gap: 8px; }
-      .metric { min-height: 98px; padding: 15px; }
       .controls { grid-template-columns: 1fr; gap: 12px; padding: 15px; }
       select, input { width: 100%; min-width: 0; font-size: 16px; }
       .result-bar { align-items: start; flex-direction: column; padding: 12px 15px; }
       th, td { padding: 12px 14px; }
-      table { min-width: 660px; }
+      table { min-width: 1900px; }
       th { font-size: 0.75rem; }
       td { font-size: 0.85rem; }
       th:first-child, td:first-child { font-size: 0.76rem; }
@@ -276,13 +247,8 @@
       .page { padding-right: 12px; padding-left: 12px; }
       header { gap: 14px; margin-bottom: 20px; }
       h1 { font-size: 1.85rem; }
-      .summary { grid-template-columns: 1fr; }
-      .metric:first-child { grid-column: auto; }
-      .metric { min-height: 84px; padding: 13px 15px; }
-      .metric-label { min-height: auto; }
-      .metric-value { margin-top: 6px; font-size: 1.55rem; }
       .panel { border-radius: 15px; }
-      table { min-width: 620px; }
+      table { min-width: 1900px; }
       th, td { padding: 10px 12px; }
       th { font-size: 0.72rem; }
       td { font-size: 0.82rem; }
@@ -299,14 +265,6 @@
       </div>
       <div class="source-badge">資料來源 · TPEx</div>
     </header>
-
-    <section class="summary" aria-label="行情摘要">
-      <article class="metric"><span class="metric-label">最新交易日</span><strong class="metric-value" id="latestDate">—</strong></article>
-      <article class="metric"><span class="metric-label">選定日期 CB 總數</span><strong class="metric-value" id="totalCount">—</strong></article>
-      <article class="metric"><span class="metric-label">有成交 CB 數</span><strong class="metric-value" id="tradedCount">—</strong></article>
-      <article class="metric"><span class="metric-label">0 張 CB 數</span><strong class="metric-value" id="zeroCount">—</strong></article>
-      <article class="metric"><span class="metric-label">收盤價 NULL 數</span><strong class="metric-value" id="nullCount">—</strong></article>
-    </section>
 
     <section class="panel">
       <div class="controls">
@@ -327,14 +285,25 @@
         <table>
           <thead>
             <tr>
-              <th>日期</th>
+              <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="cb_code">CB代號 <span class="sort-mark"></span></button></th>
-              <th aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
+              <th>發行日</th>
+              <th>到期日</th>
+              <th>首次賣回日</th>
+              <th>發行張數</th>
+              <th>發行總額（億元）</th>
+              <th>餘額張數</th>
+              <th>餘額日期</th>
+              <th>最新轉換價</th>
+              <th>轉換價生效日</th>
+              <th>擔保</th>
+              <th>下市日期</th>
+              <th>下市原因</th>
               <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="5">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="16">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -349,12 +318,7 @@
       searchInput: document.querySelector("#searchInput"),
       body: document.querySelector("#resultsBody"),
       resultCount: document.querySelector("#resultCount"),
-      activeFilter: document.querySelector("#activeFilter"),
-      latestDate: document.querySelector("#latestDate"),
-      totalCount: document.querySelector("#totalCount"),
-      tradedCount: document.querySelector("#tradedCount"),
-      zeroCount: document.querySelector("#zeroCount"),
-      nullCount: document.querySelector("#nullCount")
+      activeFilter: document.querySelector("#activeFilter")
     };
 
     function compareValues(a, b) {
@@ -380,14 +344,6 @@
         .sort(compareValues);
     }
 
-    function updateSummary() {
-      const rows = selectedDateRows();
-      elements.totalCount.textContent = numberFormat.format(rows.length);
-      elements.tradedCount.textContent = numberFormat.format(rows.filter((row) => row.volume_lots > 0).length);
-      elements.zeroCount.textContent = numberFormat.format(rows.filter((row) => row.volume_lots === 0).length);
-      elements.nullCount.textContent = numberFormat.format(rows.filter((row) => row.close_price === null).length);
-    }
-
     function cell(value, className = "") {
       const node = document.createElement("td");
       node.className = className;
@@ -405,7 +361,6 @@
     }
 
     function render() {
-      updateSummary();
       updateSortHeaders();
       const rows = filteredRows();
       elements.resultCount.textContent = `共 ${numberFormat.format(rows.length)} 筆結果`;
@@ -415,7 +370,7 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 5;
+        row.firstChild.colSpan = 16;
         elements.body.append(row);
         return;
       }
@@ -423,10 +378,21 @@
       const fragment = document.createDocumentFragment();
       rows.forEach((record) => {
         const row = document.createElement("tr");
-        row.append(cell(record.trade_date));
+        row.append(cell(record.cb_name, "sticky-name"));
         row.append(cell(record.cb_code));
-        row.append(cell(record.cb_name));
-        row.append(cell(record.close_price === null ? "—" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
+        row.append(cell(record.issue_date));
+        row.append(cell(record.maturity_date));
+        row.append(cell(record.put_date));
+        row.append(cell(record.issue_units === null ? "" : numberFormat.format(record.issue_units), "numeric"));
+        row.append(cell(record.issue_amount_yi === null ? "" : numberFormat.format(record.issue_amount_yi), "numeric"));
+        row.append(cell(record.balance_units === null ? "" : numberFormat.format(record.balance_units), "numeric"));
+        row.append(cell(record.balance_date));
+        row.append(cell(record.current_conversion_price === null ? "" : numberFormat.format(record.current_conversion_price), "numeric"));
+        row.append(cell(record.current_conversion_price_effective_date));
+        row.append(cell(record.is_secured));
+        row.append(cell(record.delisting_date));
+        row.append(cell(record.delisting_reason));
+        row.append(cell(record.close_price === null ? "" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
         row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
         fragment.append(row);
       });
@@ -467,7 +433,6 @@
         if (!dates.length) throw new Error("資料庫目前沒有行情資料");
         dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
         state.selectedDate = dates[0];
-        elements.latestDate.textContent = dates[0];
         render();
       })
       .catch((error) => {
@@ -475,7 +440,7 @@
         elements.activeFilter.textContent = error.message;
         const row = document.createElement("tr");
         row.append(cell("無法載入行情資料，請稍後再試。", "state"));
-        row.firstChild.colSpan = 5;
+        row.firstChild.colSpan = 16;
         elements.body.replaceChildren(row);
       });
   </script>
