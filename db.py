@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS cb_monthly_balance (
     PRIMARY KEY (cb_code, year_month),
     FOREIGN KEY (cb_code) REFERENCES cb_master(cb_code)
 );
+
+CREATE TABLE IF NOT EXISTS stock_daily_market (
+    trade_date TEXT NOT NULL,
+    p_stock_code TEXT NOT NULL,
+    p_open_price REAL,
+    p_high_price REAL,
+    p_low_price REAL,
+    p_close_price REAL,
+    p_volume_shares INTEGER NOT NULL CHECK (p_volume_shares >= 0),
+    PRIMARY KEY (trade_date, p_stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_daily_market_stock_date
+    ON stock_daily_market (p_stock_code, trade_date);
 """
 
 
@@ -292,6 +306,70 @@ def upsert_daily(
         rows,
     )
     connection.commit()
+    return len(rows) - len(existing), len(existing)
+
+
+def parent_stock_codes_for_trade_date(
+    connection: sqlite3.Connection, trade_date: str
+) -> set[str]:
+    """Return the parent stocks for CBs that Phase 1 recorded on this date."""
+    rows = connection.execute(
+        """
+        SELECT DISTINCT master.stock_code
+        FROM cb_daily AS daily
+        INNER JOIN cb_master AS master ON master.cb_code = daily.cb_code
+        WHERE daily.trade_date = ?
+        """,
+        (trade_date,),
+    )
+    return {str(row[0]) for row in rows}
+
+
+def upsert_stock_daily_market(
+    connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
+) -> tuple[int, int]:
+    """Atomically upsert validated parent-stock daily market records."""
+    rows = list(records)
+    if not rows:
+        return 0, 0
+
+    keys = [(str(row["trade_date"]), str(row["p_stock_code"])) for row in rows]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Duplicate parent-stock market records")
+    for row in rows:
+        volume = row["p_volume_shares"]
+        if isinstance(volume, bool) or not isinstance(volume, int) or volume < 0:
+            raise ValueError("p_volume_shares must be a non-negative integer")
+    existing = {
+        key
+        for key in keys
+        if connection.execute(
+            """
+            SELECT 1 FROM stock_daily_market
+            WHERE trade_date = ? AND p_stock_code = ?
+            """,
+            key,
+        ).fetchone()
+    }
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO stock_daily_market (
+                trade_date, p_stock_code, p_open_price, p_high_price,
+                p_low_price, p_close_price, p_volume_shares
+            ) VALUES (
+                :trade_date, :p_stock_code, :p_open_price, :p_high_price,
+                :p_low_price, :p_close_price, :p_volume_shares
+            )
+            ON CONFLICT(trade_date, p_stock_code) DO UPDATE SET
+                p_open_price = excluded.p_open_price,
+                p_high_price = excluded.p_high_price,
+                p_low_price = excluded.p_low_price,
+                p_close_price = excluded.p_close_price,
+                p_volume_shares = excluded.p_volume_shares
+            """,
+            rows,
+        )
     return len(rows) - len(existing), len(existing)
 
 

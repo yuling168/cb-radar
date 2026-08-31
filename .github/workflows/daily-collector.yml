@@ -58,6 +58,13 @@ jobs:
           python master_collector.py --database data/cb_history.db 2>&1 | tee phase2-modules.log
           exit "${PIPESTATUS[0]}"
 
+      - name: Run parent stock market collector
+        if: steps.collector.outputs.trade_date != ''
+        run: >
+          python stock_collector.py
+          --date "${{ steps.collector.outputs.trade_date }}"
+          --database data/cb_history.db
+
       - name: Validate CB history database
         shell: bash
         run: |
