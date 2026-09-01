@@ -5,6 +5,7 @@ import pytest
 from db import connect, upsert_daily, upsert_stock_daily_market
 from stock_collector import (
     StockMarketFormatError,
+    build_session,
     collect_stock_daily_market,
     parse_tpex_market,
     parse_twse_market,
@@ -192,3 +193,10 @@ def test_database_rejects_fractional_share_volume(tmp_path):
                     "p_volume_shares": 1.5,
                 }],
             )
+
+
+def test_market_retry_does_not_honor_an_unbounded_server_retry_after():
+    session = build_session()
+    retry = session.get_adapter("https://").max_retries
+
+    assert retry.respect_retry_after_header is False

@@ -228,6 +228,7 @@ def collect(
     db_path: Path | str = DEFAULT_DB_PATH,
     latest_available: bool = False,
     session: requests.Session | None = None,
+    write: bool = True,
 ) -> dict[str, object]:
     http = session or requests.Session()
     http.headers.update({"User-Agent": "cb-radar/0.1 (TPEx daily collector)"})
@@ -241,6 +242,19 @@ def collect(
     verification = select_verification_rows(response.content, trade_date)
     if not records:
         raise TpexFormatError("Published TPEx report contained no equivalent-market CB rows")
+    if not write:
+        return {
+            "trade_date": trade_date.isoformat(),
+            "official_rows": len(body),
+            "equivalent_market_rows": len(records),
+            "records_inserted": 0,
+            "records_updated": 0,
+            "volume_positive_count": sum(row["volume_lots"] > 0 for row in records),
+            "volume_zero_count": sum(row["volume_lots"] == 0 for row in records),
+            "close_price_null_count": sum(row["close_price"] is None for row in records),
+            "database": str(db_path),
+            "verification": verification,
+        }
     with connect(db_path) as connection:
         inserted, updated = upsert_daily(connection, records)
         for row in verification:
