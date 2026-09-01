@@ -304,7 +304,7 @@
               <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="p_close_price">母股收盤價 <span class="sort-mark"></span></button></th>
-              <th aria-sort="none"><button type="button" data-sort="p_volume_shares">母股成交量（股） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="p_volume_lots">母股成交量（張） <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="conversion_value">轉換價值 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
             </tr>
@@ -337,7 +337,7 @@
       close_price: "number",
       volume_lots: "number",
       p_close_price: "number",
-      p_volume_shares: "number",
+      p_volume_lots: "number",
       conversion_value: "number",
       premium_rate: "number"
     };
@@ -431,7 +431,7 @@
         row.append(cell(record.close_price === null ? "" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
         row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
         row.append(cell(record.p_close_price === null ? "" : numberFormat.format(record.p_close_price), `numeric ${record.p_close_price === null ? "null" : ""}`));
-        row.append(cell(record.p_volume_shares === null ? "" : numberFormat.format(record.p_volume_shares), `numeric ${record.p_volume_shares === 0 ? "zero" : ""}`));
+        row.append(cell(record.p_volume_lots === null ? "" : numberFormat.format(record.p_volume_lots), `numeric ${record.p_volume_lots === 0 ? "zero" : ""}`));
         row.append(cell(record.conversion_value === null ? "" : numberFormat.format(record.conversion_value), `numeric ${record.conversion_value === null ? "null" : ""}`));
         row.append(cell(record.premium_rate === null ? "" : `${numberFormat.format(record.premium_rate)}%`, `numeric ${record.premium_rate === null ? "null" : ""}`));
         fragment.append(row);

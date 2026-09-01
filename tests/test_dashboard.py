@@ -139,7 +139,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "close_price": 101.5,
         "volume_lots": 12,
         "p_close_price": 24.3,
-        "p_volume_shares": 16839498,
+        "p_volume_lots": 16839,
         "conversion_value": 60.75,
         "premium_rate": 67.0781893,
         "issue_date": "2024-01-01",
@@ -160,7 +160,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
     assert missing_master["balance_units"] is None
     assert missing_master["is_secured"] == "未知"
     assert missing_master["p_close_price"] is None
-    assert missing_master["p_volume_shares"] is None
+    assert missing_master["p_volume_lots"] is None
     assert missing_master["conversion_value"] is None
     assert missing_master["premium_rate"] is None
 
@@ -186,7 +186,7 @@ def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
 
     row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
     assert row["p_close_price"] is None
-    assert row["p_volume_shares"] == 0
+    assert row["p_volume_lots"] == 0
     assert row["conversion_value"] is None
     assert row["premium_rate"] is None
 
@@ -261,7 +261,7 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "close_price",
         "volume_lots",
         "p_close_price",
-        "p_volume_shares",
+        "p_volume_lots",
         "conversion_value",
         "premium_rate",
     ]
@@ -271,7 +271,7 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'issue_units: "number"' in source
     assert 'balance_date: "date"' in source
     assert 'p_close_price: "number"' in source
-    assert 'p_volume_shares: "number"' in source
+    assert 'p_volume_lots: "number"' in source
     assert 'conversion_value: "number"' in source
     assert 'premium_rate: "number"' in source
     assert "if (!hasValue(aValue)) return 1;" in source

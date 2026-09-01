@@ -139,6 +139,7 @@ def load_rows() -> list[dict[str, object]]:
         for row in cursor:
             record = dict(row)
             conversion_price = record.pop("conversion_price_on_trade_date")
+            p_volume_shares = record.pop("p_volume_shares")
             issue_amount = record.pop("issue_amount")
             issue_units = record["issue_units"]
             balance_amount = record.pop("balance_amount")
@@ -147,6 +148,9 @@ def load_rows() -> list[dict[str, object]]:
             )
             record["balance_units"] = balance_units_for_display(
                 issue_amount, issue_units, balance_amount
+            )
+            record["p_volume_lots"] = (
+                p_volume_shares // 1_000 if p_volume_shares is not None else None
             )
             record["conversion_value"] = None
             record["premium_rate"] = None
