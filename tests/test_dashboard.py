@@ -298,6 +298,10 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'p_volume_lots: "number"' in source
     assert 'conversion_value: "number"' in source
     assert 'premium_rate: "number"' in source
+    assert 'minimumFractionDigits: 2' in source
+    assert 'maximumFractionDigits: 2' in source
+    assert 'valuationFormat.format(record.conversion_value)' in source
+    assert 'valuationFormat.format(record.premium_rate)' in source
     assert "if (!hasValue(aValue)) return 1;" in source
     assert 'sortType === "number"' in source
     assert 'sortType === "date"' in source
