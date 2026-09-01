@@ -12,6 +12,7 @@ DB_PATH = ROOT / "data" / "cb_history.db"
 OUTPUT_PATH = ROOT / "docs" / "data.json"
 TABLE_NAME = "cb_daily"
 MASTER_TABLE_NAME = "cb_master"
+STOCK_DAILY_TABLE_NAME = "stock_daily_market"
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -21,6 +22,7 @@ DAILY_REQUIRED_COLUMNS = {
 }
 MASTER_REQUIRED_COLUMNS = {
     "cb_code",
+    "stock_code",
     "issue_date",
     "maturity_date",
     "put_date",
@@ -33,6 +35,12 @@ MASTER_REQUIRED_COLUMNS = {
     "is_secured",
     "delisting_date",
     "delisting_reason",
+}
+STOCK_DAILY_REQUIRED_COLUMNS = {
+    "trade_date",
+    "p_stock_code",
+    "p_close_price",
+    "p_volume_shares",
 }
 
 
@@ -68,6 +76,7 @@ def load_rows() -> list[dict[str, object]]:
         for table_name, required_columns in (
             (TABLE_NAME, DAILY_REQUIRED_COLUMNS),
             (MASTER_TABLE_NAME, MASTER_REQUIRED_COLUMNS),
+            (STOCK_DAILY_TABLE_NAME, STOCK_DAILY_REQUIRED_COLUMNS),
         ):
             if table_name not in tables:
                 raise RuntimeError(f"Required SQLite table not found: {table_name}")
@@ -89,6 +98,8 @@ def load_rows() -> list[dict[str, object]]:
                 daily.cb_name,
                 daily.close_price,
                 daily.volume_lots,
+                stock.p_close_price,
+                stock.p_volume_shares,
                 master.issue_date,
                 master.maturity_date,
                 master.put_date,
@@ -103,6 +114,9 @@ def load_rows() -> list[dict[str, object]]:
                 master.delisting_reason
             FROM cb_daily AS daily
             LEFT JOIN cb_master AS master ON master.cb_code = daily.cb_code
+            LEFT JOIN stock_daily_market AS stock
+              ON stock.trade_date = daily.trade_date
+             AND stock.p_stock_code = master.stock_code
             ORDER BY daily.trade_date DESC, daily.cb_code ASC
             """
         )
