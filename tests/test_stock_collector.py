@@ -94,6 +94,26 @@ def test_parsers_store_exact_share_volume_without_lot_rounding():
     assert tpex["3131"]["p_volume_shares"] == 567
 
 
+def test_twse_missing_ohlc_is_saved_as_null_but_volume_stays_strict():
+    record = parse_twse_market(
+        twse_payload(["1538", "正峰", "1", "1", "8", "--", "---", "", "----"]),
+        TRADE_DATE,
+        {"1538"},
+    )["1538"]
+    assert record["p_volume_shares"] == 1
+    assert [record[field] for field in (
+        "p_open_price", "p_high_price", "p_low_price", "p_close_price"
+    )] == [None, None, None, None]
+
+    for missing_volume in ("", "--", "---"):
+        with pytest.raises(StockMarketFormatError, match="numeric value is missing"):
+            parse_twse_market(
+                twse_payload(["1538", "正峰", missing_volume, "1", "8", "--", "--", "--", "--"]),
+                TRADE_DATE,
+                {"1538"},
+            )
+
+
 def test_daily_market_upsert_uses_both_official_markets_in_one_result(tmp_path):
     db_path = tmp_path / "history.db"
     seed_phase1_and_master(db_path)

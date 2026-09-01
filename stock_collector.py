@@ -71,10 +71,14 @@ def _field_positions(fields: Iterable[Any], required: set[str], source: str) -> 
     return positions
 
 
-def _number(value: Any, *, integer: bool = False) -> float | int | None:
+def _number(
+    value: Any, *, integer: bool = False, allow_missing: bool = False
+) -> float | int | None:
     text = str(value).strip().replace(",", "")
-    if text in {"", "--", "---", "-"}:
-        return None
+    if text == "" or re.fullmatch(r"-+", text):
+        if allow_missing:
+            return None
+        raise StockMarketFormatError(f"Official numeric value is missing: {value!r}")
     try:
         numeric = float(text)
     except ValueError as exc:
@@ -105,15 +109,15 @@ def _record_from_row(
     if not code:
         raise StockMarketFormatError("Official market row is missing security code")
     volume = _number(value_for("成交股數"), integer=True)
-    if volume is None or volume < 0:
+    if volume < 0:
         raise StockMarketFormatError(f"Official share volume is missing for {code}")
     return {
         "trade_date": trade_date.isoformat(),
         "p_stock_code": code,
-        "p_open_price": _number(value_for("開盤價", "開盤")),
-        "p_high_price": _number(value_for("最高價", "最高")),
-        "p_low_price": _number(value_for("最低價", "最低")),
-        "p_close_price": _number(value_for("收盤價", "收盤")),
+        "p_open_price": _number(value_for("開盤價", "開盤"), allow_missing=True),
+        "p_high_price": _number(value_for("最高價", "最高"), allow_missing=True),
+        "p_low_price": _number(value_for("最低價", "最低"), allow_missing=True),
+        "p_close_price": _number(value_for("收盤價", "收盤"), allow_missing=True),
         "p_volume_shares": volume,
     }
 
