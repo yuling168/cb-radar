@@ -93,6 +93,23 @@ def create_dashboard_database(path, *, include_master=True):
     )
     connection.execute(
         """
+        CREATE TABLE conversion_price_events (
+            cb_code TEXT NOT NULL,
+            effective_date TEXT NOT NULL,
+            conversion_price REAL NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO conversion_price_events VALUES
+            ('12345', '2026-01-01', 30.0),
+            ('12345', '2026-08-01', 40.0),
+            ('12345', '2026-09-01', 50.0)
+        """
+    )
+    connection.execute(
+        """
         INSERT INTO stock_daily_market VALUES
             ('2026-08-29', '1101', 24.1, 24.4, 24.0, 24.3, 16839498)
         """
@@ -123,6 +140,8 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "volume_lots": 12,
         "p_close_price": 24.3,
         "p_volume_shares": 16839498,
+        "conversion_value": 60.75,
+        "premium_rate": 67.0781893,
         "issue_date": "2024-01-01",
         "maturity_date": "2027-01-01",
         "put_date": None,
@@ -142,6 +161,8 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
     assert missing_master["is_secured"] == "未知"
     assert missing_master["p_close_price"] is None
     assert missing_master["p_volume_shares"] is None
+    assert missing_master["conversion_value"] is None
+    assert missing_master["premium_rate"] is None
 
 
 def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
@@ -166,6 +187,41 @@ def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
     row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
     assert row["p_close_price"] is None
     assert row["p_volume_shares"] == 0
+    assert row["conversion_value"] is None
+    assert row["premium_rate"] is None
+
+
+def test_dashboard_uses_historical_effective_conversion_price(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    build_dashboard.build_dashboard_data()
+
+    row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
+    assert row["current_conversion_price"] == 35.5
+    assert row["conversion_value"] == 60.75
+    assert row["premium_rate"] == pytest.approx(67.0781893)
+
+
+def test_dashboard_leaves_valuation_blank_without_effective_conversion_price(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DELETE FROM conversion_price_events")
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    build_dashboard.build_dashboard_data()
+
+    row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
+    assert row["conversion_value"] is None
+    assert row["premium_rate"] is None
 
 
 def test_dashboard_data_requires_cb_master(tmp_path, monkeypatch):
@@ -206,6 +262,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "volume_lots",
         "p_close_price",
         "p_volume_shares",
+        "conversion_value",
+        "premium_rate",
     ]
     assert all(header["aria-sort"] == "none" for header in parser.headers)
     assert "thead th {\n      position: sticky;\n      top: 0;" in source
@@ -214,6 +272,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'balance_date: "date"' in source
     assert 'p_close_price: "number"' in source
     assert 'p_volume_shares: "number"' in source
+    assert 'conversion_value: "number"' in source
+    assert 'premium_rate: "number"' in source
     assert "if (!hasValue(aValue)) return 1;" in source
     assert 'sortType === "number"' in source
     assert 'sortType === "date"' in source

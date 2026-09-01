@@ -13,6 +13,7 @@ OUTPUT_PATH = ROOT / "docs" / "data.json"
 TABLE_NAME = "cb_daily"
 MASTER_TABLE_NAME = "cb_master"
 STOCK_DAILY_TABLE_NAME = "stock_daily_market"
+CONVERSION_EVENT_TABLE_NAME = "conversion_price_events"
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -41,6 +42,11 @@ STOCK_DAILY_REQUIRED_COLUMNS = {
     "p_stock_code",
     "p_close_price",
     "p_volume_shares",
+}
+CONVERSION_EVENT_REQUIRED_COLUMNS = {
+    "cb_code",
+    "effective_date",
+    "conversion_price",
 }
 
 
@@ -77,6 +83,7 @@ def load_rows() -> list[dict[str, object]]:
             (TABLE_NAME, DAILY_REQUIRED_COLUMNS),
             (MASTER_TABLE_NAME, MASTER_REQUIRED_COLUMNS),
             (STOCK_DAILY_TABLE_NAME, STOCK_DAILY_REQUIRED_COLUMNS),
+            (CONVERSION_EVENT_TABLE_NAME, CONVERSION_EVENT_REQUIRED_COLUMNS),
         ):
             if table_name not in tables:
                 raise RuntimeError(f"Required SQLite table not found: {table_name}")
@@ -100,6 +107,14 @@ def load_rows() -> list[dict[str, object]]:
                 daily.volume_lots,
                 stock.p_close_price,
                 stock.p_volume_shares,
+                (
+                    SELECT event.conversion_price
+                    FROM conversion_price_events AS event
+                    WHERE event.cb_code = daily.cb_code
+                      AND event.effective_date <= daily.trade_date
+                    ORDER BY event.effective_date DESC
+                    LIMIT 1
+                ) AS conversion_price_on_trade_date,
                 master.issue_date,
                 master.maturity_date,
                 master.put_date,
@@ -123,6 +138,7 @@ def load_rows() -> list[dict[str, object]]:
         records = []
         for row in cursor:
             record = dict(row)
+            conversion_price = record.pop("conversion_price_on_trade_date")
             issue_amount = record.pop("issue_amount")
             issue_units = record["issue_units"]
             balance_amount = record.pop("balance_amount")
@@ -132,6 +148,21 @@ def load_rows() -> list[dict[str, object]]:
             record["balance_units"] = balance_units_for_display(
                 issue_amount, issue_units, balance_amount
             )
+            record["conversion_value"] = None
+            record["premium_rate"] = None
+            if conversion_price is not None and record["p_close_price"] is not None:
+                if conversion_price <= 0:
+                    raise RuntimeError(
+                        "conversion_price_events conversion price must be positive"
+                    )
+                conversion_value = round(
+                    record["p_close_price"] / conversion_price * 100, 8
+                )
+                record["conversion_value"] = conversion_value
+                if record["close_price"] is not None and conversion_value != 0:
+                    record["premium_rate"] = round(
+                        (record["close_price"] / conversion_value - 1) * 100, 8
+                    )
             record["is_secured"] = (
                 "有" if record["is_secured"] == 1
                 else "無" if record["is_secured"] == 0
