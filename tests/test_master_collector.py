@@ -5,7 +5,13 @@ from datetime import date
 import pytest
 import requests
 
-from db import connect, conversion_price_on, upsert_master_data
+from db import (
+    connect,
+    conversion_price_on,
+    parent_stock_codes_for_trade_date,
+    upsert_daily,
+    upsert_master_data,
+)
 from master_collector import (
     MasterFormatError,
     MOPS_ANNOUNCEMENT_SOURCE,
@@ -90,6 +96,41 @@ ANNOUNCEMENT_HTML = """
 <div>3088 艾訊 115/08/01 1 公告艾訊股份有限公司國內第二次無擔保轉換公司債
 (簡稱：艾訊二，代碼：30882)自115年08月15日起，
 轉換價格自86.7元調整為85.2元。</div></body></html>
+"""
+
+NEW_ISSUE_ROW = {
+    **ISSUE_ROW,
+    "Date": "20260901",
+    "IssuerCode": "3149",
+    "IssuerName": "正達",
+    "BondCode": "31494",
+    "SeriesNumber": "4",
+    "IssueDate": "20260831",
+    "MaturityDate": "20290831",
+    "IssueAmount": "650000000",
+    "OutstandingAmount": "650000000",
+    "ShortName": "正達四",
+    "Guaranteed": "1",
+    "GuaranteeDescription": "板信商業銀行",
+    "Conversion/ExchangePriceAtIssuance": "68.1000",
+}
+NEW_MOPS_URL = (
+    "https://mopsov.twse.com.tw/mops/web/t120sg01?bond_id=31494"
+    "&issuer_stock_code=3149&monyr_reg=202608"
+)
+NEW_MOPS_HTML = """
+<html><body>正達 之轉(交)換公司債發行資料
+<div>債券中文名稱：正達股份有限公司國內第四次有擔保轉換公司債</div>
+<div>發行人：國內</div>
+<table><tr><td>發行日期：115/08/31</td><td>到期日期：118/08/31</td></tr>
+<tr><td>申請發行總額：650,000,000元</td></tr>
+<tr><td>實際發行總額：650,000,000元</td></tr>
+<tr><td>發行面額：100,000元</td></tr>
+<tr><td>發行張數：6,500張</td></tr>
+<tr><td>本月底發行餘額：650,000,000元</td></tr>
+<tr><td>最新轉(交)換價格：68.1000元</td>
+<td>最近轉(交)換價格生效日期：115/08/31</td></tr></table>
+</body></html>
 """
 
 
@@ -857,6 +898,33 @@ class IncrementalSession:
         return FakeResponse(text=ANNOUNCEMENT_HTML)
 
 
+class NewCbBootstrapSession:
+    def __init__(self, mops_html=NEW_MOPS_HTML):
+        self.headers = {}
+        self.mops_html = mops_html
+
+    def get(self, url, **_kwargs):
+        if url.endswith("bond_ISSBD5_data"):
+            return FakeResponse(json_payload=[NEW_ISSUE_ROW])
+        if url.endswith("bond/convSearch"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{
+                    "fields": TPEX_LIST_FIELDS,
+                    "data": [["3149", "正達", "正達四", "115/08/31", NEW_MOPS_URL]],
+                }],
+            })
+        if url.endswith("bond/convDelist"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{"fields": TPEX_DELISTED_FIELDS, "data": []}],
+            })
+        return FakeResponse(text=self.mops_html)
+
+    def post(self, _url, **_kwargs):
+        return FakeResponse(text=ANNOUNCEMENT_HTML)
+
+
 def _seed_incremental_master(db_path, *, monthly=True):
     collected = "2026-08-29T00:00:00+00:00"
     master = {
@@ -887,6 +955,73 @@ def _seed_incremental_master(db_path, *, monthly=True):
         })
     with connect(db_path) as connection:
         upsert_master_data(connection, [master], events, balances)
+
+
+def test_phase2_modules_bootstrap_new_31494_for_same_day_parent_stock_collection(
+    tmp_path,
+):
+    db_path = tmp_path / "master.db"
+    _seed_incremental_master(db_path)
+
+    result = collect_phase2_modules(
+        db_path,
+        session=NewCbBootstrapSession(),
+        as_of_date=date(2026, 9, 1),
+        module="tpex",
+    )
+
+    assert result["tpex"] == {
+        "status": "success",
+        "updated": 0,
+        "bootstrap": 1,
+        "events": 1,
+        "monthly": 1,
+    }
+    with connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT cb_code, cb_name, stock_code, stock_name, issue_date, maturity_date,
+                   issue_units, issue_amount, balance_amount, balance_date,
+                   current_conversion_price, current_conversion_price_effective_date,
+                   is_secured
+            FROM cb_master WHERE cb_code = '31494'
+            """
+        ).fetchone()
+        assert tuple(row) == (
+            "31494", "正達四", "3149", "正達", "2026-08-31", "2029-08-31",
+            6_500, 650_000_000, None, None, 68.1, "2026-08-31", 1,
+        )
+        assert connection.execute(
+            "SELECT balance_date FROM cb_master WHERE cb_code = '30882'"
+        ).fetchone()[0] == "2026-07-31"
+        upsert_daily(
+            connection,
+            [{
+                "trade_date": "2026-09-01", "cb_code": "31494", "cb_name": "正達四",
+                "close_price": 118.8, "volume_lots": 35, "source": "test",
+                "collected_at": "2026-09-01T00:00:00+00:00",
+            }],
+        )
+        assert parent_stock_codes_for_trade_date(connection, "2026-09-01") == {"3149"}
+
+
+def test_phase2_modules_excludes_new_exchangeable_bond(tmp_path):
+    db_path = tmp_path / "master.db"
+    exchangeable_html = NEW_MOPS_HTML.replace("轉換公司債", "交換公司債")
+
+    result = collect_phase2_modules(
+        db_path,
+        session=NewCbBootstrapSession(exchangeable_html),
+        as_of_date=date(2026, 9, 1),
+        module="tpex",
+    )
+
+    assert result["tpex"]["status"] == "success"
+    assert result["tpex"]["bootstrap"] == 0
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM cb_master WHERE cb_code = '31494'"
+        ).fetchone()[0] == 0
 
 
 def test_incremental_run_skips_existing_mops_history_and_reports_request_counts(tmp_path):

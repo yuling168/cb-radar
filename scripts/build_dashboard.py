@@ -19,6 +19,7 @@ DAILY_REQUIRED_COLUMNS = {
     "cb_code",
     "cb_name",
     "close_price",
+    "reference_price",
     "volume_lots",
 }
 MASTER_REQUIRED_COLUMNS = {
@@ -104,6 +105,7 @@ def load_rows() -> list[dict[str, object]]:
                 daily.cb_code,
                 daily.cb_name,
                 daily.close_price,
+                daily.reference_price,
                 daily.volume_lots,
                 stock.p_close_price,
                 stock.p_volume_shares,
@@ -163,9 +165,14 @@ def load_rows() -> list[dict[str, object]]:
                     record["p_close_price"] / conversion_price * 100, 8
                 )
                 record["conversion_value"] = conversion_value
-                if record["close_price"] is not None and conversion_value != 0:
+                valuation_price = (
+                    record["close_price"]
+                    if record["volume_lots"] > 0
+                    else record["reference_price"]
+                )
+                if valuation_price is not None and conversion_value != 0:
                     record["premium_rate"] = round(
-                        (record["close_price"] / conversion_value - 1) * 100, 8
+                        (valuation_price / conversion_value - 1) * 100, 8
                     )
             record["is_secured"] = (
                 "有" if record["is_secured"] == 1

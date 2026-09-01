@@ -14,10 +14,12 @@ def csv_bytes(*body_rows: str, trade_date: str = "日期:115年08月28日") -> b
     return "\n".join([f"DATADATE,{trade_date}", HEADER, *body_rows]).encode("cp950")
 
 
-def equal_row(code: str, name: str, close: str, volume: str) -> str:
+def equal_row(
+    code: str, name: str, close: str, volume: str, reference: str = ""
+) -> str:
     return (
         f'BODY,"{code}","{name}","等價","{close}","","","","","1",'
-        f'"{volume}","","","","",""'
+        f'"{volume}","","","{reference}","",""'
     )
 
 
@@ -47,6 +49,19 @@ def test_blank_close_price_remains_null():
     assert records[0]["close_price"] is None
 
 
+def test_official_reference_price_is_saved_separately_from_blank_close():
+    records = parse_tpex_csv(
+        csv_bytes(
+            equal_row("37171", "聯嘉投控一", "", "", "135.95"),
+            trade_date="日期:115年08月31日",
+        ),
+        date(2026, 8, 31),
+    )
+    assert records[0]["volume_lots"] == 0
+    assert records[0]["close_price"] is None
+    assert records[0]["reference_price"] == 135.95
+
+
 class FailedSession:
     def __init__(self):
         self.headers = {}
@@ -71,7 +86,7 @@ def test_required_field_disappearance_fails_loudly():
 def test_same_date_and_code_is_idempotent(tmp_path):
     row = {
         "trade_date": "2026-08-28", "cb_code": "17172", "cb_name": "長興二",
-        "close_price": 133.5, "volume_lots": 65, "source": "TPEx:RSta0113",
+        "close_price": 133.5, "reference_price": 133.5, "volume_lots": 65, "source": "TPEx:RSta0113",
         "collected_at": "2026-08-28T08:00:00+00:00",
     }
     with connect(tmp_path / "test.db") as connection:
@@ -101,4 +116,3 @@ def test_non_trading_day_does_not_write_fake_data(tmp_path):
     with pytest.raises(DataNotPublished):
         collect(date(2026, 8, 29), db_path=db_path, session=EmptyIndexSession())
     assert not db_path.exists()
-

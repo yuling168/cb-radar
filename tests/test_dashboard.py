@@ -39,15 +39,16 @@ def create_dashboard_database(path, *, include_master=True):
             cb_code TEXT NOT NULL,
             cb_name TEXT NOT NULL,
             close_price REAL,
+            reference_price REAL,
             volume_lots INTEGER NOT NULL
         )
         """
     )
     connection.execute(
-        "INSERT INTO cb_daily VALUES ('2026-08-29', '12345', '測試 CB', 101.5, 12)"
+        "INSERT INTO cb_daily VALUES ('2026-08-29', '12345', '測試 CB', 101.5, 99.5, 12)"
     )
     connection.execute(
-        "INSERT INTO cb_daily VALUES ('2026-08-29', '99999', '尚未同步', NULL, 0)"
+        "INSERT INTO cb_daily VALUES ('2026-08-29', '99999', '尚未同步', NULL, 100.0, 0)"
     )
     if include_master:
         connection.execute(
@@ -137,6 +138,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "cb_code": "12345",
         "cb_name": "測試 CB",
         "close_price": 101.5,
+        "reference_price": 99.5,
         "volume_lots": 12,
         "p_close_price": 24.3,
         "p_volume_lots": 16839,
@@ -163,6 +165,26 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
     assert missing_master["p_volume_lots"] is None
     assert missing_master["conversion_value"] is None
     assert missing_master["premium_rate"] is None
+
+
+def test_dashboard_uses_reference_price_for_zero_volume_premium(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "UPDATE cb_daily SET close_price = NULL, reference_price = 90.0, volume_lots = 0 "
+            "WHERE cb_code = '12345'"
+        )
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    build_dashboard.build_dashboard_data()
+
+    row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
+    assert row["close_price"] is None
+    assert row["reference_price"] == 90.0
+    assert row["premium_rate"] == pytest.approx(48.14814815)
 
 
 def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
@@ -259,6 +281,7 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "delisting_date",
         "delisting_reason",
         "close_price",
+        "reference_price",
         "volume_lots",
         "p_close_price",
         "p_volume_lots",
@@ -271,6 +294,7 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'issue_units: "number"' in source
     assert 'balance_date: "date"' in source
     assert 'p_close_price: "number"' in source
+    assert 'reference_price: "number"' in source
     assert 'p_volume_lots: "number"' in source
     assert 'conversion_value: "number"' in source
     assert 'premium_rate: "number"' in source

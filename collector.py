@@ -103,6 +103,7 @@ def parse_tpex_csv(content: bytes, requested_date: date) -> list[dict[str, objec
                 "cb_code": cb_code,
                 "cb_name": cb_name,
                 "close_price": _parse_number(values[3]),
+                "reference_price": _parse_number(values[12]),
                 "volume_lots": volume_lots,
                 "source": TPEX_SOURCE,
                 "collected_at": collected_at,
@@ -159,6 +160,7 @@ def select_verification_rows(
             "cb_code": cb_code,
             "cb_name": cb_name,
             "close_price": _parse_number(values[3]),
+            "reference_price": _parse_number(values[12]),
             "volume_lots": saved_volume,
             "raw_volume_value": raw_volume,
         }
@@ -252,6 +254,9 @@ def collect(
             "volume_positive_count": sum(row["volume_lots"] > 0 for row in records),
             "volume_zero_count": sum(row["volume_lots"] == 0 for row in records),
             "close_price_null_count": sum(row["close_price"] is None for row in records),
+            "reference_price_count": sum(
+                row["reference_price"] is not None for row in records
+            ),
             "database": str(db_path),
             "verification": verification,
         }
@@ -260,7 +265,7 @@ def collect(
         for row in verification:
             saved = connection.execute(
                 """
-                SELECT close_price, volume_lots FROM cb_daily
+                SELECT close_price, reference_price, volume_lots FROM cb_daily
                 WHERE trade_date = ? AND cb_code = ?
                 """,
                 (row["trade_date"], row["cb_code"]),
@@ -268,6 +273,7 @@ def collect(
             if saved is None:
                 raise TpexFormatError("A verification CB was not saved to SQLite")
             row["close_price"] = saved["close_price"]
+            row["reference_price"] = saved["reference_price"]
             row["volume_lots"] = saved["volume_lots"]
     return {
         "trade_date": trade_date.isoformat(),
@@ -278,6 +284,9 @@ def collect(
         "volume_positive_count": sum(row["volume_lots"] > 0 for row in records),
         "volume_zero_count": sum(row["volume_lots"] == 0 for row in records),
         "close_price_null_count": sum(row["close_price"] is None for row in records),
+        "reference_price_count": sum(
+            row["reference_price"] is not None for row in records
+        ),
         "database": str(db_path),
         "verification": verification,
     }
@@ -313,16 +322,21 @@ def main(argv: list[str] | None = None) -> int:
         "volume_positive_count",
         "volume_zero_count",
         "close_price_null_count",
+        "reference_price_count",
         "database",
     ):
         print(f"{key}: {result[key]}")
     print("verification:")
     for row in result["verification"]:
         close = "NULL" if row["close_price"] is None else row["close_price"]
+        reference = (
+            "NULL" if row["reference_price"] is None else row["reference_price"]
+        )
         raw_volume = row["raw_volume_value"] or "空白"
         print(
             f"  trade_date={row['trade_date']}, cb_code={row['cb_code']}, "
             f"cb_name={row['cb_name']}, close_price={close}, "
+            f"reference_price={reference}, "
             f"volume_lots={row['volume_lots']}, raw_volume_value={raw_volume}"
         )
     return 0

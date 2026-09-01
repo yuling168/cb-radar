@@ -67,6 +67,7 @@ def backfill_cb_daily(
     inserted = 0
     updated = 0
     unpublished_dates = 0
+    reference_prices = 0
 
     for _ in range(max_calendar_days):
         try:
@@ -85,6 +86,7 @@ def backfill_cb_daily(
             collected_dates.append(date.fromisoformat(str(result["trade_date"])))
             inserted += int(result["records_inserted"])
             updated += int(result["records_updated"])
+            reference_prices += int(result.get("reference_price_count", 0))
             if len(collected_dates) == days:
                 break
         candidate -= timedelta(days=1)
@@ -102,6 +104,7 @@ def backfill_cb_daily(
         "records_inserted": inserted,
         "records_updated": updated,
         "unpublished_dates": unpublished_dates,
+        "reference_price_count": reference_prices,
         "request_count": http.request_count,
         "dry_run": dry_run,
     }

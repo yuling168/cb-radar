@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS cb_daily (
     cb_code TEXT NOT NULL,
     cb_name TEXT NOT NULL,
     close_price REAL,
+    reference_price REAL,
     volume_lots INTEGER NOT NULL,
     source TEXT NOT NULL,
     collected_at TEXT NOT NULL,
@@ -110,6 +111,11 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
             "CHECK (delisting_reason IN ('提前贖回', '到期', '已下市') "
             "OR delisting_reason IS NULL)"
         )
+    daily_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(cb_daily)")
+    }
+    if "reference_price" not in daily_columns:
+        connection.execute("ALTER TABLE cb_daily ADD COLUMN reference_price REAL")
     connection.commit()
     return connection
 
@@ -278,9 +284,11 @@ def conversion_price_on(
 def upsert_daily(
     connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
 ) -> tuple[int, int]:
-    rows = list(records)
+    rows = [dict(row) for row in records]
     if not rows:
         return 0, 0
+    for row in rows:
+        row.setdefault("reference_price", None)
 
     keys = [(str(row["trade_date"]), str(row["cb_code"])) for row in rows]
     existing = {
@@ -293,12 +301,15 @@ def upsert_daily(
     connection.executemany(
         """
         INSERT INTO cb_daily
-            (trade_date, cb_code, cb_name, close_price, volume_lots, source, collected_at)
+            (trade_date, cb_code, cb_name, close_price, reference_price, volume_lots,
+             source, collected_at)
         VALUES
-            (:trade_date, :cb_code, :cb_name, :close_price, :volume_lots, :source, :collected_at)
+            (:trade_date, :cb_code, :cb_name, :close_price, :reference_price,
+             :volume_lots, :source, :collected_at)
         ON CONFLICT(trade_date, cb_code) DO UPDATE SET
             cb_name = excluded.cb_name,
             close_price = excluded.close_price,
+            reference_price = excluded.reference_price,
             volume_lots = excluded.volume_lots,
             source = excluded.source,
             collected_at = excluded.collected_at

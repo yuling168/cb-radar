@@ -38,6 +38,7 @@ def test_backfill_skips_unpublished_dates_and_collects_exact_requested_days(monk
         "records_inserted": 30,
         "records_updated": 6,
         "unpublished_dates": 1,
+        "reference_price_count": 0,
         "request_count": 0,
         "dry_run": True,
     }

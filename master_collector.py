@@ -57,6 +57,7 @@ TPEX_REQUIRED_FIELDS = {
 TPEX_LIST_FIELDS = ["發行機構代碼", "發行機構名稱", "債券名稱", "掛牌日期", "發行資料"]
 TPEX_DELISTED_FIELDS = ["代碼", "簡稱", "下櫃日期"]
 MASTER_SOURCE = "TPEx:bond_ISSBD5_data+MOPS:t120sg01+t108sb08_1+TDCC:bookEntry"
+BOOTSTRAP_SOURCE = "TPEx:bond_ISSBD5_data+MOPS:t120sg01"
 MOPS_SOURCE = "MOPS:t120sg01"
 MOPS_ANNOUNCEMENT_SOURCE = "MOPS:t108sb08_1"
 TPEX_ISSUE_SOURCE = "TPEx:bond_ISSBD5_data"
@@ -721,6 +722,112 @@ def sync_tpex_lifecycle(
     with connect(db_path) as connection:
         upsert_master_data(connection, [], [], [], lifecycle_updates=lifecycle_updates)
     return len(lifecycle_updates)
+
+
+def bootstrap_new_tpex_masters(
+    db_path: Path | str,
+    issues: dict[str, dict[str, object]],
+    links: dict[str, str],
+    delistings: dict[str, dict[str, str]],
+    session: requests.Session,
+    as_of: date,
+    collected_at: str,
+    codes: set[str] | None = None,
+) -> tuple[int, int, int]:
+    """Create only newly active ordinary CB masters from verified TPEx/MOPS data."""
+    state = _load_existing_master_state(db_path)
+    selected_codes = codes if codes is not None else set(issues)
+    missing = sorted(selected_codes - set(issues))
+    if missing:
+        raise MasterFormatError(
+            f"Requested CBs are not active in TPEx issue data: {missing}"
+        )
+
+    lifecycle_updates = [
+        {
+            "cb_code": code,
+            "delisting_date": row["delisting_date"],
+            "delisting_reason": "已下市"
+            if row["delisting_date"] <= as_of.isoformat() else None,
+        }
+        for code, row in delistings.items()
+    ]
+    candidates = sorted(
+        code
+        for code in selected_codes
+        if code not in state.masters
+        and is_active_on(
+            str(issues[code]["issue_date"]),
+            delistings.get(code, {}).get("delisting_date"),
+            as_of,
+        )
+    )
+    masters: list[dict[str, object]] = []
+    events: list[dict[str, object]] = []
+    balances: list[dict[str, object]] = []
+    excluded_exchangeables: list[str] = []
+
+    for code in candidates:
+        master = dict(issues[code])
+        if code in links:
+            current_url = links[code]
+            snapshot = _get_mops_snapshot(session, current_url)
+        else:
+            current_url, snapshot = _latest_fallback_mops_snapshot(
+                session, master, as_of
+            )
+        _validate_snapshot(master, snapshot)
+        if snapshot["instrument_kind"] == "exchangeable":
+            excluded_exchangeables.append(code)
+            continue
+
+        cb_events, cb_balances, ambiguities = _history_for_cb(
+            session, master, current_url, snapshot, collected_at, as_of
+        )
+        _validate_ambiguous_monthly_prices(code, ambiguities, cb_events)
+        latest_event = latest_effective_event(cb_events, as_of)
+        master.update(
+            {
+                "issue_amount": snapshot["issue_amount"],
+                # TDCC owns the latest balance and may be unavailable on issue day.
+                "balance_amount": None,
+                "balance_date": None,
+                "issue_units": snapshot["issue_units"],
+                "current_conversion_price": latest_event["conversion_price"],
+                "current_conversion_price_effective_date": latest_event[
+                    "effective_date"
+                ],
+                "delisting_date": delistings.get(code, {}).get("delisting_date"),
+                "delisting_reason": None,
+                "source": BOOTSTRAP_SOURCE,
+                "source_url": (
+                    f"{TPEX_CB_ISSUE_URL} | {snapshot['source_url']} | "
+                    f"{latest_event['source_url']}"
+                ),
+                "collected_at": collected_at,
+            }
+        )
+        for key in (
+            "issue_conversion_price",
+            "series_number",
+            "tpex_reported_issue_amount",
+        ):
+            master.pop(key, None)
+        masters.append(master)
+        events.extend(cb_events)
+        balances.extend(cb_balances)
+
+    with connect(db_path) as connection:
+        master_count, event_count, balance_count = upsert_master_data(
+            connection,
+            masters,
+            events,
+            balances,
+            excluded_exchangeables,
+            lifecycle_updates,
+            as_of,
+        )
+    return master_count, event_count, balance_count
 
 
 def _get_mops_snapshot(
@@ -1572,6 +1679,26 @@ def collect_phase2_modules(
     collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     results: dict[str, dict[str, object]] = {}
 
+    if module in {"all", "tpex"}:
+        try:
+            issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
+            links = parse_tpex_mops_links(
+                _get_json(http, TPEX_CB_LISTED_URL)
+            )
+            delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
+            created, events, monthly = bootstrap_new_tpex_masters(
+                db_path, issues, links, delistings, http, as_of, collected_at, codes
+            )
+            results["tpex"] = {
+                "status": "success",
+                "updated": len(delistings),
+                "bootstrap": created,
+                "events": events,
+                "monthly": monthly,
+            }
+        except (requests.RequestException, MasterFormatError, ValueError) as exc:
+            results["tpex"] = {"status": "failed", "error": str(exc)}
+
     if module in {"all", "tdcc"}:
         try:
             tdcc_balances = _get_tdcc_book_entries(http)
@@ -1583,19 +1710,6 @@ def collect_phase2_modules(
             }
         except (requests.RequestException, MasterFormatError, ValueError) as exc:
             results["tdcc"] = {"status": "failed", "error": str(exc)}
-
-    if module in {"all", "tpex"}:
-        try:
-            parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
-            delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
-            if module in {"all", "tpex"}:
-                results["tpex"] = {
-                    "status": "success",
-                    "updated": sync_tpex_lifecycle(db_path, delistings, as_of),
-                }
-        except (requests.RequestException, MasterFormatError, ValueError) as exc:
-            if module in {"all", "tpex"}:
-                results["tpex"] = {"status": "failed", "error": str(exc)}
 
     if module in {"all", "mops"}:
         print("phase2_module_mops: start", flush=True)
@@ -1621,6 +1735,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"phase2_module_{name}: {result['status']}")
             if "updated" in result:
                 print(f"phase2_module_{name}_updated: {result['updated']}")
+            if "bootstrap" in result:
+                print(f"phase2_module_{name}_bootstrap: {result['bootstrap']}")
             if "error" in result:
                 print(f"phase2_module_{name}_error: {result['error']}")
             for warning in result.get("warnings", []):

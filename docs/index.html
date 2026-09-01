@@ -302,6 +302,7 @@
               <th aria-sort="none"><button type="button" data-sort="delisting_date">下市日期 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="delisting_reason">下市原因 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="reference_price">參考價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="p_close_price">母股收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="p_volume_lots">母股成交量（張） <span class="sort-mark"></span></button></th>
@@ -309,7 +310,7 @@
               <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="20">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="21">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -335,6 +336,7 @@
       delisting_date: "date",
       delisting_reason: "text",
       close_price: "number",
+      reference_price: "number",
       volume_lots: "number",
       p_close_price: "number",
       p_volume_lots: "number",
@@ -406,7 +408,7 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 20;
+        row.firstChild.colSpan = 21;
         elements.body.append(row);
         return;
       }
@@ -429,6 +431,7 @@
         row.append(cell(record.delisting_date));
         row.append(cell(record.delisting_reason));
         row.append(cell(record.close_price === null ? "" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
+        row.append(cell(record.reference_price === null ? "" : numberFormat.format(record.reference_price), `numeric ${record.reference_price === null ? "null" : ""}`));
         row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
         row.append(cell(record.p_close_price === null ? "" : numberFormat.format(record.p_close_price), `numeric ${record.p_close_price === null ? "null" : ""}`));
         row.append(cell(record.p_volume_lots === null ? "" : numberFormat.format(record.p_volume_lots), `numeric ${record.p_volume_lots === 0 ? "zero" : ""}`));
@@ -480,7 +483,7 @@
         elements.activeFilter.textContent = error.message;
         const row = document.createElement("tr");
         row.append(cell("無法載入行情資料，請稍後再試。", "state"));
-        row.firstChild.colSpan = 20;
+        row.firstChild.colSpan = 21;
         elements.body.replaceChildren(row);
       });
   </script>
