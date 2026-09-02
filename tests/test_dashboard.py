@@ -140,6 +140,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "close_price": 101.5,
         "reference_price": 99.5,
         "volume_lots": 12,
+        "remaining_days": 125,
         "p_close_price": 24.3,
         "p_volume_lots": 16839,
         "conversion_value": 60.75,
@@ -149,6 +150,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "put_date": None,
         "issue_units": 2000,
         "balance_date": "2026-08-29",
+        "balance_ratio": 99.15,
         "current_conversion_price": 35.5,
         "current_conversion_price_effective_date": "2026-07-31",
         "is_secured": "有",
@@ -160,6 +162,8 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
     missing_master = payload["records"][1]
     assert missing_master["issue_amount_yi"] is None
     assert missing_master["balance_units"] is None
+    assert missing_master["remaining_days"] is None
+    assert missing_master["balance_ratio"] is None
     assert missing_master["is_secured"] == "未知"
     assert missing_master["p_close_price"] is None
     assert missing_master["p_volume_lots"] is None
@@ -260,6 +264,19 @@ def test_balance_units_requires_exact_official_par_value():
         build_dashboard.balance_units_for_display(200_000_000, 2_000, 198_350_000)
 
 
+def test_remaining_days_uses_the_nearest_unexpired_put_or_maturity_date():
+    assert build_dashboard.remaining_days("2026-08-29", "2026-09-10", "2027-01-01") == 12
+    assert build_dashboard.remaining_days("2026-08-29", "2026-08-28", "2027-01-01") == 125
+    assert build_dashboard.remaining_days("2026-08-29", "2026-08-28", None) is None
+    assert build_dashboard.remaining_days("2026-08-29", None, None) is None
+
+
+def test_balance_ratio_requires_a_positive_issue_unit_count():
+    assert build_dashboard.balance_ratio(198_300_000, 2_000) == 99.15
+    assert build_dashboard.balance_ratio(None, 2_000) is None
+    assert build_dashboard.balance_ratio(198_300_000, 0) is None
+
+
 def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     source = DASHBOARD_PATH.read_text(encoding="utf-8")
     parser = DashboardHeaderParser()
@@ -271,10 +288,12 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "issue_date",
         "maturity_date",
         "put_date",
+        "remaining_days",
         "issue_units",
         "issue_amount_yi",
         "balance_units",
         "balance_date",
+        "balance_ratio",
         "current_conversion_price",
         "current_conversion_price_effective_date",
         "is_secured",
@@ -293,6 +312,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert ".sticky-name {\n      position: sticky;\n      left: 0;" in source
     assert 'issue_units: "number"' in source
     assert 'balance_date: "date"' in source
+    assert 'remaining_days: "number"' in source
+    assert 'balance_ratio: "number"' in source
     assert 'p_close_price: "number"' in source
     assert 'reference_price: "number"' in source
     assert 'p_volume_lots: "number"' in source

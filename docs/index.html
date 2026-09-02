@@ -292,10 +292,12 @@
               <th aria-sort="none"><button type="button" data-sort="issue_date">發行日 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="maturity_date">到期日 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="put_date">首次賣回日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="remaining_days">剩餘天數 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="issue_units">發行張數 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="issue_amount_yi">發行總額（億元） <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="balance_units">餘額張數 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="balance_date">餘額日期 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_ratio">餘額比例 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="current_conversion_price">最新轉換價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="current_conversion_price_effective_date">轉換價生效日 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="is_secured">擔保 <span class="sort-mark"></span></button></th>
@@ -310,7 +312,7 @@
               <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="21">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="23">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -330,10 +332,12 @@
       issue_date: "date",
       maturity_date: "date",
       put_date: "date",
+      remaining_days: "number",
       issue_units: "number",
       issue_amount_yi: "number",
       balance_units: "number",
       balance_date: "date",
+      balance_ratio: "number",
       current_conversion_price: "number",
       current_conversion_price_effective_date: "date",
       is_secured: "text",
@@ -412,7 +416,7 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 21;
+        row.firstChild.colSpan = 23;
         elements.body.append(row);
         return;
       }
@@ -425,10 +429,12 @@
         row.append(cell(record.issue_date));
         row.append(cell(record.maturity_date));
         row.append(cell(record.put_date));
+        row.append(cell(record.remaining_days === null ? "" : numberFormat.format(record.remaining_days), `numeric ${record.remaining_days === null ? "null" : ""}`));
         row.append(cell(record.issue_units === null ? "" : numberFormat.format(record.issue_units), "numeric"));
         row.append(cell(record.issue_amount_yi === null ? "" : numberFormat.format(record.issue_amount_yi), "numeric"));
         row.append(cell(record.balance_units === null ? "" : numberFormat.format(record.balance_units), "numeric"));
         row.append(cell(record.balance_date));
+        row.append(cell(record.balance_ratio === null ? "" : `${valuationFormat.format(record.balance_ratio)}%`, `numeric ${record.balance_ratio === null ? "null" : ""}`));
         row.append(cell(record.current_conversion_price === null ? "" : numberFormat.format(record.current_conversion_price), "numeric"));
         row.append(cell(record.current_conversion_price_effective_date));
         row.append(cell(record.is_secured));
@@ -487,7 +493,7 @@
         elements.activeFilter.textContent = error.message;
         const row = document.createElement("tr");
         row.append(cell("無法載入行情資料，請稍後再試。", "state"));
-        row.firstChild.colSpan = 21;
+        row.firstChild.colSpan = 23;
         elements.body.replaceChildren(row);
       });
   </script>

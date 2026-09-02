@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 
@@ -65,6 +66,27 @@ def balance_units_for_display(
     if balance_amount < 0 or balance_amount % par_value != 0:
         raise RuntimeError("cb_master balance amount is not a whole CB unit")
     return balance_amount // par_value
+
+
+def remaining_days(
+    trade_date: str, put_date: str | None, maturity_date: str | None
+) -> int | None:
+    """Return the nearest put or maturity date that has not passed."""
+    as_of = date.fromisoformat(trade_date)
+    candidates = [
+        (date.fromisoformat(value) - as_of).days
+        for value in (put_date, maturity_date)
+        if value is not None and date.fromisoformat(value) >= as_of
+    ]
+    return min(candidates) if candidates else None
+
+
+def balance_ratio(
+    balance_amount: int | None, issue_units: int | None
+) -> float | None:
+    if balance_amount is None or issue_units is None or issue_units <= 0:
+        return None
+    return balance_amount / 100_000 / issue_units * 100
 
 
 def load_rows() -> list[dict[str, object]]:
@@ -151,6 +173,10 @@ def load_rows() -> list[dict[str, object]]:
             record["balance_units"] = balance_units_for_display(
                 issue_amount, issue_units, balance_amount
             )
+            record["remaining_days"] = remaining_days(
+                str(record["trade_date"]), record["put_date"], record["maturity_date"]
+            )
+            record["balance_ratio"] = balance_ratio(balance_amount, issue_units)
             record["p_volume_lots"] = (
                 p_volume_shares // 1_000 if p_volume_shares is not None else None
             )
