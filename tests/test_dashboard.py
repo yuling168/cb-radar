@@ -288,12 +288,10 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "issue_date",
         "maturity_date",
         "put_date",
-        "remaining_days",
         "issue_units",
         "issue_amount_yi",
         "balance_units",
         "balance_date",
-        "balance_ratio",
         "current_conversion_price",
         "current_conversion_price_effective_date",
         "is_secured",
@@ -306,6 +304,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "p_volume_lots",
         "conversion_value",
         "premium_rate",
+        "balance_ratio",
+        "remaining_days",
     ]
     assert all(header["aria-sort"] == "none" for header in parser.headers)
     assert "thead th {\n      position: sticky;\n      top: 0;" in source
