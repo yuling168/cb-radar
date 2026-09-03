@@ -77,6 +77,65 @@ CREATE TABLE IF NOT EXISTS stock_daily_market (
 
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_stock_date
     ON stock_daily_market (p_stock_code, trade_date);
+
+CREATE TABLE IF NOT EXISTS announcement_fetch (
+    fetch_id INTEGER PRIMARY KEY,
+    source_market TEXT NOT NULL CHECK (source_market IN ('TWSE', 'TPEX')),
+    requested_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL CHECK (status IN ('started', 'succeeded', 'failed')),
+    http_status INTEGER,
+    api_batch_date_roc TEXT,
+    api_batch_date TEXT,
+    row_count INTEGER,
+    payload_sha256 TEXT,
+    snapshot_id INTEGER,
+    error_message TEXT,
+    FOREIGN KEY (snapshot_id) REFERENCES announcement_snapshot(snapshot_id)
+);
+
+CREATE TABLE IF NOT EXISTS announcement_snapshot (
+    snapshot_id INTEGER PRIMARY KEY,
+    fetch_id INTEGER NOT NULL REFERENCES announcement_fetch(fetch_id),
+    source_market TEXT NOT NULL CHECK (source_market IN ('TWSE', 'TPEX')),
+    api_batch_date_roc TEXT NOT NULL,
+    api_batch_date TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (source_market, api_batch_date, payload_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS company_announcements (
+    announcement_id INTEGER PRIMARY KEY,
+    source_market TEXT NOT NULL CHECK (source_market IN ('TWSE', 'TPEX')),
+    company_code TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    api_batch_date_roc TEXT NOT NULL,
+    api_batch_date TEXT NOT NULL,
+    spoken_date_roc TEXT NOT NULL,
+    spoken_date TEXT NOT NULL,
+    spoken_time TEXT NOT NULL,
+    fact_date_roc TEXT,
+    fact_date TEXT,
+    clause TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    subject_sha256 TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    logical_key TEXT NOT NULL,
+    event_key TEXT NOT NULL UNIQUE,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    first_snapshot_id INTEGER NOT NULL REFERENCES announcement_snapshot(snapshot_id),
+    last_snapshot_id INTEGER NOT NULL REFERENCES announcement_snapshot(snapshot_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_announcements_company_date
+    ON company_announcements (source_market, company_code, spoken_date);
+
+CREATE INDEX IF NOT EXISTS idx_company_announcements_fact_date
+    ON company_announcements (fact_date);
 """
 
 
