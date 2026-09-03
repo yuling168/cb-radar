@@ -984,8 +984,11 @@ def _announcement_redemption_dates(
     with connect(db_path) as connection:
         for stock_code, codes in codes_by_stock.items():
             rows = connection.execute(
-                "SELECT subject, body FROM company_announcements WHERE company_code = ?",
-                (stock_code,),
+                """SELECT subject, body FROM company_announcements WHERE company_code = ?
+                   UNION ALL
+                   SELECT subject, body FROM historical_company_announcements
+                   WHERE company_code = ?""",
+                (stock_code, stock_code),
             ).fetchall()
             for code in codes:
                 dates = set()

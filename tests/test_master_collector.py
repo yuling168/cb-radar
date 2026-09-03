@@ -879,6 +879,19 @@ def test_announcement_history_redemption_lookup_uses_exact_code_and_rejects_conf
         _announcement_redemption_dates(db_path, candidates, masters, date(2026, 9, 3))
 
 
+def test_historical_announcement_is_idempotent_and_drives_redemption_lifecycle(tmp_path):
+    db_path = tmp_path / "history.db"
+    row = ("1560", "中砂", "2026-07-15", "16:24:27", "15601行使債券贖回權",
+           "15601行使債券贖回權，轉換公司債收回基準日：115年09月02日",
+           "https://mops.example/detail", "MOPS_HISTORICAL_DETAIL", "15601-20260715", "2026-09-03T00:00:00+00:00")
+    with connect(db_path) as connection:
+        connection.execute("INSERT INTO historical_company_announcements (company_code, company_name, spoken_date, spoken_time, subject, body, source_url, source_type, event_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        connection.execute("INSERT INTO historical_company_announcements (company_code, company_name, spoken_date, spoken_time, subject, body, source_url, source_type, event_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(event_key) DO NOTHING", row)
+        assert connection.execute("SELECT COUNT(*) FROM historical_company_announcements").fetchone()[0] == 1
+    dates = _announcement_redemption_dates(db_path, {"15601": {"delisting_date": "2026-09-03"}}, {"15601": {"stock_code": "1560"}}, date(2026, 9, 3))
+    assert dates == {"15601": "2026-09-02"}
+
+
 def test_exchangeable_cleanup_removes_master_and_children(tmp_path):
     collected = "2026-08-29T00:00:00+00:00"
     master = {

@@ -136,6 +136,23 @@ CREATE INDEX IF NOT EXISTS idx_company_announcements_company_date
 
 CREATE INDEX IF NOT EXISTS idx_company_announcements_fact_date
     ON company_announcements (fact_date);
+
+CREATE TABLE IF NOT EXISTS historical_company_announcements (
+    historical_announcement_id INTEGER PRIMARY KEY,
+    company_code TEXT NOT NULL,
+    company_name TEXT NOT NULL,
+    spoken_date TEXT NOT NULL,
+    spoken_time TEXT,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK (source_type = 'MOPS_HISTORICAL_DETAIL'),
+    event_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_company_announcements_company_date
+    ON historical_company_announcements (company_code, spoken_date);
 """
 
 
