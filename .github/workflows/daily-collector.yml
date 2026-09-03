@@ -2,7 +2,7 @@ name: CB Daily Collector
 
 on:
   schedule:
-    - cron: "30 12 * * 1-5"
+    - cron: "30 11 * * 1-5"
   workflow_dispatch:
 
 permissions:
@@ -64,6 +64,15 @@ jobs:
           python stock_collector.py
           --date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
+
+      - name: Collect daily company announcements
+        # This collector runs TWSE and TPEx independently.  It records every
+        # failed attempt in announcement_fetch, retains any successful market,
+        # then exits non-zero if either market ultimately fails.
+        run: >
+          python announcement_collector.py
+          --db data/cb_history.db
+          --market all
 
       - name: Validate CB history database
         shell: bash
