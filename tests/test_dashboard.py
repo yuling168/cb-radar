@@ -271,6 +271,15 @@ def test_remaining_days_uses_the_nearest_unexpired_put_or_maturity_date():
     assert build_dashboard.remaining_days("2026-08-29", None, None) is None
 
 
+def test_remaining_days_is_zero_only_on_or_after_formal_delisting_date():
+    assert build_dashboard.remaining_days(
+        "2026-09-02", "2027-06-24", "2029-06-24", "2026-09-03"
+    ) == 295
+    assert build_dashboard.remaining_days(
+        "2026-09-03", "2027-06-24", "2029-06-24", "2026-09-03"
+    ) == 0
+
+
 def test_balance_ratio_requires_a_positive_issue_unit_count():
     assert build_dashboard.balance_ratio(198_300_000, 2_000) == 99.15
     assert build_dashboard.balance_ratio(None, 2_000) is None

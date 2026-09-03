@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS cb_master (
     is_secured INTEGER CHECK (is_secured IN (0, 1) OR is_secured IS NULL),
     delisting_date TEXT,
     delisting_reason TEXT CHECK (
-        delisting_reason IN ('提前贖回', '到期', '已下市')
+        delisting_reason IN ('已贖回', '提前贖回', '到期', '已下市')
         OR delisting_reason IS NULL
     ),
     source TEXT NOT NULL,
@@ -80,6 +80,43 @@ CREATE INDEX IF NOT EXISTS idx_stock_daily_market_stock_date
 """
 
 
+def _migrate_delisting_reason_constraint(connection: sqlite3.Connection) -> None:
+    """Allow the confirmed redemption lifecycle reason without losing history."""
+    table_sql = connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'cb_master'"
+    ).fetchone()[0]
+    if "'已贖回'" in table_sql:
+        return
+    columns = (
+        "cb_code, cb_name, stock_code, stock_name, issue_date, maturity_date, "
+        "put_date, issue_units, issue_amount, balance_amount, balance_date, "
+        "current_conversion_price, current_conversion_price_effective_date, "
+        "is_secured, delisting_date, delisting_reason, source, source_url, collected_at"
+    )
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute(
+        """
+        CREATE TABLE cb_master_replacement (
+            cb_code TEXT PRIMARY KEY, cb_name TEXT NOT NULL, stock_code TEXT NOT NULL,
+            stock_name TEXT NOT NULL, issue_date TEXT NOT NULL, maturity_date TEXT NOT NULL,
+            put_date TEXT, issue_units INTEGER, issue_amount INTEGER NOT NULL,
+            balance_amount INTEGER, balance_date TEXT, current_conversion_price REAL,
+            current_conversion_price_effective_date TEXT,
+            is_secured INTEGER CHECK (is_secured IN (0, 1) OR is_secured IS NULL),
+            delisting_date TEXT,
+            delisting_reason TEXT CHECK (delisting_reason IN ('已贖回', '提前贖回', '到期', '已下市') OR delisting_reason IS NULL),
+            source TEXT NOT NULL, source_url TEXT NOT NULL, collected_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        f"INSERT INTO cb_master_replacement ({columns}) SELECT {columns} FROM cb_master"
+    )
+    connection.execute("DROP TABLE cb_master")
+    connection.execute("ALTER TABLE cb_master_replacement RENAME TO cb_master")
+    connection.execute("PRAGMA foreign_keys = ON")
+
+
 def connect(db_path: Path | str) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,9 +145,10 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     if "delisting_reason" not in columns:
         connection.execute(
             "ALTER TABLE cb_master ADD COLUMN delisting_reason TEXT "
-            "CHECK (delisting_reason IN ('提前贖回', '到期', '已下市') "
+            "CHECK (delisting_reason IN ('已贖回', '提前贖回', '到期', '已下市') "
             "OR delisting_reason IS NULL)"
         )
+    _migrate_delisting_reason_constraint(connection)
     daily_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(cb_daily)")
     }

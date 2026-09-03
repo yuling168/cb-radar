@@ -30,6 +30,7 @@ from master_collector import (
     issue_amount_yi_for_display,
     is_complete_reporting_month,
     is_active_on,
+    has_mops_forced_redemption_announcement,
     month_end_date,
     parse_mops_conversion_announcements,
     parse_mops_rules_conversion_events,
@@ -815,6 +816,34 @@ def test_lifecycle_sync_is_append_only(tmp_path):
             ("68061",),
         ).fetchone()
     assert tuple(row) == ("2026-06-23", "已下市")
+
+
+def test_mops_forced_redemption_reason_replaces_only_delisting_fallback(tmp_path):
+    assert has_mops_forced_redemption_announcement(
+        "公告中砂一(代碼：15601)發行公司行使債券贖回權暨訂於115年09月03日終止櫃檯買賣。",
+        "15601",
+    )
+    assert not has_mops_forced_redemption_announcement(
+        "公告中砂一(代碼：15601)終止櫃檯買賣。", "15601"
+    )
+    master = {
+        "cb_code": "15601", "cb_name": "中砂一", "stock_code": "1560",
+        "stock_name": "中砂", "issue_date": "2024-06-24", "maturity_date": "2029-06-24",
+        "put_date": None, "issue_units": 10_000, "issue_amount": 1_000_000_000,
+        "balance_amount": 2_500_000, "current_conversion_price": 282.7,
+        "current_conversion_price_effective_date": "2026-07-22", "is_secured": 0,
+        "source": "official", "source_url": MOPS_URL, "collected_at": "2026-09-03T00:00:00+00:00",
+    }
+    with connect(tmp_path / "lifecycle.db") as connection:
+        upsert_master_data(connection, [master], [], [])
+    sync_tpex_lifecycle(
+        tmp_path / "lifecycle.db", {"15601": {"delisting_date": "2026-09-03"}},
+        date(2026, 9, 3), {"15601"},
+    )
+    with connect(tmp_path / "lifecycle.db") as connection:
+        assert tuple(connection.execute(
+            "SELECT delisting_date, delisting_reason FROM cb_master WHERE cb_code = '15601'"
+        ).fetchone()) == ("2026-09-03", "已贖回")
 
 
 def test_exchangeable_cleanup_removes_master_and_children(tmp_path):
