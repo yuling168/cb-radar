@@ -2,7 +2,14 @@ from datetime import date
 import pytest
 from db import active_parent_stock_codes_on, connect, upsert_daily
 from institutional_collector import InstitutionalSourceError, parse_tpex, parse_twse
-from active_etf_collector import ActiveEtfSourceError, parse_nomura_00980a, save_nomura_00980a
+from active_etf_collector import (
+    ActiveEtfSourceError,
+    parse_capital,
+    parse_nomura,
+    parse_nomura_00980a,
+    save_capital,
+    save_nomura_00980a,
+)
 
 def test_twse_institutional_parser_keeps_share_units():
     payload = {"stat":"OK", "date":"20260903", "fields":["證券代號","證券名稱","外陸資買進股數(不含外資自營商)","外陸資賣出股數(不含外資自營商)","外陸資買賣超股數(不含外資自營商)","投信買進股數","投信賣出股數","投信買賣超股數"], "data":[["1101","台泥","6,815,000","12,749,846","-5,934,846","284,000","0","284,000"]]}
@@ -49,6 +56,67 @@ def test_active_universe_excludes_delisted_and_filters_etf_rows(tmp_path):
 def test_missing_etf_holdings_never_become_zero():
     with pytest.raises(ActiveEtfSourceError, match="no stock holdings"):
         parse_nomura_00980a({"etfCode":"00980A", "tradeDate":"2026-09-03", "stocks":[]}, date(2026,9,3))
+
+def test_nomura_00985a_uses_same_official_pcf_shape():
+    rows = parse_nomura({"etfCode":"00985A", "tradeDate":"2026-09-03", "stocks":[{"code":"2330","name":"台積電","shares":1000}]}, date(2026,9,3), "00985A")
+    assert rows[0]["etf_code"] == "00985A"
+    assert rows[0]["holding_shares"] == 1000
+
+
+@pytest.mark.parametrize(("etf_code", "fund_name"), [
+    ("00982A", "群益台灣精選強棒主動式ETF基金"),
+    ("00992A", "群益科技創新主動式ETF基金"),
+])
+def test_capital_parses_official_holdings_for_both_etfs(etf_code, fund_name):
+    rows = parse_capital({"code": 200, "data": {"pcf": {
+        "date1": "2026-09-03", "fundName": fund_name}, "stocks": [{
+        "stocNo": "2330", "stocName": "台積電", "share": 1794000.0,
+        "shareFormat": "1,794,000"}]}}, date(2026, 9, 3), etf_code)
+    assert rows[0]["etf_name"] == fund_name
+    assert rows[0]["holding_shares"] == 1794000
+    assert rows[0]["source_identifier"] == f"capital-etf-buyback-{etf_code.lower()}"
+
+
+def test_capital_accepts_requested_historical_date():
+    rows = parse_capital({"data": {"pcf": {"date1": "2026-09-02", "fundName": "群益科技創新主動式ETF基金"},
+        "stocks": [{"stocNo": "2317", "stocName": "鴻海", "share": 5000}]}},
+        date(2026, 9, 2), "00992A")
+    assert rows[0]["trade_date"] == "2026-09-02"
+
+
+def test_capital_rejects_date_mismatch_and_fractional_shares():
+    with pytest.raises(ActiveEtfSourceError, match="not the requested"):
+        parse_capital({"data": {"pcf": {"date1": "2026-09-02", "fundName": "群益"}, "stocks": [
+            {"stocNo": "2330", "stocName": "台積電", "share": 1}]}}, date(2026, 9, 3), "00982A")
+    with pytest.raises(ActiveEtfSourceError, match="shares are invalid"):
+        parse_capital({"data": {"pcf": {"date1": "2026-09-03", "fundName": "群益"}, "stocks": [
+            {"stocNo": "2330", "stocName": "台積電", "share": 1.5}]}}, date(2026, 9, 3), "00982A")
+
+
+@pytest.mark.parametrize("payload", [
+    {"data": {"pcf": {"fundName": "群益"}, "stocks": [{"stocNo": "2330", "stocName": "台積電", "share": 1}]}},
+    {"data": {"pcf": {"date1": "2026-09-03", "fundName": "群益"}, "stocks": [{"stocName": "台積電", "share": 1}]}},
+    {"data": {"pcf": {"date1": "2026-09-03", "fundName": "群益"}, "stocks": [{"stocNo": "2330", "share": 1}]}},
+    {"data": {"pcf": {"date1": "2026-09-03", "fundName": "群益"}, "stocks": [{"stocNo": "2330", "stocName": "台積電"}]}},
+])
+def test_capital_rejects_missing_required_date_or_holding_fields(payload):
+    with pytest.raises(ActiveEtfSourceError):
+        parse_capital(payload, date(2026, 9, 3), "00982A")
+
+
+def test_capital_persists_only_active_cb_parent_holdings(tmp_path):
+    holdings = parse_capital({"data": {"pcf": {"date1": "2026-09-03", "fundName": "群益台灣精選強棒主動式ETF基金"}, "stocks": [
+        {"stocNo": "2330", "stocName": "台積電", "share": 1000},
+        {"stocNo": "9999", "stocName": "非CB母股", "share": 2000}]}}, date(2026, 9, 3), "00982A")
+    with connect(tmp_path / "db.sqlite") as con:
+        con.execute("""INSERT INTO cb_master (cb_code,cb_name,stock_code,stock_name,issue_date,maturity_date,issue_amount,source,source_url,collected_at)
+                       VALUES ('23301','台積一','2330','台積電','2025-01-01','2030-01-01',100000000,'test','test','x')""")
+        assert save_capital(con, holdings) == (1, 0)
+        assert con.execute("SELECT etf_name FROM active_etf_master WHERE etf_code = '00982A'").fetchone()[0] == "群益台灣精選強棒主動式ETF基金"
+        rows = [tuple(row) for row in con.execute(
+            "SELECT stock_code, holding_shares FROM active_etf_holdings"
+        ).fetchall()]
+        assert rows == [("2330", 1000)]
 
 def test_new_schema_is_created_without_touching_daily_data(tmp_path):
     with connect(tmp_path / "db.sqlite") as con:
