@@ -78,6 +78,54 @@ CREATE TABLE IF NOT EXISTS stock_daily_market (
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_stock_date
     ON stock_daily_market (p_stock_code, trade_date);
 
+CREATE TABLE IF NOT EXISTS institutional_daily (
+    trade_date TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    market TEXT NOT NULL CHECK (market IN ('TWSE', 'TPEX')),
+    foreign_buy_shares INTEGER NOT NULL,
+    foreign_sell_shares INTEGER NOT NULL,
+    foreign_net_shares INTEGER NOT NULL,
+    trust_buy_shares INTEGER NOT NULL,
+    trust_sell_shares INTEGER NOT NULL,
+    trust_net_shares INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_institutional_daily_stock_date
+    ON institutional_daily (stock_code, trade_date);
+
+CREATE TABLE IF NOT EXISTS active_etf_master (
+    etf_code TEXT PRIMARY KEY,
+    etf_name TEXT NOT NULL,
+    manager_name TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_identifier TEXT NOT NULL UNIQUE,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    last_status TEXT NOT NULL CHECK (last_status IN ('pending', 'succeeded', 'failed')),
+    last_error TEXT,
+    last_checked_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS active_etf_holdings (
+    trade_date TEXT NOT NULL,
+    etf_code TEXT NOT NULL,
+    etf_name TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    holding_shares INTEGER NOT NULL CHECK (holding_shares >= 0),
+    source_url TEXT NOT NULL,
+    source_identifier TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, etf_code, stock_code),
+    FOREIGN KEY (etf_code) REFERENCES active_etf_master(etf_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_stock_date
+    ON active_etf_holdings (stock_code, trade_date);
+
 CREATE TABLE IF NOT EXISTS announcement_fetch (
     fetch_id INTEGER PRIMARY KEY,
     source_market TEXT NOT NULL CHECK (source_market IN ('TWSE', 'TPEX')),
@@ -450,6 +498,26 @@ def parent_stock_codes_for_trade_date(
     return {str(row[0]) for row in rows}
 
 
+def active_parent_stock_codes_on(
+    connection: sqlite3.Connection, on_date: str
+) -> set[str]:
+    """Current-CB parent stocks only; deduplicated even when several CBs share one stock.
+
+    This is deliberately based on the master lifecycle, rather than an all-market
+    source response or historical cb_daily rows.
+    """
+    rows = connection.execute(
+        """
+        SELECT DISTINCT stock_code
+        FROM cb_master
+        WHERE issue_date <= ?
+          AND (delisting_date IS NULL OR delisting_date > ?)
+        """,
+        (on_date, on_date),
+    )
+    return {str(row[0]) for row in rows}
+
+
 def upsert_stock_daily_market(
     connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
 ) -> tuple[int, int]:
@@ -496,6 +564,70 @@ def upsert_stock_daily_market(
             rows,
         )
     return len(rows) - len(existing), len(existing)
+
+
+def upsert_institutional_daily(
+    connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
+) -> tuple[int, int]:
+    """Upsert only complete official institutional observations (all units: shares)."""
+    rows = [dict(row) for row in records]
+    for row in rows:
+        for key in ("foreign_buy_shares", "foreign_sell_shares", "foreign_net_shares",
+                    "trust_buy_shares", "trust_sell_shares", "trust_net_shares"):
+            if isinstance(row[key], bool) or not isinstance(row[key], int):
+                raise ValueError(f"{key} must be an integer number of shares")
+    keys = [(row["trade_date"], row["stock_code"]) for row in rows]
+    existing = sum(bool(connection.execute(
+        "SELECT 1 FROM institutional_daily WHERE trade_date=? AND stock_code=?", key
+    ).fetchone()) for key in keys)
+    with connection:
+        connection.executemany("""
+            INSERT INTO institutional_daily VALUES (
+              :trade_date,:stock_code,:stock_name,:market,:foreign_buy_shares,
+              :foreign_sell_shares,:foreign_net_shares,:trust_buy_shares,
+              :trust_sell_shares,:trust_net_shares,:source_url,:collected_at)
+            ON CONFLICT(trade_date,stock_code) DO UPDATE SET
+              stock_name=excluded.stock_name, market=excluded.market,
+              foreign_buy_shares=excluded.foreign_buy_shares,
+              foreign_sell_shares=excluded.foreign_sell_shares,
+              foreign_net_shares=excluded.foreign_net_shares,
+              trust_buy_shares=excluded.trust_buy_shares,
+              trust_sell_shares=excluded.trust_sell_shares,
+              trust_net_shares=excluded.trust_net_shares,
+              source_url=excluded.source_url, collected_at=excluded.collected_at
+        """, rows)
+    return len(rows) - existing, existing
+
+
+def upsert_active_etf_holdings(
+    connection: sqlite3.Connection, master: Mapping[str, object], holdings: Iterable[Mapping[str, object]]
+) -> tuple[int, int]:
+    """Save a validated raw holding snapshot; absent rows are never synthesized."""
+    rows = [dict(row) for row in holdings]
+    for row in rows:
+        if isinstance(row["holding_shares"], bool) or not isinstance(row["holding_shares"], int) or row["holding_shares"] < 0:
+            raise ValueError("holding_shares must be a non-negative integer number of shares")
+    with connection:
+        connection.execute("""
+          INSERT INTO active_etf_master VALUES (:etf_code,:etf_name,:manager_name,:source_url,
+            :source_identifier,:enabled,:last_status,:last_error,:last_checked_at)
+          ON CONFLICT(etf_code) DO UPDATE SET etf_name=excluded.etf_name,
+            manager_name=excluded.manager_name,source_url=excluded.source_url,
+            source_identifier=excluded.source_identifier,enabled=excluded.enabled,
+            last_status=excluded.last_status,last_error=excluded.last_error,last_checked_at=excluded.last_checked_at
+        """, dict(master))
+        keys = [(row["trade_date"], row["etf_code"], row["stock_code"]) for row in rows]
+        existing = sum(bool(connection.execute(
+            "SELECT 1 FROM active_etf_holdings WHERE trade_date=? AND etf_code=? AND stock_code=?", key
+        ).fetchone()) for key in keys)
+        connection.executemany("""
+          INSERT INTO active_etf_holdings VALUES (:trade_date,:etf_code,:etf_name,:stock_code,
+            :stock_name,:holding_shares,:source_url,:source_identifier,:collected_at)
+          ON CONFLICT(trade_date,etf_code,stock_code) DO UPDATE SET stock_name=excluded.stock_name,
+            holding_shares=excluded.holding_shares,source_url=excluded.source_url,
+            source_identifier=excluded.source_identifier,collected_at=excluded.collected_at
+        """, rows)
+    return len(rows) - existing, existing
 
 
 def query_company_cbs(
