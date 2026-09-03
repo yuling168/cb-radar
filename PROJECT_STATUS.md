@@ -6,18 +6,16 @@ CB Radar 的目標是建立台灣可轉換公司債（CB）資料與分析系統
 
 ## 2. Current Phase
 
-**Phase 1：Daily CB Market Data Collection + Dashboard** 已完成並上線。
-
-目前進入 **Phase 2：CB Basic Data Layer**。官方 TPEx／MOPS master collector、schema 與首批 5 檔驗證資料已完成，但尚未納入既有每日 GitHub Actions；策略功能仍未實作。
+Phase 1～3 與公告歷史層已納入正式每日 workflow；策略、通知與事件分類仍未實作。
 
 ## 3. Current Data Flow
 
 ```text
-TPEx 官方每日 CB 資料
+GitHub Actions（週一～週五台灣 19:30）
 ↓
-GitHub Actions
+Phase 1：TPEx CB 行情 → announcement collector（TWSE／TPEx）
 ↓
-collector.py
+Phase 2：CB Master／lifecycle → Phase 3：母股行情
 ↓
 data/cb_history.db
 ↓
@@ -69,11 +67,13 @@ CREATE TABLE cb_daily (
 
 Workflow：`.github/workflows/daily-collector.yml`
 
-- cron：`30 12 * * 1-5`，即星期一至星期五 UTC 12:30／台灣時間 20:30。
+- cron：`30 11 * * 1-5`，即星期一至星期五 UTC 11:30／台灣時間 19:30。
 - 支援 `workflow_dispatch` 手動執行。
 - Runner：`ubuntu-latest`；Python：3.11。
 - 安裝：`python -m pip install -r requirements.txt`。
-- Collector：`python collector.py`，未指定日期時向前尋找最近 14 天內已發布的有效交易日。
+- 順序：Phase 1 `collector.py` → `announcement_collector.py` → Phase 2 `master_collector.py` → Phase 3 `stock_collector.py` → DB validation → Dashboard → 單一 commit/push。
+- 公告 collector 每日各抓一次 TWSE、TPEx；任一市場最終失敗會使 workflow failed，但已成功市場與 failed fetch 都保留。
+- `workflow_dispatch` 與排程使用相同流程；`CB Daily Collector #9` 已在 `96aec6b` 版本端到端成功（約 12 分 51 秒）。下一步觀察台灣時間 19:30 scheduled run。
 - Dashboard build：`python scripts/build_dashboard.py`。
 - 監看 `data/cb_history.db`、`docs/data.json`、`docs/index.html`；任一變更才 commit/push 回 `main`。
 - 自動 commit 使用 `github-actions[bot]`，push 使用內建 `GITHUB_TOKEN`，workflow 權限是 `contents: write`，不需要 PAT。
@@ -129,24 +129,28 @@ Workflow：`.github/workflows/daily-collector.yml`
 
 GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每日資料更新，不是功能里程碑。
 
-## 11. Not Implemented Yet
+## 11. Announcement History and Lifecycle
 
-- CB 基本資料層
-- 母股每日行情
-- 轉換價值
-- 溢價率
-- 剩餘比率
+- `announcement_fetch`：每次 TWSE／TPEx API 抓取結果；失敗不可當作零公告。
+- `announcement_snapshot`：完整官方 JSON raw snapshot，不覆寫。
+- `company_announcements`：正規化每日公告，以 logical/event key 冪等保存。
+- `historical_company_announcements`：公告歷史層建立前的官方歷史補洞；目前只接受 `MOPS_HISTORICAL_DETAIL`，不偽造 TWSE／TPEx snapshot，也不是 daily dependency。
+- 強制贖回優先讀每日公告，歷史補洞再讀 historical 表；精確 CB 代碼與「行使債券贖回權」後，唯一收回基準日覆寫 lifecycle。缺日期或衝突日期必須失敗。
+- 15601 中砂一：MOPS 2026-07-15 公告、收回基準日 2026-09-02、TPEx 終止交易日 2026-09-03；正式 lifecycle 為 `2026-09-02 / 已贖回`。
+
+## 12. Not Implemented Yet
+
 - 5MA
 - 20MA
 - A/B/C 策略雷達
 - 通知系統
 - AI 分析
 
-## 12. Planned Next Phase
+## 13. Planned Next Phase
 
-下一階段暫定為 **Phase 2：CB Basic Data Layer**。尚未開始開發。
+下一階段為公告事件分類、通知與策略功能；不得將它們混入每日保存／lifecycle 流程。
 
-## 13. How Future Codex Sessions Should Start
+## 14. How Future Codex Sessions Should Start
 
 新的 Codex session 在修改專案前，應依序閱讀：
 
@@ -161,7 +165,7 @@ GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每�
 
 不得只根據使用者口述直接大幅修改架構；描述與 repository 不一致時，以實際程式、schema、workflow 與測試為準並回報差異。
 
-## 14. Phase 2 CB Master Data
+## 15. Phase 2 CB Master Data
 
 - Collector：`master_collector.py`。
 - 規格：`SPEC/CB_MASTER_SPEC.md`。
@@ -176,5 +180,5 @@ GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每�
 - `cb_master.current_conversion_price_effective_date` 與最新有效價格由同一事件同步更新。
 - 新增資料表：`cb_master`、`conversion_price_events`、`cb_monthly_balance`。
 - 正式 DB 目前先保存 5 檔端到端驗證資料；執行時不帶 `--codes` 才會處理官方來源中的全部現行新台幣 CB。
-- Phase 2 尚未加入 GitHub Actions，也尚未開發任何策略。
+- Phase 2 已在 daily workflow 中於 announcement collector 後執行；公告可在同次 run 供 lifecycle 讀取。
 - 月申報可能落後已生效公告；Collector 會以 MOPS 官方轉換價格變更公告補強，並以生效日決定目前價格。

@@ -83,6 +83,8 @@ GitHub Pages
 - `volume_lots = 0` 明確顯示 `0`，不可顯示空白。
 - 顯示目前篩選結果筆數。
 - 資料載入失敗或沒有符合資料時，顯示清楚的狀態訊息。
+- `reference_price` 與 `close_price` 獨立保存；不可將 reference price 當作 close price。零成交 CB 的 close price 可為 `null`，premium 計算改用 reference price。
+- `已贖回` 的剩餘天數為 `max(delisting_date - trade_date, 0)`，不比較 put date 或 maturity date；其他下市仍維持既有 deadline 規則。
 
 ## Responsive Behavior
 

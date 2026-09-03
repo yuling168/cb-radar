@@ -20,7 +20,16 @@
 ### Not included
 
 - No strategy, moving average, conversion-value or notification features.
-- Phase 2 collector is not yet added to GitHub Actions.
+
+## 2026-09-03 — Daily announcement history and redemption lifecycle
+
+- Daily workflow: Phase 1 → announcement collector → Phase 2 → Phase 3 → validation → Dashboard → single commit/push, at weekdays 19:30 Asia/Taipei.
+- Added idempotent TWSE／TPEx official announcement history, raw snapshots and failure audit records.
+- Added one-time MOPS historical-detail backfill table; it is not a daily dependency.
+- Forced redemption lifecycle now uses saved official announcement bodies and the contractual redemption baseline date.
+- 15601 historical backfill completed: `2026-09-02 / 已贖回`.
+- Important commits: `064df8d`, `04eb459`, `af2db43`, `fb70e0b`, `b55bce8`, `afc5d8f`, `96aec6b`.
+- GitHub Actions `CB Daily Collector #9` completed end-to-end on the `96aec6b` workflow in about 12 minutes 51 seconds; next operational check is the scheduled 19:30 run.
 
 ## 2026-08-29 — Phase 1 completed
 

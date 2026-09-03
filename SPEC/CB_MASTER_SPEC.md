@@ -18,9 +18,11 @@
    - The current price is the newest official event whose effective date is not later than the Collector's Asia/Taipei run date.
 5. TPEx `https://www.tpex.org.tw/www/zh-tw/bond/convDelist`
    - Official recent delisting list and formal delisting date for ordinary delistings.
-6. MOPS `https://mopsov.twse.com.tw/mops/web/ajax_t05st01`
-   - For a notice explicitly exercising the issuer's redemption right, the detail
-     field `轉換公司債收回基準日` establishes the lifecycle date and reason `已贖回`.
+6. Saved official announcement history
+   - Daily TWSE／TPEx OpenAPI announcements in `company_announcements` are the
+     primary forced-redemption source. `historical_company_announcements` is
+     only for verified one-time MOPS historical backfills, never a daily MOPS
+     HTML/detail or `setArgs` dependency.
 
 No third-party website is an operational data source.
 
@@ -32,7 +34,7 @@ No third-party website is an operational data source.
 - The active universe is evaluated at the Asia/Taipei run date as
   `issue_date <= run_date AND (delisting_date IS NULL OR delisting_date > run_date)`.
   A bond announced to delist in the future therefore remains active until that
-  formal date. For a MOPS-confirmed forced redemption, `delisting_date` is the
+  formal date. For a confirmed forced redemption, `delisting_date` is the
   contractual `轉換公司債收回基準日`, not TPEx's following termination-trading date.
 - Delisted CBs are retained as historical rows. They and their price-event and
   monthly-balance history are never deleted merely because of delisting.
@@ -115,7 +117,7 @@ User-facing labels and formatting:
 - `current_conversion_price_effective_date` → `轉換價格生效日`.
 - `is_secured` 1 / 0 / `NULL` → `擔保` 有 / 無 / 未知.
 - `delisting_date` → `下市日期`, normalized to `YYYY-MM-DD`; `NULL` is blank in the UI.
-  For `已贖回`, this is MOPS `轉換公司債收回基準日`; otherwise it is TPEx's official
+  For `已贖回`, this is the saved official announcement's `轉換公司債收回基準日`; otherwise it is TPEx's official
   delisting date.
 - `delisting_reason` → `下市原因`; it is `NULL`, `提前贖回`, `到期`, or `已下市`.
   `NULL` is blank in the UI (never an empty string or a display value such as
