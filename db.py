@@ -97,6 +97,17 @@ CREATE TABLE IF NOT EXISTS institutional_daily (
 CREATE INDEX IF NOT EXISTS idx_institutional_daily_stock_date
     ON institutional_daily (stock_code, trade_date);
 
+CREATE TABLE IF NOT EXISTS institutional_coverage (
+    trade_date TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    market TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('COMPLETE','OFFICIAL_ZERO','UNAVAILABLE_MARKET','SOURCE_ERROR')),
+    reason TEXT,
+    source_url TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, stock_code)
+);
+
 CREATE TABLE IF NOT EXISTS active_etf_master (
     etf_code TEXT PRIMARY KEY,
     etf_name TEXT NOT NULL,
@@ -125,6 +136,16 @@ CREATE TABLE IF NOT EXISTS active_etf_holdings (
 
 CREATE INDEX IF NOT EXISTS idx_active_etf_holdings_stock_date
     ON active_etf_holdings (stock_code, trade_date);
+
+CREATE TABLE IF NOT EXISTS active_etf_collection_status (
+    trade_date TEXT NOT NULL,
+    etf_code TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    error_message TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, etf_code),
+    FOREIGN KEY (etf_code) REFERENCES active_etf_master(etf_code)
+);
 
 CREATE TABLE IF NOT EXISTS announcement_fetch (
     fetch_id INTEGER PRIMARY KEY,
@@ -599,6 +620,15 @@ def upsert_institutional_daily(
     return len(rows) - existing, existing
 
 
+def upsert_institutional_coverage(connection: sqlite3.Connection, rows: Iterable[Mapping[str, object]]) -> None:
+    with connection:
+        connection.executemany("""
+          INSERT INTO institutional_coverage VALUES (:trade_date,:stock_code,:market,:status,:reason,:source_url,:checked_at)
+          ON CONFLICT(trade_date,stock_code) DO UPDATE SET market=excluded.market,status=excluded.status,
+            reason=excluded.reason,source_url=excluded.source_url,checked_at=excluded.checked_at
+        """, [dict(row) for row in rows])
+
+
 def upsert_active_etf_holdings(
     connection: sqlite3.Connection, master: Mapping[str, object], holdings: Iterable[Mapping[str, object]]
 ) -> tuple[int, int]:
@@ -628,6 +658,23 @@ def upsert_active_etf_holdings(
             source_identifier=excluded.source_identifier,collected_at=excluded.collected_at
         """, rows)
     return len(rows) - existing, existing
+
+
+def upsert_active_etf_collection_status(
+    connection: sqlite3.Connection, status: Mapping[str, object]
+) -> None:
+    """Record one ETF source result; a failed source never implies zero holdings."""
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO active_etf_collection_status VALUES
+              (:trade_date, :etf_code, :status, :error_message, :checked_at)
+            ON CONFLICT(trade_date, etf_code) DO UPDATE SET
+              status=excluded.status, error_message=excluded.error_message,
+              checked_at=excluded.checked_at
+            """,
+            dict(status),
+        )
 
 
 def query_company_cbs(

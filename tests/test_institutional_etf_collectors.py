@@ -1,7 +1,7 @@
 from datetime import date
 import pytest
 from db import active_parent_stock_codes_on, connect, upsert_daily
-from institutional_collector import InstitutionalSourceError, parse_tpex, parse_twse
+from institutional_collector import InstitutionalSourceError, parse_tpex_daily_trade, parse_twse
 from active_etf_collector import (
     ActiveEtfSourceError,
     parse_capital,
@@ -17,24 +17,27 @@ def test_twse_institutional_parser_keeps_share_units():
     assert record["foreign_net_shares"] == -5934846
     assert record["trust_buy_shares"] == 284000
 
-def test_tpex_institutional_parser_normalizes_roc_date_and_negative_net():
-    payload = [{"Date":"1150903", "SecuritiesCompanyCode":"3131", "CompanyName":"弘塑",
-      "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy":"130024",
-      "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell":"130600",
-      "ForeignInvestorsInclude MainlandAreaInvestors-Difference":"-576",
-      "SecuritiesInvestmentTrustCompanies-TotalBuy":"500",
-      "SecuritiesInvestmentTrustCompanies-TotalSell":"0",
-      "SecuritiesInvestmentTrustCompanies-Difference":"500"}]
-    record = parse_tpex(payload, date(2026,9,3), {"3131"})["3131"]
+def test_tpex_dailytrade_parser_normalizes_historical_date_and_negative_net():
+    payload = {"columnNum":25, "stat":"ok", "date":"20260903", "tables":[{"fields":["代號","名稱"]+["買進股數","賣出股數","買賣超股數"]*7+["三大法人買賣超股數合計"], "data":[["3131","弘塑","130024","130600","-576","0","0","0","130024","130600","-576","500","0","500"]+["0"]*10]}]}
+    record = parse_tpex_daily_trade(payload, date(2026,9,3), {"3131"})["3131"]
     assert (record["market"], record["foreign_net_shares"], record["trust_net_shares"]) == ("TPEX", -576, 500)
 
 def test_tpex_missing_value_or_wrong_date_fails_without_zero_fill():
-    payload = [{"Date":"1150902", "SecuritiesCompanyCode":"3131", "CompanyName":"弘塑",
-      "ForeignInvestorsIncludeMainlandAreaInvestors-TotalBuy":"", "ForeignInvestorsIncludeMainlandAreaInvestors-TotalSell":"1",
-      "ForeignInvestorsInclude MainlandAreaInvestors-Difference":"-1", "SecuritiesInvestmentTrustCompanies-TotalBuy":"0",
-      "SecuritiesInvestmentTrustCompanies-TotalSell":"0", "SecuritiesInvestmentTrustCompanies-Difference":"0"}]
-    with pytest.raises(InstitutionalSourceError, match="not requested"):
-        parse_tpex(payload, date(2026,9,3), {"3131"})
+    payload = {"columnNum":25, "stat":"ok", "date":"20260902", "tables":[{"fields":["代號","名稱"]+["買進股數","賣出股數","買賣超股數"]*7+["三大法人買賣超股數合計"], "data":[["3131","弘塑",""]+["0"]*21]}]}
+    with pytest.raises(InstitutionalSourceError, match=r"not.*requested.*trade date"):
+        parse_tpex_daily_trade(payload, date(2026,9,3), {"3131"})
+
+def test_tpex_dailytrade_rejects_column_and_row_shape_or_non_integer():
+    fields = ["代號","名稱"] + ["買進股數","賣出股數","買賣超股數"] * 7 + ["三大法人買賣超股數合計"]
+    row = ["3131","弘塑","1","2","-1","0","0","0","0","0","0","500","0","500"] + ["0"] * 10
+    base = {"columnNum":25,"stat":"ok","date":"20260903","tables":[{"fields":fields,"data":[row]}]}
+    with pytest.raises(InstitutionalSourceError, match="required fields"):
+        parse_tpex_daily_trade({**base,"columnNum":24}, date(2026,9,3), {"3131"})
+    with pytest.raises(InstitutionalSourceError, match="row length"):
+        parse_tpex_daily_trade({**base,"tables":[{"fields":fields,"data":[row[:-1]]}]}, date(2026,9,3), {"3131"})
+    row[2] = "1.5"
+    with pytest.raises(InstitutionalSourceError, match="invalid official integer"):
+        parse_tpex_daily_trade(base, date(2026,9,3), {"3131"})
 
 def test_etf_holding_snapshot_is_raw_shares_and_idempotent(tmp_path):
     rows = parse_nomura_00980a({"etfCode":"00980A", "tradeDate":"2026-09-03", "stocks":[{"code":"2330","name":"台積電","shares":753000}]}, date(2026,9,3))

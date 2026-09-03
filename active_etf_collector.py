@@ -17,8 +17,27 @@ CAPITAL_ETFS = {
     "00982A": {"fund_id": "399"},
     "00992A": {"fund_id": "500"},
 }
+TRACKED_ACTIVE_ETF_CODES = ("00980A", "00985A", "00999A", "00982A", "00992A")
 
 class ActiveEtfSourceError(RuntimeError): pass
+
+
+def active_etf_source_metadata(etf_code: str):
+    """Metadata used to retain a clear per-ETF failure status in the pipeline."""
+    if etf_code in NOMURA_ETFS:
+        return {
+            "etf_code": etf_code, "etf_name": NOMURA_ETFS[etf_code],
+            "manager_name": "野村證券投資信託", "source_url": NOMURA_PCF_URL,
+            "source_identifier": f"nomura-etfweb-pcf-{etf_code.lower()}",
+        }
+    if etf_code in CAPITAL_ETFS:
+        return {
+            "etf_code": etf_code,
+            "etf_name": "主動群益台灣強棒" if etf_code == "00982A" else "主動群益科技創新",
+            "manager_name": "群益證券投資信託", "source_url": CAPITAL_BUYBACK_URL,
+            "source_identifier": f"capital-etf-buyback-{etf_code.lower()}",
+        }
+    raise ActiveEtfSourceError(f"unsupported active ETF: {etf_code}")
 
 def parse_nomura(payload, trade_date: date, etf_code: str):
     """Parse the manager's API-normalised data; require its disclosed as-of date."""
@@ -118,6 +137,10 @@ def collect_capital(trade_date: date, etf_code: str, connection, session=None):
     if etf_code not in CAPITAL_ETFS:
         raise ActiveEtfSourceError(f"unsupported Capital ETF: {etf_code}")
     http = session or requests.Session()
+    if hasattr(http, "headers"):
+        http.headers.update({"User-Agent": "Mozilla/5.0 (compatible; cb-radar active ETF collector)",
+            "Accept": "application/json, text/plain, */*", "Origin": "https://www.capitalfund.com.tw",
+            "Referer": f"https://www.capitalfund.com.tw/etf/product/detail/{CAPITAL_ETFS[etf_code]['fund_id']}/portfolio"})
     response = http.post(CAPITAL_BUYBACK_URL,
         json={"fundId": CAPITAL_ETFS[etf_code]["fund_id"], "date": trade_date.isoformat()},
         timeout=HTTP_TIMEOUT_SECONDS)
