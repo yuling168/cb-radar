@@ -73,9 +73,12 @@ def remaining_days(
     put_date: str | None,
     maturity_date: str | None,
     delisting_date: str | None = None,
+    delisting_reason: str | None = None,
 ) -> int | None:
-    """Return zero on/after formal delisting, else the nearest live deadline."""
+    """Use a redemption lifecycle countdown; otherwise retain deadline behavior."""
     as_of = date.fromisoformat(trade_date)
+    if delisting_date is not None and delisting_reason == "已贖回":
+        return max((date.fromisoformat(delisting_date) - as_of).days, 0)
     if delisting_date is not None and as_of >= date.fromisoformat(delisting_date):
         return 0
     candidates = [
@@ -180,7 +183,7 @@ def load_rows() -> list[dict[str, object]]:
             )
             record["remaining_days"] = remaining_days(
                 str(record["trade_date"]), record["put_date"], record["maturity_date"],
-                record["delisting_date"],
+                record["delisting_date"], record["delisting_reason"],
             )
             record["balance_ratio"] = balance_ratio(balance_amount, issue_units)
             record["p_volume_lots"] = (

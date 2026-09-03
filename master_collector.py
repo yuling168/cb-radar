@@ -576,19 +576,29 @@ def parse_mops_conversion_announcements(
     return list(events.values())
 
 
-def has_mops_forced_redemption_announcement(content: str, cb_code: str) -> bool:
-    """Return whether an issuer's official MOPS filing explicitly exercises redemption.
+def is_forced_redemption_announcement(content: str, cb_code: str) -> bool:
+    """Require both the exact CB code and an exercised redemption right."""
+    return (
+        "行使債券贖回權" in content
+        and re.search(rf"(?<!\d){re.escape(cb_code)}(?!\d)", content) is not None
+    )
 
-    The general MOPS material-information list is only evidence of the reason;
-    TPEx convDelist remains the authoritative source for the formal date.
-    """
-    text = _compact_html(content)
-    return bool(re.search(
-        rf"行使債券贖回權[^。]{{0,300}}?(?:代碼[：:]\s*{re.escape(cb_code)}[)）]|"
-        rf"{re.escape(cb_code)}[^。]{{0,300}}?行使債券贖回權)|"
-        rf"(?:代碼[：:]\s*{re.escape(cb_code)}[)）])[^。]{{0,300}}?行使債券贖回權",
-        text,
-    ))
+
+def parse_forced_redemption_date(body: str, cb_code: str) -> str:
+    """Read one contractual redemption baseline date from an official body."""
+    matches = re.findall(
+        r"轉換公司債收回基準日\s*[：:]\s*(\d{2,3})年\s*(\d{1,2})月\s*(\d{1,2})日",
+        body,
+    )
+    dates = {
+        _parse_roc_date(f"{year}/{int(month):02d}/{int(day):02d}", "redemption date")
+        for year, month, day in matches
+    }
+    if not dates:
+        raise MasterFormatError(f"Forced-redemption date missing for {cb_code}")
+    if len(dates) != 1:
+        raise MasterFormatError(f"Conflicting forced-redemption dates for {cb_code}")
+    return dates.pop()
 
 
 def latest_effective_event(
@@ -723,16 +733,16 @@ def sync_tpex_lifecycle(
     db_path: Path | str,
     delistings: dict[str, dict[str, str]],
     as_of: date,
-    redeemed_codes: set[str] | None = None,
+    redemption_dates: dict[str, str] | None = None,
 ) -> int:
     """Atomically apply TPEx delisting facts without touching balances or MOPS data."""
-    redeemed = redeemed_codes or set()
+    redemptions = redemption_dates or {}
     lifecycle_updates = [
         {
             "cb_code": code,
-            "delisting_date": row["delisting_date"],
+            "delisting_date": redemptions.get(code, row["delisting_date"]),
             "delisting_reason": (
-                "已贖回" if code in redeemed else "已下市"
+                "已贖回" if code in redemptions else "已下市"
             ) if row["delisting_date"] <= as_of.isoformat() else None,
         }
         for code, row in delistings.items()
@@ -958,39 +968,37 @@ def _get_mops_announcements(
         ) from exc
 
 
-def _mops_forced_redemption_codes(
-    session: requests.Session,
+def _announcement_redemption_dates(
+    db_path: Path | str,
     delistings: dict[str, dict[str, str]],
     masters: dict[str, dict[str, object]],
     as_of: date,
-    request_counts: RequestCounts | None = None,
-) -> set[str]:
-    """Identify confirmed redemption reasons for known masters from MOPS filings."""
+) -> dict[str, str]:
+    """Read confirmed redemption dates from saved official announcement bodies."""
     codes_by_stock: dict[str, list[str]] = {}
     for code, row in delistings.items():
         if row["delisting_date"] > as_of.isoformat() or code not in masters:
             continue
         codes_by_stock.setdefault(str(masters[code]["stock_code"]), []).append(code)
-    redeemed: set[str] = set()
-    for stock_code, codes in codes_by_stock.items():
-        parameters = {
-            "step": "1", "TYPEK": "all", "co_id": stock_code,
-            "year": str(as_of.year - 1911), "month": "", "day1": "",
-            "day2": "", "coid": "", "firstin": "true",
-        }
-        if request_counts is not None:
-            request_counts.mops_announcement += 1
-        response = session.post(
-            MOPS_CB_ANNOUNCEMENT_URL, data=parameters,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2)"},
-            timeout=HTTP_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        response.encoding = "utf-8"
-        redeemed.update(
-            code for code in codes
-            if has_mops_forced_redemption_announcement(response.text, code)
-        )
+    redeemed: dict[str, str] = {}
+    with connect(db_path) as connection:
+        for stock_code, codes in codes_by_stock.items():
+            rows = connection.execute(
+                "SELECT subject, body FROM company_announcements WHERE company_code = ?",
+                (stock_code,),
+            ).fetchall()
+            for code in codes:
+                dates = set()
+                for row in rows:
+                    content = f"{row['subject']}\n{row['body']}"
+                    if is_forced_redemption_announcement(content, code):
+                        dates.add(parse_forced_redemption_date(str(row["body"]), code))
+                if len(dates) > 1:
+                    raise MasterFormatError(
+                        f"Conflicting forced-redemption dates for {code}"
+                    )
+                if dates:
+                    redeemed[code] = dates.pop()
     return redeemed
 
 
@@ -1489,11 +1497,12 @@ def collect_master(
         }
         for code, row in delistings.items()
     ]
-    redeemed_codes = _mops_forced_redemption_codes(
-        http, delistings, existing_state.masters, as_of, request_counts
+    redemption_dates = _announcement_redemption_dates(
+        db_path, delistings, existing_state.masters, as_of
     )
     for row in lifecycle_updates:
-        if row["cb_code"] in redeemed_codes:
+        if row["cb_code"] in redemption_dates:
+            row["delisting_date"] = redemption_dates[row["cb_code"]]
             row["delisting_reason"] = "已贖回"
     masters: list[dict[str, object]] = []
     events: list[dict[str, object]] = []
@@ -1747,13 +1756,13 @@ def collect_phase2_modules(
             )
             delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
             existing_state = _load_existing_master_state(db_path)
-            redeemed_codes = _mops_forced_redemption_codes(
-                http, delistings, existing_state.masters, as_of
+            redemption_dates = _announcement_redemption_dates(
+                db_path, delistings, existing_state.masters, as_of
             )
             created, events, monthly = bootstrap_new_tpex_masters(
                 db_path, issues, links, delistings, http, as_of, collected_at, codes
             )
-            sync_tpex_lifecycle(db_path, delistings, as_of, redeemed_codes)
+            sync_tpex_lifecycle(db_path, delistings, as_of, redemption_dates)
             results["tpex"] = {
                 "status": "success",
                 "updated": len(delistings),

@@ -271,13 +271,16 @@ def test_remaining_days_uses_the_nearest_unexpired_put_or_maturity_date():
     assert build_dashboard.remaining_days("2026-08-29", None, None) is None
 
 
-def test_remaining_days_is_zero_only_on_or_after_formal_delisting_date():
+def test_remaining_days_uses_redemption_date_as_the_lifecycle_countdown():
     assert build_dashboard.remaining_days(
-        "2026-09-02", "2027-06-24", "2029-06-24", "2026-09-03"
-    ) == 295
+        "2026-09-01", "2027-06-24", "2029-06-24", "2026-09-02", "已贖回"
+    ) == 1
     assert build_dashboard.remaining_days(
-        "2026-09-03", "2027-06-24", "2029-06-24", "2026-09-03"
+        "2026-09-02", "2027-06-24", "2029-06-24", "2026-09-02", "已贖回"
     ) == 0
+    assert build_dashboard.remaining_days(
+        "2026-09-01", "2026-09-10", "2027-01-01", "2026-09-03", "已下市"
+    ) == 9
 
 
 def test_balance_ratio_requires_a_positive_issue_unit_count():

@@ -30,7 +30,9 @@ from master_collector import (
     issue_amount_yi_for_display,
     is_complete_reporting_month,
     is_active_on,
-    has_mops_forced_redemption_announcement,
+    is_forced_redemption_announcement,
+    parse_forced_redemption_date,
+    _announcement_redemption_dates,
     month_end_date,
     parse_mops_conversion_announcements,
     parse_mops_rules_conversion_events,
@@ -818,12 +820,12 @@ def test_lifecycle_sync_is_append_only(tmp_path):
     assert tuple(row) == ("2026-06-23", "已下市")
 
 
-def test_mops_forced_redemption_reason_replaces_only_delisting_fallback(tmp_path):
-    assert has_mops_forced_redemption_announcement(
-        "公告中砂一(代碼：15601)發行公司行使債券贖回權暨訂於115年09月03日終止櫃檯買賣。",
-        "15601",
-    )
-    assert not has_mops_forced_redemption_announcement(
+def test_forced_redemption_replaces_tpex_date_with_redemption_baseline(tmp_path):
+    notice = """公告中砂一(代碼：15601)發行公司行使債券贖回權。
+    轉換公司債收回基準日：115年09月02日。"""
+    assert is_forced_redemption_announcement(notice, "15601")
+    assert parse_forced_redemption_date(notice, "15601") == "2026-09-02"
+    assert not is_forced_redemption_announcement(
         "公告中砂一(代碼：15601)終止櫃檯買賣。", "15601"
     )
     master = {
@@ -838,12 +840,43 @@ def test_mops_forced_redemption_reason_replaces_only_delisting_fallback(tmp_path
         upsert_master_data(connection, [master], [], [])
     sync_tpex_lifecycle(
         tmp_path / "lifecycle.db", {"15601": {"delisting_date": "2026-09-03"}},
-        date(2026, 9, 3), {"15601"},
+        date(2026, 9, 3), {"15601": "2026-09-02"},
     )
     with connect(tmp_path / "lifecycle.db") as connection:
         assert tuple(connection.execute(
             "SELECT delisting_date, delisting_reason FROM cb_master WHERE cb_code = '15601'"
-        ).fetchone()) == ("2026-09-03", "已贖回")
+        ).fetchone()) == ("2026-09-02", "已贖回")
+
+
+def test_announcement_history_redemption_lookup_rejects_missing_and_conflicting_dates(tmp_path):
+    db_path = tmp_path / "history.db"
+    candidates = {"15601": {"delisting_date": "2026-09-03"}}
+    masters = {"15601": {"stock_code": "1560"}}
+    with connect(db_path) as connection:
+        connection.execute("INSERT INTO announcement_fetch (source_market, requested_at, status) VALUES ('TWSE', 'x', 'succeeded')")
+        fetch_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute("INSERT INTO announcement_snapshot (fetch_id, source_market, api_batch_date_roc, api_batch_date, payload_sha256, raw_json, created_at) VALUES (?, 'TWSE', '1150903', '2026-09-03', 'a', '[]', 'x')", (fetch_id,))
+        snapshot_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        def add(body, key):
+            connection.execute("INSERT INTO company_announcements (source_market, company_code, company_name, api_batch_date_roc, api_batch_date, spoken_date_roc, spoken_date, spoken_time, clause, subject, body, subject_sha256, body_sha256, logical_key, event_key, first_seen_at, last_seen_at, first_snapshot_id, last_snapshot_id) VALUES ('TWSE', '1560', '中砂', '1150903', '2026-09-03', '1150715', '2026-07-15', '16:24:27', '第51款', '公告', ?, ?, ?, ?, ?, 'x', 'x', ?, ?)", (body, key, key, key, key, snapshot_id, snapshot_id))
+        add('15601行使債券贖回權', 'missing')
+    with pytest.raises(MasterFormatError, match='date missing'):
+        _announcement_redemption_dates(db_path, candidates, masters, date(2026, 9, 3))
+
+
+def test_announcement_history_redemption_lookup_uses_exact_code_and_rejects_conflicts(tmp_path):
+    db_path = tmp_path / "history.db"
+    candidates = {"15601": {"delisting_date": "2026-09-03"}}
+    masters = {"15601": {"stock_code": "1560"}}
+    with connect(db_path) as connection:
+        for key, body in [('one', '15602行使債券贖回權，轉換公司債收回基準日：115年09月02日'), ('two', '15601行使債券贖回權，轉換公司債收回基準日：115年09月02日'), ('three', '15601行使債券贖回權，轉換公司債收回基準日：115年09月03日')]:
+            connection.execute("INSERT INTO announcement_fetch (source_market, requested_at, status) VALUES ('TWSE', ?, 'succeeded')", (key,))
+            fid=connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            connection.execute("INSERT INTO announcement_snapshot (fetch_id, source_market, api_batch_date_roc, api_batch_date, payload_sha256, raw_json, created_at) VALUES (?, 'TWSE', '1150903', '2026-09-03', ?, '[]', 'x')", (fid,key))
+            sid=connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            connection.execute("INSERT INTO company_announcements (source_market, company_code, company_name, api_batch_date_roc, api_batch_date, spoken_date_roc, spoken_date, spoken_time, clause, subject, body, subject_sha256, body_sha256, logical_key, event_key, first_seen_at, last_seen_at, first_snapshot_id, last_snapshot_id) VALUES ('TWSE','1560','中砂','1150903','2026-09-03','1150715','2026-07-15','16:24:27','第51款','公告',?,?,?,?,?,'x','x',?,?)", (body,key,key,key,key,sid,sid))
+    with pytest.raises(MasterFormatError, match='Conflicting'):
+        _announcement_redemption_dates(db_path, candidates, masters, date(2026, 9, 3))
 
 
 def test_exchangeable_cleanup_removes_master_and_children(tmp_path):
