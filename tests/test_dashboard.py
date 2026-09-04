@@ -247,13 +247,28 @@ def test_dashboard_exports_parent_flow_for_each_current_cb_and_unavailable_reaso
     assert rows[2]["institutional_reason"] == "資料未提供（創新板）"
 
 
-def test_institutional_page_has_filters_mobile_cards_and_fixed_etf_name():
+def test_institutional_page_has_cb_filter_mobile_cards_and_fixed_etf_name():
     source = (DASHBOARD_PATH.parent / "institutional.html").read_text(encoding="utf-8")
     assert 'id="dateSelect"' in source
-    assert 'id="cbSearch"' in source and 'id="stockSearch"' in source
+    assert 'id="cbSearch"' in source
+    assert 'id="stockSearch"' not in source
+    assert "state.stock" not in source
     assert '已追蹤主動式 ETF' in source
     assert '資料未提供（創新板）' in source
     assert '.cards{display:none}' in source and '@media(max-width:768px)' in source
+
+
+def test_institutional_page_sorts_raw_values_with_missing_values_last_and_taiwan_colors():
+    source = (DASHBOARD_PATH.parent / "institutional.html").read_text(encoding="utf-8")
+    assert source.count('button data-sort=') == 10
+    assert 'sortValue(r,key)' in source
+    assert 'typeof av==="number"?av-bv' in source
+    assert 'return bv===null||bv===undefined?0:1' in source
+    assert 'state.sortDirection==="asc"?"▲":"▼"' in source
+    assert '.positive{color:var(--red)}' in source
+    assert '.negative{color:var(--green)}' in source
+    assert '.neutral,.unavailable{color:var(--muted)}' in source
+    assert 'const cls=n=>n>0?"positive":n<0?"negative":"neutral";' in source
 
 
 def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
