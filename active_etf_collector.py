@@ -1,6 +1,7 @@
 """Active ETF raw holdings collector.  Holdings changes are deliberately not trades."""
 from datetime import date, datetime, timezone
 import math
+import time
 import requests
 from config import HTTP_TIMEOUT_SECONDS
 from db import active_parent_stock_codes_on, upsert_active_etf_holdings
@@ -20,6 +21,29 @@ CAPITAL_ETFS = {
 TRACKED_ACTIVE_ETF_CODES = ("00980A", "00985A", "00999A", "00982A", "00992A")
 
 class ActiveEtfSourceError(RuntimeError): pass
+
+
+def _retryable_request_error(error: requests.RequestException) -> bool:
+    """Only retry transient transport failures and explicit retryable HTTP codes."""
+    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        status = error.response.status_code
+        return status == 429 or 500 <= status <= 599
+    return False
+
+
+def _post_with_retry(http, url: str, **kwargs):
+    """POST at most three times; parsing/validation failures intentionally do not retry."""
+    for attempt in range(3):
+        try:
+            response = http.post(url, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            if not _retryable_request_error(exc) or attempt == 2:
+                raise
+            time.sleep((0.5, 1.0)[attempt])
 
 
 def active_etf_source_metadata(etf_code: str):
@@ -70,17 +94,17 @@ def parse_nomura_00980a(payload, trade_date: date):
 def collect_nomura_00980a(trade_date: date, connection, session=None):
     """Download the fund manager's disclosed daily PCF and persist stock rows only."""
     http = session or requests.Session()
-    response = http.post(NOMURA_ASSET_API_URL,
-                         json={"FundID": "00980A", "SearchDate": trade_date.isoformat()},
-                         timeout=HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    response = _post_with_retry(http, NOMURA_ASSET_API_URL,
+                                json={"FundID": "00980A", "SearchDate": trade_date.isoformat()},
+                                timeout=HTTP_TIMEOUT_SECONDS)
     holdings = parse_nomura_00980a(response.json(), trade_date)
     return save_nomura_00980a(connection, holdings)
 
 def collect_nomura(trade_date: date, etf_code: str, connection, session=None):
     http = session or requests.Session()
-    response = http.post(NOMURA_ASSET_API_URL, json={"FundID": etf_code, "SearchDate": trade_date.isoformat()}, timeout=HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    response = _post_with_retry(http, NOMURA_ASSET_API_URL,
+                                json={"FundID": etf_code, "SearchDate": trade_date.isoformat()},
+                                timeout=HTTP_TIMEOUT_SECONDS)
     return save_nomura(connection, parse_nomura(response.json(), trade_date, etf_code))
 
 def parse_capital(payload, trade_date: date, etf_code: str):
@@ -141,10 +165,9 @@ def collect_capital(trade_date: date, etf_code: str, connection, session=None):
         http.headers.update({"User-Agent": "Mozilla/5.0 (compatible; cb-radar active ETF collector)",
             "Accept": "application/json, text/plain, */*", "Origin": "https://www.capitalfund.com.tw",
             "Referer": f"https://www.capitalfund.com.tw/etf/product/detail/{CAPITAL_ETFS[etf_code]['fund_id']}/portfolio"})
-    response = http.post(CAPITAL_BUYBACK_URL,
+    response = _post_with_retry(http, CAPITAL_BUYBACK_URL,
         json={"fundId": CAPITAL_ETFS[etf_code]["fund_id"], "date": trade_date.isoformat()},
         timeout=HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
     return save_capital(connection, parse_capital(response.json(), trade_date, etf_code))
 
 def save_nomura_00980a(connection, holdings):

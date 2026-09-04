@@ -147,6 +147,30 @@ CREATE TABLE IF NOT EXISTS active_etf_collection_status (
     FOREIGN KEY (etf_code) REFERENCES active_etf_master(etf_code)
 );
 
+CREATE TABLE IF NOT EXISTS parent_flow_metrics (
+    trade_date TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    foreign_status TEXT NOT NULL CHECK (foreign_status IN ('AVAILABLE', 'UNAVAILABLE')),
+    foreign_net_lots REAL,
+    foreign_volume_pct REAL,
+    foreign_streak_days INTEGER,
+    foreign_streak_lots REAL,
+    trust_status TEXT NOT NULL CHECK (trust_status IN ('AVAILABLE', 'UNAVAILABLE')),
+    trust_net_lots REAL,
+    trust_volume_pct REAL,
+    trust_streak_days INTEGER,
+    trust_streak_lots REAL,
+    active_etf_status TEXT NOT NULL CHECK (active_etf_status IN ('AVAILABLE', 'UNAVAILABLE')),
+    active_etf_change_lots REAL,
+    active_etf_change_value_twd REAL,
+    active_etf_streak_days INTEGER,
+    active_etf_streak_lots REAL,
+    PRIMARY KEY (trade_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_parent_flow_metrics_stock_date
+    ON parent_flow_metrics (stock_code, trade_date);
+
 CREATE TABLE IF NOT EXISTS announcement_fetch (
     fetch_id INTEGER PRIMARY KEY,
     source_market TEXT NOT NULL CHECK (source_market IN ('TWSE', 'TPEX')),

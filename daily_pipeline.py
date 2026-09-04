@@ -17,6 +17,7 @@ from active_etf_collector import (
 from config import DEFAULT_DB_PATH
 from db import connect, upsert_active_etf_collection_status
 from institutional_collector import InstitutionalSourceError, collect_institutional_daily
+from parent_flow_metrics import recompute_parent_flow_metrics
 
 
 class DailyPipelinePreconditionError(RuntimeError):
@@ -81,7 +82,10 @@ def run_daily_pipeline(trade_date: date, db_path: Path | str = DEFAULT_DB_PATH, 
         )
     institutional = collect_institutional_daily(trade_date, db_path, session)
     etfs = collect_tracked_active_etfs_daily(trade_date, db_path, session)
-    return {"trade_date": trade_date.isoformat(), "institutional": institutional, "active_etfs": etfs}
+    with connect(db_path) as connection:
+        metrics_rows = recompute_parent_flow_metrics(connection, trade_date.isoformat())
+    return {"trade_date": trade_date.isoformat(), "institutional": institutional,
+            "active_etfs": etfs, "parent_flow_metrics_rows": metrics_rows}
 
 
 def main(argv=None):

@@ -1,15 +1,45 @@
 from datetime import date
 import pytest
+import requests
 from db import active_parent_stock_codes_on, connect, upsert_daily
 from institutional_collector import InstitutionalSourceError, parse_tpex_daily_trade, parse_twse
 from active_etf_collector import (
     ActiveEtfSourceError,
+    CAPITAL_BUYBACK_URL,
+    _post_with_retry,
+    collect_capital,
     parse_capital,
     parse_nomura,
     parse_nomura_00980a,
     save_capital,
     save_nomura_00980a,
 )
+
+
+class RetryResponse:
+    def __init__(self, payload=None, status_code=200):
+        self.payload, self.status_code = payload, status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            response = requests.Response()
+            response.status_code = self.status_code
+            raise requests.HTTPError(response=response)
+
+    def json(self):
+        return self.payload
+
+
+class RetrySession:
+    def __init__(self, outcomes):
+        self.outcomes, self.calls, self.headers = list(outcomes), 0, {}
+
+    def post(self, *_args, **_kwargs):
+        outcome = self.outcomes[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 def test_twse_institutional_parser_keeps_share_units():
     payload = {"stat":"OK", "date":"20260903", "fields":["證券代號","證券名稱","外陸資買進股數(不含外資自營商)","外陸資賣出股數(不含外資自營商)","外陸資買賣超股數(不含外資自營商)","投信買進股數","投信賣出股數","投信買賣超股數"], "data":[["1101","台泥","6,815,000","12,749,846","-5,934,846","284,000","0","284,000"]]}
@@ -126,3 +156,39 @@ def test_new_schema_is_created_without_touching_daily_data(tmp_path):
         upsert_daily(con, [{"trade_date":"2026-09-03","cb_code":"11011","cb_name":"台泥一","close_price":100.0,"volume_lots":1,"source":"test","collected_at":"x"}])
         tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"institutional_daily", "active_etf_master", "active_etf_holdings"} <= tables
+
+
+def test_active_etf_retries_timeout_then_succeeds(monkeypatch):
+    session = RetrySession([requests.Timeout("slow"), RetryResponse({})])
+    delays = []
+    monkeypatch.setattr("active_etf_collector.time.sleep", delays.append)
+    assert _post_with_retry(session, CAPITAL_BUYBACK_URL, json={}) is session.outcomes[1]
+    assert (session.calls, delays) == (2, [0.5])
+
+
+def test_active_etf_fails_after_three_timeouts(monkeypatch):
+    session = RetrySession([requests.Timeout("slow")] * 3)
+    delays = []
+    monkeypatch.setattr("active_etf_collector.time.sleep", delays.append)
+    with pytest.raises(requests.Timeout):
+        _post_with_retry(session, CAPITAL_BUYBACK_URL, json={})
+    assert (session.calls, delays) == (3, [0.5, 1.0])
+
+
+def test_active_etf_does_not_retry_http_403(monkeypatch):
+    session = RetrySession([RetryResponse(status_code=403)])
+    monkeypatch.setattr("active_etf_collector.time.sleep", lambda _: pytest.fail("must not retry 403"))
+    with pytest.raises(requests.HTTPError):
+        _post_with_retry(session, CAPITAL_BUYBACK_URL, json={})
+    assert session.calls == 1
+
+
+def test_active_etf_does_not_retry_date_mismatch(tmp_path, monkeypatch):
+    payload = {"data": {"pcf": {"date1": "2026-09-02", "fundName": "群益"},
+                        "stocks": [{"stocNo": "2330", "stocName": "台積電", "share": 1}]}}
+    session = RetrySession([RetryResponse(payload)])
+    monkeypatch.setattr("active_etf_collector.time.sleep", lambda _: pytest.fail("must not retry date mismatch"))
+    with connect(tmp_path / "db.sqlite") as con:
+        with pytest.raises(ActiveEtfSourceError, match="not the requested"):
+            collect_capital(date(2026, 9, 3), "00992A", con, session)
+    assert session.calls == 1
