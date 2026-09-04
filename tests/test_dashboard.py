@@ -271,6 +271,21 @@ def test_institutional_page_sorts_raw_values_with_missing_values_last_and_taiwan
     assert 'const cls=n=>n>0?"positive":n<0?"negative":"neutral";' in source
 
 
+def test_institutional_page_sticks_cb_column_and_formats_lots_to_whole_numbers():
+    source = (DASHBOARD_PATH.parent / "institutional.html").read_text(encoding="utf-8")
+
+    assert '<button data-sort="cb_name">CB <span' in source
+    assert 'th:first-child{left:0;z-index:3;background:#f6f9f6}' in source
+    assert 'td:first-child{position:sticky;left:0;z-index:2;background:var(--card)}' in source
+    assert 'max-height:70vh' not in source
+    assert '<footer>' not in source
+    assert 'const lotsFormat=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:0})' in source
+    assert 'const signedLots=n=>' in source
+    assert 'Math.sign(n)*Math.round(Math.abs(n)+Number.EPSILON)' in source
+    assert 'function desktop(r){return `<tr><td class="identity">${r.cb_name}<span class="sub">${r.cb_code}</span>' in source
+    assert '${r.parent_stock_name}（${r.parent_stock_code}）</span></td>' not in source
+
+
 def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
     tmp_path, monkeypatch
 ):
