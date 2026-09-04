@@ -15,6 +15,9 @@ TABLE_NAME = "cb_daily"
 MASTER_TABLE_NAME = "cb_master"
 STOCK_DAILY_TABLE_NAME = "stock_daily_market"
 CONVERSION_EVENT_TABLE_NAME = "conversion_price_events"
+PARENT_FLOW_TABLE_NAME = "parent_flow_metrics"
+INSTITUTIONAL_COVERAGE_TABLE_NAME = "institutional_coverage"
+ETF_STATUS_TABLE_NAME = "active_etf_collection_status"
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -50,6 +53,16 @@ CONVERSION_EVENT_REQUIRED_COLUMNS = {
     "effective_date",
     "conversion_price",
 }
+PARENT_FLOW_REQUIRED_COLUMNS = {
+    "trade_date", "stock_code", "foreign_status", "foreign_net_lots",
+    "foreign_volume_pct", "foreign_streak_days", "foreign_streak_lots",
+    "trust_status", "trust_net_lots", "trust_volume_pct", "trust_streak_days",
+    "trust_streak_lots", "active_etf_status", "active_etf_change_lots",
+    "active_etf_change_value_twd", "active_etf_streak_days", "active_etf_streak_lots",
+}
+INSTITUTIONAL_COVERAGE_REQUIRED_COLUMNS = {"trade_date", "stock_code", "status", "reason"}
+ETF_STATUS_REQUIRED_COLUMNS = {"trade_date", "etf_code", "status"}
+TRACKED_ACTIVE_ETFS = ("00980A", "00985A", "00999A", "00982A", "00992A")
 
 
 def balance_units_for_display(
@@ -219,13 +232,64 @@ def load_rows() -> list[dict[str, object]]:
         return records
 
 
+def load_institutional_rows() -> list[dict[str, object]]:
+    """Read already-derived parent flow metrics for each active CB; never recompute."""
+    database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(database_uri, uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        for table_name, required_columns in (
+            (PARENT_FLOW_TABLE_NAME, PARENT_FLOW_REQUIRED_COLUMNS),
+            (INSTITUTIONAL_COVERAGE_TABLE_NAME, INSTITUTIONAL_COVERAGE_REQUIRED_COLUMNS),
+            (ETF_STATUS_TABLE_NAME, ETF_STATUS_REQUIRED_COLUMNS),
+        ):
+            columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+            missing = required_columns - columns
+            if missing:
+                raise RuntimeError(f"Required SQLite columns missing from {table_name}: {sorted(missing)}")
+        return [dict(row) for row in connection.execute(
+            """
+            WITH etf_coverage AS (
+                SELECT trade_date,
+                       CASE WHEN COUNT(*) = 5 AND SUM(status = 'succeeded') = 5
+                            THEN 'complete' ELSE 'incomplete' END AS active_etf_coverage
+                FROM active_etf_collection_status
+                WHERE etf_code IN ('00980A','00985A','00999A','00982A','00992A')
+                GROUP BY trade_date
+            )
+            SELECT daily.trade_date, daily.cb_code, daily.cb_name,
+                   master.stock_code AS parent_stock_code,
+                   master.stock_name AS parent_stock_name,
+                   metrics.foreign_status, metrics.foreign_net_lots,
+                   metrics.foreign_volume_pct, metrics.foreign_streak_days,
+                   metrics.foreign_streak_lots, metrics.trust_status,
+                   metrics.trust_net_lots, metrics.trust_volume_pct,
+                   metrics.trust_streak_days, metrics.trust_streak_lots,
+                   metrics.active_etf_status, metrics.active_etf_change_lots,
+                   metrics.active_etf_change_value_twd, metrics.active_etf_streak_days,
+                   metrics.active_etf_streak_lots, coverage.reason AS institutional_reason,
+                   COALESCE(etf_coverage.active_etf_coverage, 'incomplete') AS active_etf_coverage
+            FROM cb_daily AS daily
+            INNER JOIN cb_master AS master ON master.cb_code = daily.cb_code
+            INNER JOIN parent_flow_metrics AS metrics
+              ON metrics.trade_date = daily.trade_date AND metrics.stock_code = master.stock_code
+            LEFT JOIN institutional_coverage AS coverage
+              ON coverage.trade_date = daily.trade_date AND coverage.stock_code = master.stock_code
+            LEFT JOIN etf_coverage ON etf_coverage.trade_date = daily.trade_date
+            WHERE master.issue_date <= daily.trade_date
+              AND (master.delisting_date IS NULL OR master.delisting_date > daily.trade_date)
+            ORDER BY daily.trade_date DESC, daily.cb_code ASC
+            """
+        )]
+
+
 def _invalid_is_secured(value: object) -> None:
     raise RuntimeError(f"Invalid cb_master.is_secured value: {value!r}")
 
 
 def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
-    payload = {"records": rows}
+    institutional_rows = load_institutional_rows()
+    payload = {"records": rows, "institutional_records": institutional_rows}
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",

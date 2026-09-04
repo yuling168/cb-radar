@@ -56,6 +56,7 @@ def create_dashboard_database(path, *, include_master=True):
             CREATE TABLE cb_master (
                 cb_code TEXT PRIMARY KEY,
                 stock_code TEXT,
+                stock_name TEXT,
                 issue_date TEXT,
                 maturity_date TEXT,
                 put_date TEXT,
@@ -74,7 +75,7 @@ def create_dashboard_database(path, *, include_master=True):
         connection.execute(
             """
             INSERT INTO cb_master VALUES (
-                '12345', '1101', '2024-01-01', '2027-01-01', NULL, 2000, 200000000,
+                '12345', '1101', '測試母股', '2024-01-01', '2027-01-01', NULL, 2000, 200000000,
                 198300000, '2026-08-29', 35.5, '2026-07-31', 1, NULL, NULL
             )
             """
@@ -115,6 +116,22 @@ def create_dashboard_database(path, *, include_master=True):
             ('2026-08-29', '1101', 24.1, 24.4, 24.0, 24.3, 16839498)
         """
     )
+    connection.execute("""CREATE TABLE parent_flow_metrics (
+        trade_date TEXT, stock_code TEXT, foreign_status TEXT, foreign_net_lots REAL,
+        foreign_volume_pct REAL, foreign_streak_days INTEGER, foreign_streak_lots REAL,
+        trust_status TEXT, trust_net_lots REAL, trust_volume_pct REAL, trust_streak_days INTEGER,
+        trust_streak_lots REAL, active_etf_status TEXT, active_etf_change_lots REAL,
+        active_etf_change_value_twd REAL, active_etf_streak_days INTEGER, active_etf_streak_lots REAL)""")
+    connection.execute("""INSERT INTO parent_flow_metrics VALUES
+        ('2026-08-29','1101','AVAILABLE',1.25,2.5,3,4.5,'AVAILABLE',-2,-3.5,2,-5,
+         'AVAILABLE',0.75,15000,1,0.75)""")
+    connection.execute("""CREATE TABLE institutional_coverage (
+        trade_date TEXT, stock_code TEXT, status TEXT, reason TEXT)""")
+    connection.execute("INSERT INTO institutional_coverage VALUES ('2026-08-29','1101','COMPLETE',NULL)")
+    connection.execute("""CREATE TABLE active_etf_collection_status (
+        trade_date TEXT, etf_code TEXT, status TEXT)""")
+    connection.executemany("INSERT INTO active_etf_collection_status VALUES ('2026-08-29',?, 'succeeded')",
+                           [(code,) for code in ('00980A','00985A','00999A','00982A','00992A')])
     connection.commit()
     connection.close()
 
@@ -159,6 +176,19 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "issue_amount_yi": 2.0,
         "balance_units": 1983,
     }
+    institutional = payload["institutional_records"]
+    assert institutional == [{
+        "trade_date": "2026-08-29", "cb_code": "12345", "cb_name": "測試 CB",
+        "parent_stock_code": "1101", "parent_stock_name": "測試母股",
+        "foreign_status": "AVAILABLE", "foreign_net_lots": 1.25, "foreign_volume_pct": 2.5,
+        "foreign_streak_days": 3, "foreign_streak_lots": 4.5,
+        "trust_status": "AVAILABLE", "trust_net_lots": -2.0, "trust_volume_pct": -3.5,
+        "trust_streak_days": 2, "trust_streak_lots": -5.0,
+        "active_etf_status": "AVAILABLE", "active_etf_change_lots": 0.75,
+        "active_etf_change_value_twd": 15000.0, "active_etf_streak_days": 1,
+        "active_etf_streak_lots": 0.75, "institutional_reason": None,
+        "active_etf_coverage": "complete",
+    }]
     missing_master = payload["records"][1]
     assert missing_master["issue_amount_yi"] is None
     assert missing_master["balance_units"] is None
@@ -189,6 +219,41 @@ def test_dashboard_uses_reference_price_for_zero_volume_premium(tmp_path, monkey
     assert row["close_price"] is None
     assert row["reference_price"] == 90.0
     assert row["premium_rate"] == pytest.approx(48.14814815)
+
+
+def test_dashboard_exports_parent_flow_for_each_current_cb_and_unavailable_reason(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("INSERT INTO cb_daily VALUES ('2026-08-29','12346','測試 CB 二',101,99,1)")
+        connection.execute("""INSERT INTO cb_master VALUES
+            ('12346','1101','測試母股','2024-01-01','2027-01-01',NULL,1,100000,
+             100000,'2026-08-29',40,'2026-08-01',0,NULL,NULL)""")
+        connection.execute("INSERT INTO cb_daily VALUES ('2026-08-29','66451','創新 CB',101,99,1)")
+        connection.execute("""INSERT INTO cb_master VALUES
+            ('66451','6645','創新板','2024-01-01','2027-01-01',NULL,1,100000,
+             100000,'2026-08-29',40,'2026-08-01',0,NULL,NULL)""")
+        connection.execute("""INSERT INTO parent_flow_metrics VALUES
+            ('2026-08-29','6645','UNAVAILABLE',NULL,NULL,NULL,NULL,'UNAVAILABLE',NULL,NULL,NULL,NULL,
+             'UNAVAILABLE',NULL,NULL,NULL,NULL)""")
+        connection.execute("INSERT INTO institutional_coverage VALUES ('2026-08-29','6645','UNAVAILABLE_MARKET','資料未提供（創新板）')")
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+    build_dashboard.build_dashboard_data()
+    rows = json.loads(output_path.read_text(encoding="utf-8"))["institutional_records"]
+    assert [row["cb_code"] for row in rows] == ["12345", "12346", "66451"]
+    assert rows[0]["parent_stock_code"] == rows[1]["parent_stock_code"] == "1101"
+    assert rows[2]["institutional_reason"] == "資料未提供（創新板）"
+
+
+def test_institutional_page_has_filters_mobile_cards_and_fixed_etf_name():
+    source = (DASHBOARD_PATH.parent / "institutional.html").read_text(encoding="utf-8")
+    assert 'id="dateSelect"' in source
+    assert 'id="cbSearch"' in source and 'id="stockSearch"' in source
+    assert '已追蹤主動式 ETF' in source
+    assert '資料未提供（創新板）' in source
+    assert '.cards{display:none}' in source and '@media(max-width:768px)' in source
 
 
 def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(

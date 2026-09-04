@@ -107,3 +107,9 @@ GitHub Pages
 目前 mobile responsive 是基本版。CB 明細仍是有合理 `min-width` 的 table，因此窄螢幕查看右側欄位時，仍可能需要在 table wrapper 內水平滑動。
 
 尚未實作 mobile card／stacked row layout。未來可在 `<= 768px` 將每列改為卡片，使日期、CB 代號、CB 名稱、收盤價與成交量不需水平滑動即可同時看到；本文件不將此功能標示為已完成。
+
+## 法人籌碼頁面
+
+`docs/institutional.html` 讀取同一份 `data.json` 的 `institutional_records`。產生器只讀取既有 `parent_flow_metrics`、`institutional_coverage`、`active_etf_collection_status`、CB master/daily 與母股資料表；不重算或補齊任一統計。每列是交易日當日仍現行的 CB，因此同一母股有多檔現行 CB 時可出現多列並共用已保存的母股統計。
+
+頁面有資料日期、CB 名稱/代號、母股名稱/代號篩選，預設最新有 `institutional_records` 的日期。欄位依序呈現外資/投信當日張數與成交量比、兩者連續日數與累計、以及「已追蹤主動式 ETF」當日持股增減張數/市值估算（萬元）、連續日數和累計。所有正數帶 `+`；ETF coverage 以 `complete` / `incomplete` 顯示。`UNAVAILABLE` 顯示「資料未提供」，而法人 coverage 原因是創新板未提供時顯示「資料未提供（創新板）」。手機寬度 `<= 768px` 以分段卡片呈現，不需橫向滑動整張法人表。
