@@ -33,3 +33,10 @@ python strategy_c.py --database path/to/history.db --date 2026-08-28
 
 重跑只 append 評估；同一 `(cb_code, trade_date, C, v1)` 訊號使用 `INSERT OR IGNORE`，
 不會覆蓋既有 C-v1 或 A-v1 訊號。
+
+## 每日整合與 Dashboard
+
+每日 workflow 在母股日行情完成後，先執行 A-v1 再執行 C-v1；兩個 CLI 分開執行，C 的
+`UNAVAILABLE` 診斷不會阻斷 A，反之亦然。Dashboard 讀取已保存快照，不重新計算策略。
+首頁以 A／C 標籤顯示訊號；`strategy-c.html` 可依日期檢視各區前二名、完整條件與資料不足原因，
+並將「無訊號」與「資料不足無法評估」分開。

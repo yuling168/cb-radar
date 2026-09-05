@@ -234,24 +234,48 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", '{"premium_rate_above_1_pct":true}', values, "AVAILABLE", "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (1, "99999", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["old"]', "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (2, "99999", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["missing_cb_close_price"]', "y"))
+        c_values = json.dumps({"conversion_value": 108.5, "premium_rate_pct": 12.5, "converted_ratio_pct": 10.0, "conversion_value_bucket": "105-110", "bucket_rank": 1, "bucket_candidate_count": 3, "balance_date": "2026-07-31"})
+        connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "C", "v1", "CB 資優生", '{"within_bucket_top_two":true}', c_values, "AVAILABLE", "x"))
+        connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (3, "88888", "2026-08-29", "C", "v1", "CB 資優生", "{}", "{}", "UNAVAILABLE", '["missing_historical_balance"]', "z"))
     monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
     monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
     build_dashboard.build_dashboard_data()
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["strategy_a_signals"][0]["cb_name"] == "測試 CB"
     assert payload["strategy_a_signals"][0]["condition_values"]["conversion_value"] == 60.75
-    assert payload["strategy_a_evaluations"][0]["unavailable_reasons"] == ["missing_cb_close_price"]
+    assert payload["strategy_a_evaluations"] == [{
+        "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v1",
+        "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_close_price", "evaluation_count": 1,
+    }]
+    assert {row["strategy_code"] for row in payload["strategy_signals"]} == {"A", "C"}
+    assert payload["strategy_c_signals"][0]["condition_values"]["bucket_rank"] == 1
+    assert payload["strategy_c_evaluations"] == [{
+        "trade_date": "2026-08-29", "strategy_code": "C", "strategy_version": "v1",
+        "data_status": "UNAVAILABLE", "unavailable_reason": "missing_historical_balance", "evaluation_count": 1,
+    }]
+    assert "condition_values" not in payload["strategy_evaluations"][0]
 
 
 def test_strategy_pages_show_signals_separately_from_unavailable_data():
     index = DASHBOARD_PATH.read_text(encoding="utf-8")
     strategy = (DASHBOARD_PATH.parent / "strategy-a.html").read_text(encoding="utf-8")
+    strategy_c = (DASHBOARD_PATH.parent / "strategy-c.html").read_text(encoding="utf-8")
     assert 'id="strategySignals"' in index
     assert "非不符合策略" in index
+    assert "unavailableByStrategy" in index
+    assert "策略 ${strategyCode}：資料不足 ${unavailableCount} 檔" in index
+    assert "reasonCounts" in index
     assert 'href="strategy-a.html"' in index
     assert 'id="dateSelect"' in strategy
     assert "資料不足、無法評估" in strategy
     assert "condition_results" in strategy
+    assert 'href="strategy-c.html"' in index
+    assert "策略 C-v1" in index
+    assert 'id="dateSelect"' in strategy_c
+    assert "conversion_value_bucket" in strategy_c
+    assert "資料不足、無法評估" in strategy_c
+    assert "evaluation_count" in strategy
+    assert "evaluation_count" in strategy_c
 
 
 def test_dashboard_exports_parent_flow_for_each_current_cb_and_unavailable_reason(tmp_path, monkeypatch):

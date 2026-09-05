@@ -67,8 +67,8 @@ ETF_STATUS_REQUIRED_COLUMNS = {"trade_date", "etf_code", "status"}
 TRACKED_ACTIVE_ETFS = ("00980A", "00985A", "00999A", "00982A", "00992A")
 
 
-def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Read saved A-v1 snapshots only; legacy DBs simply have no strategy data."""
+def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Read complete signals and compact latest-evaluation summaries for one strategy."""
     database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
     with sqlite3.connect(database_uri, uri=True) as connection:
         connection.row_factory = sqlite3.Row
@@ -83,36 +83,52 @@ def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, obje
                FROM strategy_signals AS signal
                LEFT JOIN cb_daily AS daily
                  ON daily.cb_code = signal.cb_code AND daily.trade_date = signal.trade_date
-               WHERE signal.strategy_code = 'A' AND signal.strategy_version = 'v1'
-               ORDER BY signal.trade_date DESC, signal.cb_code ASC"""
+               WHERE signal.strategy_code = ? AND signal.strategy_version = 'v1'
+               ORDER BY signal.trade_date DESC, signal.cb_code ASC""",
+            (strategy_code,)
         )]
         evaluations = [dict(row) for row in connection.execute(
             """WITH latest AS (
                    SELECT cb_code, trade_date, strategy_code, strategy_version,
                           MAX(evaluation_id) AS evaluation_id
                    FROM strategy_evaluations
-                   WHERE strategy_code = 'A' AND strategy_version = 'v1'
+                   WHERE strategy_code = ? AND strategy_version = 'v1'
                    GROUP BY cb_code, trade_date, strategy_code, strategy_version
+               ), current AS (
+                   SELECT evaluation.trade_date, evaluation.strategy_code,
+                          evaluation.strategy_version, evaluation.data_status,
+                          evaluation.unavailable_reasons_json
+                   FROM latest
+                   INNER JOIN strategy_evaluations AS evaluation
+                     ON evaluation.evaluation_id = latest.evaluation_id
+                   WHERE evaluation.cb_code != '__RUN__'
+               ), available AS (
+                   SELECT trade_date, strategy_code, strategy_version, data_status,
+                          NULL AS unavailable_reason, COUNT(*) AS evaluation_count
+                   FROM current WHERE data_status = 'AVAILABLE'
+                   GROUP BY trade_date, strategy_code, strategy_version, data_status
+               ), unavailable AS (
+                   SELECT current.trade_date, current.strategy_code, current.strategy_version,
+                          current.data_status, json_each.value AS unavailable_reason,
+                          COUNT(*) AS evaluation_count
+                   FROM current, json_each(current.unavailable_reasons_json)
+                   WHERE current.data_status = 'UNAVAILABLE'
+                   GROUP BY current.trade_date, current.strategy_code, current.strategy_version,
+                            current.data_status, json_each.value
                )
-               SELECT evaluation.cb_code, evaluation.trade_date, evaluation.strategy_code,
-                      evaluation.strategy_version, evaluation.strategy_name,
-                      evaluation.condition_results_json, evaluation.condition_values_json,
-                      evaluation.data_status, evaluation.unavailable_reasons_json,
-                      daily.cb_name
-               FROM latest
-               INNER JOIN strategy_evaluations AS evaluation
-                 ON evaluation.evaluation_id = latest.evaluation_id
-               LEFT JOIN cb_daily AS daily
-                 ON daily.cb_code = evaluation.cb_code AND daily.trade_date = evaluation.trade_date
-               WHERE evaluation.cb_code != '__RUN__'
-               ORDER BY evaluation.trade_date DESC, evaluation.cb_code ASC"""
+               SELECT * FROM available UNION ALL SELECT * FROM unavailable
+               ORDER BY trade_date DESC, data_status ASC, unavailable_reason ASC""",
+            (strategy_code,)
         )]
-    for row in signals + evaluations:
+    for row in signals:
         row["condition_results"] = json.loads(row.pop("condition_results_json"))
         row["condition_values"] = json.loads(row.pop("condition_values_json"))
-        if "unavailable_reasons_json" in row:
-            row["unavailable_reasons"] = json.loads(row.pop("unavailable_reasons_json"))
     return signals, evaluations
+
+
+def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Compatibility helper retained for A-v1 consumers and tests."""
+    return load_strategy_rows("A")
 
 
 def balance_units_for_display(
@@ -339,12 +355,19 @@ def _invalid_is_secured(value: object) -> None:
 def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
     institutional_rows = load_institutional_rows()
-    strategy_signals, strategy_evaluations = load_strategy_a_rows()
+    strategy_a_signals, strategy_a_evaluations = load_strategy_rows("A")
+    strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
     payload = {
         "records": rows,
         "institutional_records": institutional_rows,
-        "strategy_a_signals": strategy_signals,
-        "strategy_a_evaluations": strategy_evaluations,
+        # Generic collections let pages show all saved strategies together.
+        "strategy_signals": [*strategy_a_signals, *strategy_c_signals],
+        "strategy_evaluations": [*strategy_a_evaluations, *strategy_c_evaluations],
+        # Keep the established A-v1 contract for existing pages and consumers.
+        "strategy_a_signals": strategy_a_signals,
+        "strategy_a_evaluations": strategy_a_evaluations,
+        "strategy_c_signals": strategy_c_signals,
+        "strategy_c_evaluations": strategy_c_evaluations,
     }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(

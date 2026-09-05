@@ -88,8 +88,10 @@ def test_backfill_defaults_to_verified_dates_and_supports_explicit_range(tmp_pat
     assert calls == [date(2026, 9, 1), date(2026, 9, 2)]
 
 
-def test_workflow_runs_strategy_after_parent_stock_collection_before_dashboard():
+def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard():
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/daily-collector.yml").read_text(encoding="utf-8")
     assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
-    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Build dashboard data")
+    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy C-v1")
+    assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Build dashboard data")
     assert "python strategy_engine.py" in workflow
+    assert "python strategy_c.py" in workflow

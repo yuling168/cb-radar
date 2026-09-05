@@ -275,7 +275,7 @@
       <div class="source-badge">資料來源 · TPEx</div>
     </header>
 
-    <nav aria-label="Dashboard 頁面" style="margin:0 0 18px"><a href="institutional.html">法人籌碼 →</a>　<a href="strategy-a.html">策略 A-v1 →</a></nav>
+    <nav aria-label="Dashboard 頁面" style="margin:0 0 18px"><a href="institutional.html">法人籌碼 →</a>　<a href="strategy-a.html">策略 A-v1 →</a>　<a href="strategy-c.html">策略 C-v1 →</a></nav>
 
     <section class="panel strategy-panel" aria-labelledby="strategy-title">
       <h2 id="strategy-title">今日策略訊號</h2>
@@ -476,23 +476,47 @@
       const unavailable = state.strategyEvaluations.filter((row) => row.trade_date === state.selectedDate && row.data_status === "UNAVAILABLE");
       elements.strategySignals.replaceChildren();
       if (signals.length) {
-        elements.strategyStatus.textContent = `${state.selectedDate} 有 ${signals.length} 檔符合策略 A-v1。`;
+        elements.strategyStatus.textContent = `${state.selectedDate} 有 ${signals.length} 檔策略訊號。`;
         const fragment = document.createDocumentFragment();
         signals.forEach((row) => {
           const values = row.condition_values;
           const item = document.createElement("div");
           item.className = "signal-item";
-          item.innerHTML = `<strong>${row.cb_name || "—"}（${row.cb_code}）</strong><span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>成交量 ${numberFormat.format(values.today_volume_lots)} 張</span><span>符合策略</span>`;
+          const label = row.strategy_code === "C" ? "策略 C-v1" : "策略 A-v1";
+          const details = row.strategy_code === "C"
+            ? `<span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span><span>區間 ${values.conversion_value_bucket}</span><span>區間第 ${values.bucket_rank} 名</span>`
+            : `<span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>成交量 ${numberFormat.format(values.today_volume_lots)} 張</span>`;
+          item.innerHTML = `<strong>${label}｜${row.cb_name || "—"}（${row.cb_code}）</strong>${details}<span>符合策略</span>`;
           fragment.append(item);
         });
         elements.strategySignals.append(fragment);
       } else {
-        elements.strategyStatus.textContent = `${state.selectedDate} 沒有符合策略 A-v1 的訊號。`;
+        elements.strategyStatus.textContent = `${state.selectedDate} 沒有符合策略的訊號。`;
       }
       if (unavailable.length) {
-        const note = document.createElement("p");
-        note.textContent = `另有 ${unavailable.length} 檔資料不足，無法評估（非不符合策略）。`;
-        elements.strategySignals.append(note);
+        const unavailableByStrategy = new Map();
+        unavailable.forEach((row) => {
+          const strategyCode = row.strategy_code || "—";
+          if (!unavailableByStrategy.has(strategyCode)) unavailableByStrategy.set(strategyCode, []);
+          unavailableByStrategy.get(strategyCode).push(row);
+        });
+        [...unavailableByStrategy.entries()]
+          .sort(([left], [right]) => left.localeCompare(right, "en"))
+          .forEach(([strategyCode, rows]) => {
+            const reasonCounts = new Map();
+            rows.forEach((row) => {
+              const reason = row.unavailable_reason || "unknown";
+              reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + row.evaluation_count);
+            });
+            const unavailableCount = rows.reduce((total, row) => total + row.evaluation_count, 0);
+            const reasons = [...reasonCounts.entries()]
+              .sort(([left], [right]) => left.localeCompare(right, "en"))
+              .map(([reason, count]) => `${reason}（${count}）`)
+              .join("、");
+            const note = document.createElement("p");
+            note.textContent = `策略 ${strategyCode}：資料不足 ${unavailableCount} 檔，無法評估（非不符合策略）：${reasons}`;
+            elements.strategySignals.append(note);
+          });
       }
     }
 
@@ -526,8 +550,8 @@
       .then((payload) => {
         if (!payload || !Array.isArray(payload.records)) throw new Error("資料格式不正確");
         state.records = payload.records;
-        state.strategySignals = Array.isArray(payload.strategy_a_signals) ? payload.strategy_a_signals : [];
-        state.strategyEvaluations = Array.isArray(payload.strategy_a_evaluations) ? payload.strategy_a_evaluations : [];
+        state.strategySignals = Array.isArray(payload.strategy_signals) ? payload.strategy_signals : (Array.isArray(payload.strategy_a_signals) ? payload.strategy_a_signals : []);
+        state.strategyEvaluations = Array.isArray(payload.strategy_evaluations) ? payload.strategy_evaluations : (Array.isArray(payload.strategy_a_evaluations) ? payload.strategy_a_evaluations : []);
         const dates = [...new Set(state.records.map((record) => record.trade_date))].sort().reverse();
         if (!dates.length) throw new Error("資料庫目前沒有行情資料");
         dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
