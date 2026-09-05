@@ -240,6 +240,9 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         c_values = json.dumps({"conversion_value": 108.5, "premium_rate_pct": 12.5, "converted_ratio_pct": 10.0, "conversion_value_bucket": "105-110", "bucket_rank": 1, "bucket_candidate_count": 3, "balance_date": "2026-07-31"})
         connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "C", "v1", "CB 資優生", '{"within_bucket_top_two":true}', c_values, "AVAILABLE", "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (3, "88888", "2026-08-29", "C", "v1", "CB 資優生", "{}", "{}", "UNAVAILABLE", '["missing_historical_balance"]', "z"))
+        g_values = json.dumps({"trigger_types": ["G1", "G3"], "close_price": 110, "conversion_value": 100, "converted_ratio_pct": 5, "issue_anniversary_date": "2026-08-29", "maturity_final_year_start_date": "2026-08-29", "prior_19_high_close_price": 100, "prior_5_average_volume_lots": 10})
+        connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "G", "v1", "時間發動策略", '{"g1_first_effective_trade_date_after_issue_anniversary":true}', g_values, "AVAILABLE", "x"))
+        connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (5, "66666", "2026-08-29", "G", "v1", "時間發動策略", "{}", "{}", "UNAVAILABLE", '["baseline_unknown"]', "z"))
     monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
     monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
     build_dashboard.build_dashboard_data()
@@ -250,7 +253,7 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_close_price", "evaluation_count": 1,
     }]
-    assert {row["strategy_code"] for row in payload["strategy_signals"]} == {"A", "B", "C"}
+    assert {row["strategy_code"] for row in payload["strategy_signals"]} == {"A", "B", "C", "G"}
     assert payload["strategy_b_signals"][0]["condition_values"]["average_43_close_price"] == 98.5
     assert payload["strategy_b_evaluations"] == [{
         "trade_date": "2026-08-29", "strategy_code": "B", "strategy_version": "v1",
@@ -261,6 +264,11 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "trade_date": "2026-08-29", "strategy_code": "C", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_historical_balance", "evaluation_count": 1,
     }]
+    assert payload["strategy_g_signals"][0]["condition_values"]["trigger_types"] == ["G1", "G3"]
+    assert payload["strategy_g_evaluations"] == [{
+        "trade_date": "2026-08-29", "strategy_code": "G", "strategy_version": "v1",
+        "data_status": "UNAVAILABLE", "unavailable_reason": "baseline_unknown", "evaluation_count": 1,
+    }]
     assert "condition_values" not in payload["strategy_evaluations"][0]
 
 
@@ -269,6 +277,7 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     strategy = (DASHBOARD_PATH.parent / "strategy-a.html").read_text(encoding="utf-8")
     strategy_b = (DASHBOARD_PATH.parent / "strategy-b.html").read_text(encoding="utf-8")
     strategy_c = (DASHBOARD_PATH.parent / "strategy-c.html").read_text(encoding="utf-8")
+    strategy_g = (DASHBOARD_PATH.parent / "strategy-g.html").read_text(encoding="utf-8")
     assert 'id="strategySignals"' in index
     assert "非不符合策略" in index
     assert "unavailableByStrategy" in index
@@ -276,6 +285,7 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "reasonCounts" in index
     assert 'href="strategy-a.html"' in index
     assert 'href="strategy-b.html"' in index
+    assert 'href="strategy-g.html"' in index
     assert "策略 ${row.strategy_code || \"A\"}-v1" in index
     assert "average_43_close_price" in index
     assert 'id="dateSelect"' in strategy
@@ -293,6 +303,14 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "資料不足、無法評估" in strategy_c
     assert "evaluation_count" in strategy
     assert "evaluation_count" in strategy_c
+    assert 'id="dateSelect"' in strategy_g
+    assert "strategy_g_signals" in strategy_g
+    assert "trigger_types" in strategy_g
+    assert "prior_19_high_close_price" in strategy_g
+    assert "資料不足、無法評估" in strategy_g
+    assert 'href="strategy-g.html"' in strategy
+    assert 'href="strategy-g.html"' in strategy_b
+    assert 'href="strategy-g.html"' in strategy_c
 
 
 def test_dashboard_exports_parent_flow_for_each_current_cb_and_unavailable_reason(tmp_path, monkeypatch):

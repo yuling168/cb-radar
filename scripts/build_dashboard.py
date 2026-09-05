@@ -358,12 +358,13 @@ def build_dashboard_data() -> tuple[int, int]:
     strategy_a_signals, strategy_a_evaluations = load_strategy_rows("A")
     strategy_b_signals, strategy_b_evaluations = load_strategy_rows("B")
     strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
+    strategy_g_signals, strategy_g_evaluations = load_strategy_rows("G")
     payload = {
         "records": rows,
         "institutional_records": institutional_rows,
         # Generic collections let pages show all saved strategies together.
-        "strategy_signals": [*strategy_a_signals, *strategy_b_signals, *strategy_c_signals],
-        "strategy_evaluations": [*strategy_a_evaluations, *strategy_b_evaluations, *strategy_c_evaluations],
+        "strategy_signals": [*strategy_a_signals, *strategy_b_signals, *strategy_c_signals, *strategy_g_signals],
+        "strategy_evaluations": [*strategy_a_evaluations, *strategy_b_evaluations, *strategy_c_evaluations, *strategy_g_evaluations],
         # Keep the established A-v1 contract for existing pages and consumers.
         "strategy_a_signals": strategy_a_signals,
         "strategy_a_evaluations": strategy_a_evaluations,
@@ -371,6 +372,8 @@ def build_dashboard_data() -> tuple[int, int]:
         "strategy_b_evaluations": strategy_b_evaluations,
         "strategy_c_signals": strategy_c_signals,
         "strategy_c_evaluations": strategy_c_evaluations,
+        "strategy_g_signals": strategy_g_signals,
+        "strategy_g_evaluations": strategy_g_evaluations,
     }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(

@@ -93,8 +93,10 @@ def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard
     assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
     assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy B-v1")
     assert workflow.index("- name: Run strategy B-v1") < workflow.index("- name: Run strategy C-v1")
-    assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Build dashboard data")
+    assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Run strategy G-v1")
+    assert workflow.index("- name: Run strategy G-v1") < workflow.index("- name: Build dashboard data")
     assert "python strategy_engine.py" in workflow
     assert "python strategy_b.py" in workflow
     assert "python strategy_c.py" in workflow
-    assert workflow.count("continue-on-error: true") >= 4
+    assert "python strategy_g.py" in workflow
+    assert workflow.count("continue-on-error: true") >= 5

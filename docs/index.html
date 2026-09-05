@@ -275,7 +275,7 @@
       <div class="source-badge">資料來源 · TPEx</div>
     </header>
 
-    <nav aria-label="Dashboard 頁面" style="margin:0 0 18px"><a href="institutional.html">法人籌碼 →</a>　<a href="strategy-a.html">策略 A-v1 →</a>　<a href="strategy-b.html">策略 B-v1 →</a>　<a href="strategy-c.html">策略 C-v1 →</a></nav>
+    <nav aria-label="Dashboard 頁面" style="margin:0 0 18px"><a href="institutional.html">法人籌碼 →</a>　<a href="strategy-a.html">策略 A-v1 →</a>　<a href="strategy-b.html">策略 B-v1 →</a>　<a href="strategy-c.html">策略 C-v1 →</a>　<a href="strategy-g.html">策略 G-v1 →</a></nav>
 
     <section class="panel strategy-panel" aria-labelledby="strategy-title">
       <h2 id="strategy-title">今日策略訊號</h2>
@@ -487,6 +487,8 @@
             ? `<span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span><span>區間 ${values.conversion_value_bucket}</span><span>區間第 ${values.bucket_rank} 名</span>`
             : row.strategy_code === "B"
               ? `<span>收盤 ${valuationFormat.format(values.close_price)}</span><span>43 日均價 ${valuationFormat.format(values.average_43_close_price)}</span><span>當日量 ${numberFormat.format(values.today_volume_lots)} 張</span><span>10 日均量 ${valuationFormat.format(values.average_10_volume_lots)} 張</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span>`
+              : row.strategy_code === "G"
+                ? `<span>觸發 ${Array.isArray(values.trigger_types) ? values.trigger_types.join("／") : "—"}</span><span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span>`
               : `<span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>成交量 ${numberFormat.format(values.today_volume_lots)} 張</span>`;
           item.innerHTML = `<strong>${label}｜${row.cb_name || "—"}（${row.cb_code}）</strong>${details}<span>符合策略</span>`;
           fragment.append(item);
