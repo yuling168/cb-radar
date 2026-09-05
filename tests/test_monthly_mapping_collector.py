@@ -87,6 +87,36 @@ def test_mops_mismatch_or_missing_identity_is_rejected_without_monthly_mapping(t
         ).fetchone()[0] == "UNAVAILABLE"
 
 
+def test_unavailable_is_skipped_by_default_and_retried_only_with_opt_in(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_master(db_path)
+    first_session = Session(MOPS_CONTENT.replace("台泥", "錯名"))
+    first = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=first_session, delay_seconds=0,
+    )
+    assert first["unavailable"] == 1 and len(first_session.urls) == 1
+
+    skipped_session = Session()
+    skipped = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=skipped_session, delay_seconds=0,
+    )
+    assert skipped["skipped_unavailable"] == 1
+    assert skipped["processed"] == 0
+    assert skipped_session.urls == []
+
+    retried_session = Session()
+    retried = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=retried_session, delay_seconds=0,
+        retry_unavailable=True,
+    )
+    assert retried["verified"] == 1 and len(retried_session.urls) == 1
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT status, attempt_count FROM cb_parent_stock_monthly_mapping_status"
+        ).fetchone()
+    assert tuple(row) == ("SUCCEEDED", 2)
+
+
 def test_exact_mapping_wins_and_monthly_requires_matching_month(tmp_path):
     db_path = tmp_path / "history.db"
     seed_master(db_path)

@@ -107,6 +107,7 @@ def collect_monthly_verified_mappings(
     end_month: str | None = None,
     batch_size: int = 50,
     delay_seconds: float = 0.2,
+    retry_unavailable: bool = False,
 ) -> dict[str, object]:
     """Use current master only as query candidates; MOPS must prove each mapping."""
     if batch_size <= 0 or delay_seconds < 0:
@@ -121,7 +122,8 @@ def collect_monthly_verified_mappings(
         raise ValueError("supply year_month or both start_month and end_month")
     http = session or requests.Session()
     result = {"months": months, "verified": 0, "unavailable": 0, "source_errors": 0,
-              "skipped_succeeded": 0, "processed": 0, "database": str(db_path)}
+              "skipped_succeeded": 0, "skipped_unavailable": 0, "processed": 0,
+              "database": str(db_path)}
     for month in months:
         with connect(db_path) as connection:
             rows = connection.execute(
@@ -139,8 +141,12 @@ def collect_monthly_verified_mappings(
             if result["processed"] >= batch_size:
                 return result
             cb_code = str(row["cb_code"])
-            if statuses.get(cb_code) == "SUCCEEDED":
+            prior_status = statuses.get(cb_code)
+            if prior_status == "SUCCEEDED":
                 result["skipped_succeeded"] += 1
+                continue
+            if prior_status == "UNAVAILABLE" and not retry_unavailable:
+                result["skipped_unavailable"] += 1
                 continue
             url = None
             try:
@@ -184,6 +190,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cb-code", action="append", dest="cb_codes")
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--delay-seconds", type=float, default=0.2)
+    parser.add_argument(
+        "--retry-unavailable", action="store_true",
+        help="Re-query prior UNAVAILABLE mappings; default is to skip them.",
+    )
     return parser.parse_args(argv)
 
 
@@ -194,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
             args.year_month, args.database, cb_codes=set(args.cb_codes or []) or None,
             start_month=args.start_month, end_month=args.end_month,
             batch_size=args.batch_size, delay_seconds=args.delay_seconds,
+            retry_unavailable=args.retry_unavailable,
         )
     except (MonthlyMappingError, requests.RequestException, ValueError) as exc:
         print(f"monthly_mapping_collector_error: {exc}", file=sys.stderr)
