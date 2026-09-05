@@ -2,7 +2,10 @@ from datetime import date
 
 import pytest
 
-from db import connect, upsert_daily
+from db import (
+    connect, upsert_daily, upsert_parent_stock_mappings,
+    upsert_parent_stock_monthly_mappings,
+)
 from stock_backfill import BackfillPreconditionError, backfill_stock_daily_market
 
 
@@ -38,6 +41,14 @@ def seed_master(db_path):
         add_phase1_day(connection, "2026-08-27")
         add_phase1_day(connection, "2026-08-28")
         add_phase1_day(connection, "2026-08-31")
+        upsert_parent_stock_mappings(connection, [
+            {
+                "cb_code": "11111", "mapping_date": day, "stock_code": "1101",
+                "stock_name": "台泥", "market": "TWSE", "source": "official",
+                "source_url": "https://example.test/mapping", "verified_at": f"{day}T00:00:00+00:00",
+            }
+            for day in ("2026-08-27", "2026-08-28", "2026-08-31")
+        ])
 
 
 def test_backfill_processes_verified_trade_dates_oldest_first(tmp_path):
@@ -90,7 +101,7 @@ def test_backfill_rejects_date_without_a_master_parent_universe(tmp_path):
     with connect(db_path) as connection:
         add_phase1_day(connection, "2026-08-31", cb_code="99999")
 
-    with pytest.raises(BackfillPreconditionError, match="No cb_master parent-stock universe"):
+    with pytest.raises(BackfillPreconditionError, match="Unverified parent-stock mapping"):
         backfill_stock_daily_market(db_path, days=1)
 
 
@@ -112,3 +123,52 @@ def test_backfill_honors_an_end_date(tmp_path):
     assert result["end_date"] == "2026-08-28"
     assert result["records_inserted"] == 0
     assert result["records_updated"] == 2
+
+
+def test_range_backfill_rejects_unverified_historical_mapping_before_network(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_master(db_path)
+    called = False
+
+    def collector(*_args):
+        nonlocal called
+        called = True
+
+    with connect(db_path) as connection:
+        connection.execute(
+            "DELETE FROM cb_parent_stock_mapping WHERE mapping_date='2026-08-28'"
+        )
+    with pytest.raises(BackfillPreconditionError, match="2026-08-28"):
+        backfill_stock_daily_market(
+            db_path, start_date=date(2026, 8, 27), end_date=date(2026, 8, 28),
+            collector=collector,
+        )
+    assert not called
+
+
+def test_monthly_mapping_requires_explicit_backfill_flag(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_master(db_path)
+    with connect(db_path) as connection:
+        connection.execute("DELETE FROM cb_parent_stock_mapping")
+        upsert_parent_stock_monthly_mappings(connection, [
+            {
+                "cb_code": "11111", "year_month": "2026-08", "stock_code": "1101",
+                "stock_name": "台泥", "market": "TWSE", "source": "MOPS:t120sg01",
+                "source_url": "https://mopsov.twse.com.tw/mops/web/t120sg01?bond_id=11111&issuer_stock_code=1101&monyr_reg=202608",
+                "verified_at": "2026-08-31T00:00:00+00:00",
+            }
+        ])
+    called = []
+
+    def collector(*args, **kwargs):
+        called.append((args, kwargs))
+        return {"target_stocks": 1, "records_inserted": 0, "records_updated": 0}
+
+    with pytest.raises(BackfillPreconditionError):
+        backfill_stock_daily_market(db_path, days=1, collector=collector)
+    result = backfill_stock_daily_market(
+        db_path, days=1, collector=collector, allow_monthly_verified=True
+    )
+    assert result["trade_days"] == 1
+    assert called[-1][1] == {"allow_monthly_verified": True}

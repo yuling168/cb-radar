@@ -1078,6 +1078,17 @@ def test_phase2_modules_bootstrap_new_31494_for_same_day_parent_stock_collection
             }],
         )
         assert parent_stock_codes_for_trade_date(connection, "2026-09-01") == {"3149"}
+        mapping = connection.execute(
+            """
+            SELECT mapping_date, stock_code, source_url, verified_at
+            FROM cb_parent_stock_mapping
+            WHERE cb_code = '31494'
+            """
+        ).fetchone()
+        assert mapping[0] == "2026-09-01"
+        assert mapping[1] == "3149"
+        assert mapping[2]
+        assert mapping[3].endswith("+00:00")
 
 
 def test_phase2_modules_excludes_new_exchangeable_bond(tmp_path):

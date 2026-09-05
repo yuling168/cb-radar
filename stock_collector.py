@@ -3,7 +3,7 @@
 import argparse
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -17,7 +17,12 @@ from config import (
     TPEX_DAILY_MARKET_URL,
     TWSE_DAILY_MARKET_URL,
 )
-from db import connect, parent_stock_codes_for_trade_date, upsert_stock_daily_market
+from db import (
+    connect,
+    parent_stock_mappings_for_trade_date,
+    upsert_stock_daily_coverage,
+    upsert_stock_daily_market,
+)
 
 
 TWSE_REQUIRED_FIELDS = {
@@ -34,6 +39,10 @@ TPEX_REQUIRED_FIELDS = {"代號", "名稱", "收盤", "開盤", "最高", "最�
 
 class StockMarketFormatError(RuntimeError):
     """An official daily market response is unavailable or structurally invalid."""
+
+
+class ParentStockMappingError(RuntimeError):
+    """The requested date has no exact-date official CB parent mapping."""
 
 
 def build_session() -> requests.Session:
@@ -197,28 +206,110 @@ def collect_stock_daily_market(
     trade_date: date,
     db_path: Path | str = DEFAULT_DB_PATH,
     session: requests.Session | None = None,
+    *,
+    allow_monthly_verified: bool = False,
 ) -> dict[str, object]:
     with connect(db_path) as connection:
-        target_codes = parent_stock_codes_for_trade_date(connection, trade_date.isoformat())
-    if not target_codes:
+        try:
+            mappings = parent_stock_mappings_for_trade_date(
+                connection, trade_date.isoformat(),
+                allow_monthly_verified=allow_monthly_verified,
+            )
+        except ValueError as exc:
+            raise ParentStockMappingError(str(exc)) from exc
+    if not mappings:
         return {"trade_date": trade_date.isoformat(), "target_stocks": 0, "records_inserted": 0, "records_updated": 0}
 
+    target_codes = {mapping["stock_code"] for mapping in mappings.values()}
+    mapping_by_stock = {
+        mapping["stock_code"]: mapping for mapping in mappings.values()
+    }
+    checked_at = datetime.now(timezone.utc).isoformat()
+
     http = session or build_session()
-    # Both full-market responses are validated before any parent-stock record is written.
-    twse_records = parse_twse_market(fetch_twse_market(http, trade_date), trade_date, target_codes)
-    tpex_records = parse_tpex_market(fetch_tpex_market(http, trade_date), trade_date, target_codes)
+    try:
+        # Both full-market responses are validated before any parent-stock record is written.
+        twse_records = parse_twse_market(fetch_twse_market(http, trade_date), trade_date, target_codes)
+        tpex_records = parse_tpex_market(fetch_tpex_market(http, trade_date), trade_date, target_codes)
+    except (requests.RequestException, StockMarketFormatError) as exc:
+        with connect(db_path) as connection:
+            upsert_stock_daily_coverage(connection, [
+                {
+                    "trade_date": trade_date.isoformat(),
+                    "stock_code": stock_code,
+                    "market": mapping_by_stock[stock_code]["market"],
+                    "status": "SOURCE_ERROR",
+                    "reason": str(exc),
+                    "source_url": None,
+                    "response_date": None,
+                    "mapping_level": mapping_by_stock[stock_code]["mapping_level"],
+                    "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
+                    "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
+                    "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                    "checked_at": checked_at,
+                }
+                for stock_code in sorted(target_codes)
+            ])
+        raise
     records = {**twse_records, **tpex_records}
     duplicate_codes = set(twse_records) & set(tpex_records)
     if duplicate_codes:
         raise StockMarketFormatError(f"Parent stocks appear in both markets: {sorted(duplicate_codes)}")
     missing_codes = target_codes - records.keys()
     if missing_codes:
+        with connect(db_path) as connection:
+            upsert_stock_daily_coverage(connection, [
+                {
+                    "trade_date": trade_date.isoformat(),
+                    "stock_code": stock_code,
+                    "market": mapping_by_stock[stock_code]["market"],
+                    "status": "MISSING_OFFICIAL_ROW",
+                    "reason": "missing_from_official_daily_market",
+                    "source_url": None,
+                    "response_date": trade_date.isoformat(),
+                    "mapping_level": mapping_by_stock[stock_code]["mapping_level"],
+                    "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
+                    "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
+                    "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                    "checked_at": checked_at,
+                }
+                for stock_code in sorted(missing_codes)
+            ])
         raise StockMarketFormatError(
             f"Parent stocks missing from official daily markets: {sorted(missing_codes)}"
         )
 
     with connect(db_path) as connection:
         inserted, updated = upsert_stock_daily_market(connection, records.values())
+        coverage = []
+        for stock_code, record in records.items():
+            source_market = "TWSE" if stock_code in twse_records else "TPEX"
+            mapped_market = mapping_by_stock[stock_code]["market"]
+            market = mapped_market if mapped_market != "UNKNOWN" else source_market
+            if record["p_close_price"] is None:
+                status, reason = "MISSING_CLOSE", "official_close_price_missing"
+            elif record["p_volume_shares"] == 0:
+                status, reason = "OFFICIAL_ZERO", "official_zero_volume"
+            else:
+                status, reason = "COMPLETE", None
+            coverage.append({
+                "trade_date": trade_date.isoformat(),
+                "stock_code": stock_code,
+                "market": market,
+                "status": status,
+                "reason": reason,
+                "source_url": (
+                    TWSE_DAILY_MARKET_URL if source_market == "TWSE"
+                    else TPEX_DAILY_MARKET_URL
+                ),
+                "response_date": trade_date.isoformat(),
+                "mapping_level": mapping_by_stock[stock_code]["mapping_level"],
+                "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
+                "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
+                "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                "checked_at": checked_at,
+            })
+        upsert_stock_daily_coverage(connection, coverage)
     return {
         "trade_date": trade_date.isoformat(),
         "target_stocks": len(target_codes),
@@ -240,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         result = collect_stock_daily_market(args.date, args.database)
-    except (requests.RequestException, StockMarketFormatError) as exc:
+    except (requests.RequestException, StockMarketFormatError, ParentStockMappingError) as exc:
         print(f"stock_collector_error: {exc}", file=sys.stderr)
         return 1
     for key, value in result.items():

@@ -2,8 +2,12 @@ from datetime import date
 
 import pytest
 
-from db import connect, upsert_daily, upsert_stock_daily_market
+from db import (
+    connect, upsert_daily, upsert_parent_stock_mappings,
+    upsert_parent_stock_monthly_mappings, upsert_stock_daily_market,
+)
 from stock_collector import (
+    ParentStockMappingError,
     StockMarketFormatError,
     build_session,
     collect_stock_daily_market,
@@ -78,6 +82,14 @@ def seed_phase1_and_master(db_path):
                 {"trade_date": "2026-08-28", "cb_code": "22221", "cb_name": "乙一", "close_price": 100.0, "volume_lots": 1, "source": "test", "collected_at": "2026-08-28T00:00:00+00:00"},
             ],
         )
+        upsert_parent_stock_mappings(connection, [
+            {"cb_code": "11111", "mapping_date": "2026-08-28", "stock_code": "1101",
+             "stock_name": "台泥", "market": "TWSE", "source": "official",
+             "source_url": "https://example.test/twse", "verified_at": "2026-08-28T00:00:00+00:00"},
+            {"cb_code": "22221", "mapping_date": "2026-08-28", "stock_code": "3131",
+             "stock_name": "弘塑", "market": "TPEX", "source": "official",
+             "source_url": "https://example.test/tpex", "verified_at": "2026-08-28T00:00:00+00:00"},
+        ])
 
 
 def test_parsers_store_exact_share_volume_without_lot_rounding():
@@ -115,6 +127,108 @@ def test_twse_missing_ohlc_is_saved_as_null_but_volume_stays_strict():
             )
 
 
+def test_collector_records_zero_and_missing_close_coverage_with_provenance(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_phase1_and_master(db_path)
+    session = Session(
+        twse_payload(["1101", "台泥", "0", "0", "0", "20", "20", "20", "20"]),
+        tpex_payload(["3131", "弘塑", "--", "+0", "--", "--", "--", "0"]),
+    )
+
+    collect_stock_daily_market(TRADE_DATE, db_path, session)
+
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT stock_code, market, status, reason, source_url, response_date
+            FROM stock_daily_coverage ORDER BY stock_code
+            """
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("1101", "TWSE", "OFFICIAL_ZERO", "official_zero_volume",
+         "https://www.twse.com.tw/exchangeReport/MI_INDEX", "2026-08-28"),
+        ("3131", "TPEX", "MISSING_CLOSE", "official_close_price_missing",
+         "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc", "2026-08-28"),
+    ]
+
+
+def test_collector_rejects_historical_date_without_exact_mapping(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_phase1_and_master(db_path)
+    with connect(db_path) as connection:
+        connection.execute("DELETE FROM cb_parent_stock_mapping")
+
+    with pytest.raises(ParentStockMappingError, match="unverified_parent_stock_mapping"):
+        collect_stock_daily_market(TRADE_DATE, db_path, Session(twse_payload(), tpex_payload()))
+
+
+def test_tib_mapping_keeps_tib_coverage_when_twse_feed_has_the_official_row(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        connection.execute(
+            """INSERT INTO cb_master (
+                cb_code, cb_name, stock_code, stock_name, issue_date, maturity_date,
+                issue_amount, source, source_url, collected_at
+            ) VALUES ('33331', '創一', '6854', '錼創', '2024-01-01', '2027-01-01',
+                      100000000, 'official', 'https://example.test', '2026-08-28T00:00:00+00:00')"""
+        )
+        upsert_daily(connection, [{
+            "trade_date": "2026-08-28", "cb_code": "33331", "cb_name": "創一",
+            "close_price": 100, "volume_lots": 0, "source": "test",
+            "collected_at": "2026-08-28T00:00:00+00:00",
+        }])
+        upsert_parent_stock_mappings(connection, [{
+            "cb_code": "33331", "mapping_date": "2026-08-28", "stock_code": "6854",
+            "stock_name": "錼創", "market": "TIB", "source": "official",
+            "source_url": "https://example.test/tib", "verified_at": "2026-08-28T00:00:00+00:00",
+        }])
+    collect_stock_daily_market(
+        TRADE_DATE, db_path,
+        Session(twse_payload(["6854", "錼創", "10", "1", "100", "10", "11", "9", "10"]), tpex_payload()),
+    )
+    with connect(db_path) as connection:
+        assert tuple(connection.execute(
+            "SELECT market, status FROM stock_daily_coverage WHERE stock_code='6854'"
+        ).fetchone()) == ("TIB", "COMPLETE")
+
+
+def test_monthly_mapping_requires_explicit_opt_in_and_labels_coverage(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_phase1_and_master(db_path)
+    monthly = [
+        {"cb_code": "11111", "year_month": "2026-08", "stock_code": "1101",
+         "stock_name": "台泥", "market": "TWSE", "source": "MOPS:t120sg01",
+         "source_url": "https://mopsov.twse.com.tw/mops/web/t120sg01?bond_id=11111&issuer_stock_code=1101&monyr_reg=202608",
+         "verified_at": "2026-08-31T00:00:00+00:00"},
+        {"cb_code": "22221", "year_month": "2026-08", "stock_code": "3131",
+         "stock_name": "弘塑", "market": "TPEX", "source": "MOPS:t120sg01",
+         "source_url": "https://mopsov.twse.com.tw/mops/web/t120sg01?bond_id=22221&issuer_stock_code=3131&monyr_reg=202608",
+         "verified_at": "2026-08-31T00:00:00+00:00"},
+    ]
+    with connect(db_path) as connection:
+        connection.execute("DELETE FROM cb_parent_stock_mapping")
+        upsert_parent_stock_monthly_mappings(connection, monthly)
+    session = Session(
+        twse_payload(["1101", "台泥", "1", "1", "1", "20", "21", "19", "20"]),
+        tpex_payload(["3131", "弘塑", "120", "+1", "119", "121", "118", "1"]),
+    )
+    with pytest.raises(ParentStockMappingError):
+        collect_stock_daily_market(TRADE_DATE, db_path, session)
+    collect_stock_daily_market(TRADE_DATE, db_path, session, allow_monthly_verified=True)
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT mapping_level, mapping_source_url, mapping_year_month, mapping_verified_at
+            FROM stock_daily_coverage ORDER BY stock_code
+            """
+        ).fetchall()
+        assert len(rows) == 2
+        assert all(row[0] == "MONTHLY_VERIFIED" for row in rows)
+        assert all("mopsov.twse.com.tw" in row[1] for row in rows)
+        assert all(row[2] == "2026-08" for row in rows)
+        assert all(row[3] == "2026-08-31T00:00:00+00:00" for row in rows)
+
+
 def test_daily_market_upsert_uses_both_official_markets_in_one_result(tmp_path):
     db_path = tmp_path / "history.db"
     seed_phase1_and_master(db_path)
@@ -138,9 +252,16 @@ def test_daily_market_upsert_uses_both_official_markets_in_one_result(tmp_path):
             FROM stock_daily_market ORDER BY p_stock_code
             """
         ).fetchall()
+        coverage = connection.execute(
+            "SELECT stock_code, market, status, response_date FROM stock_daily_coverage ORDER BY stock_code"
+        ).fetchall()
     assert [tuple(row) for row in saved] == [
         ("1101", 20.0, 21.0, 19.0, 20.5, 1234),
         ("3131", 119.0, 121.0, 118.0, 120.5, 567),
+    ]
+    assert [tuple(row) for row in coverage] == [
+        ("1101", "TWSE", "COMPLETE", "2026-08-28"),
+        ("3131", "TPEX", "COMPLETE", "2026-08-28"),
     ]
 
 
@@ -156,6 +277,10 @@ def test_missing_parent_stock_fails_before_any_market_row_is_written(tmp_path):
         collect_stock_daily_market(TRADE_DATE, db_path, session)
     with connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM stock_daily_market").fetchone()[0] == 0
+        row = connection.execute(
+            "SELECT status, reason FROM stock_daily_coverage WHERE stock_code='3131'"
+        ).fetchone()
+        assert tuple(row) == ("MISSING_OFFICIAL_ROW", "missing_from_official_daily_market")
 
 
 def test_wrong_official_response_date_fails_before_writing(tmp_path):
@@ -168,6 +293,9 @@ def test_wrong_official_response_date_fails_before_writing(tmp_path):
         collect_stock_daily_market(TRADE_DATE, db_path, Session(payload, tpex_payload()))
     with connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM stock_daily_market").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT count(*) FROM stock_daily_coverage WHERE status='SOURCE_ERROR'"
+        ).fetchone()[0] == 2
 
 
 def test_same_date_and_parent_stock_is_upserted(tmp_path):

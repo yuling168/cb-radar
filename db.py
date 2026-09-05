@@ -78,6 +78,59 @@ CREATE TABLE IF NOT EXISTS stock_daily_market (
 CREATE INDEX IF NOT EXISTS idx_stock_daily_market_stock_date
     ON stock_daily_market (p_stock_code, trade_date);
 
+CREATE TABLE IF NOT EXISTS cb_parent_stock_mapping (
+    cb_code TEXT NOT NULL,
+    mapping_date TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    market TEXT NOT NULL CHECK (market IN ('TWSE', 'TPEX', 'TIB', 'UNKNOWN')),
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    verified_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, mapping_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cb_parent_stock_mapping_date
+    ON cb_parent_stock_mapping (mapping_date, stock_code);
+
+CREATE TABLE IF NOT EXISTS cb_parent_stock_monthly_mapping (
+    cb_code TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    stock_name TEXT NOT NULL,
+    market TEXT NOT NULL CHECK (market IN ('TWSE', 'TPEX', 'TIB', 'UNKNOWN')),
+    source TEXT NOT NULL CHECK (source = 'MOPS:t120sg01'),
+    source_url TEXT NOT NULL,
+    verified_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, year_month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cb_parent_stock_monthly_mapping_month
+    ON cb_parent_stock_monthly_mapping (year_month, stock_code);
+
+CREATE TABLE IF NOT EXISTS stock_daily_coverage (
+    trade_date TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    market TEXT NOT NULL CHECK (market IN ('TWSE', 'TPEX', 'TIB', 'UNKNOWN')),
+    status TEXT NOT NULL CHECK (status IN (
+        'COMPLETE', 'OFFICIAL_ZERO', 'MISSING_CLOSE', 'MISSING_OFFICIAL_ROW',
+        'SOURCE_ERROR'
+    )),
+    reason TEXT,
+    source_url TEXT,
+    response_date TEXT,
+    mapping_level TEXT NOT NULL DEFAULT 'EXACT'
+        CHECK (mapping_level IN ('EXACT', 'MONTHLY_VERIFIED')),
+    mapping_source_url TEXT,
+    mapping_year_month TEXT,
+    mapping_verified_at TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_daily_coverage_stock_date
+    ON stock_daily_coverage (stock_code, trade_date);
+
 CREATE TABLE IF NOT EXISTS institutional_daily (
     trade_date TEXT NOT NULL,
     stock_code TEXT NOT NULL,
@@ -356,6 +409,20 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     }
     if "reference_price" not in daily_columns:
         connection.execute("ALTER TABLE cb_daily ADD COLUMN reference_price REAL")
+    coverage_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(stock_daily_coverage)")
+    }
+    if coverage_columns and "mapping_level" not in coverage_columns:
+        connection.execute(
+            "ALTER TABLE stock_daily_coverage ADD COLUMN mapping_level TEXT "
+            "NOT NULL DEFAULT 'EXACT' CHECK (mapping_level IN ('EXACT', 'MONTHLY_VERIFIED'))"
+        )
+    if coverage_columns and "mapping_source_url" not in coverage_columns:
+        connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN mapping_source_url TEXT")
+    if coverage_columns and "mapping_year_month" not in coverage_columns:
+        connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN mapping_year_month TEXT")
+    if coverage_columns and "mapping_verified_at" not in coverage_columns:
+        connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN mapping_verified_at TEXT")
     connection.commit()
     return connection
 
@@ -502,6 +569,21 @@ def upsert_master_data(
             """,
             balance_rows,
         )
+        if as_of_date is not None:
+            mapping_rows = [
+                {
+                    "cb_code": str(row["cb_code"]),
+                    "mapping_date": as_of_date.isoformat(),
+                    "stock_code": str(row["stock_code"]),
+                    "stock_name": str(row["stock_name"]),
+                    "market": "UNKNOWN",
+                    "source": str(row["source"]),
+                    "source_url": str(row["source_url"]),
+                    "verified_at": str(row["collected_at"]),
+                }
+                for row in master_rows
+            ]
+            upsert_parent_stock_mappings(connection, mapping_rows)
     return len(master_rows), len(event_rows), len(balance_rows)
 
 
@@ -574,6 +656,205 @@ def parent_stock_codes_for_trade_date(
         (trade_date,),
     )
     return {str(row[0]) for row in rows}
+
+
+def upsert_parent_stock_mappings(
+    connection: sqlite3.Connection, mappings: Iterable[Mapping[str, object]]
+) -> None:
+    """Save an official CB-to-parent-stock observation for its exact date.
+
+    A mapping is intentionally keyed by observation date.  Callers resolving a
+    historical market date must use an exact-date observation rather than a
+    current ``cb_master`` value.
+    """
+    rows = [dict(row) for row in mappings]
+    if not rows:
+        return
+    for row in rows:
+        if row.get("market") not in {"TWSE", "TPEX", "TIB", "UNKNOWN"}:
+            raise ValueError("parent-stock mapping market is invalid")
+        for key in ("cb_code", "mapping_date", "stock_code", "stock_name", "source", "source_url", "verified_at"):
+            if not str(row.get(key, "")).strip():
+                raise ValueError(f"parent-stock mapping {key} is required")
+        date.fromisoformat(str(row["mapping_date"]))
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO cb_parent_stock_mapping (
+                cb_code, mapping_date, stock_code, stock_name, market,
+                source, source_url, verified_at
+            ) VALUES (
+                :cb_code, :mapping_date, :stock_code, :stock_name, :market,
+                :source, :source_url, :verified_at
+            )
+            ON CONFLICT(cb_code, mapping_date) DO UPDATE SET
+                stock_code = excluded.stock_code,
+                stock_name = excluded.stock_name,
+                market = excluded.market,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                verified_at = excluded.verified_at
+            """,
+            rows,
+        )
+
+
+def parent_stock_mappings_for_trade_date(
+    connection: sqlite3.Connection,
+    trade_date: str,
+    *,
+    allow_monthly_verified: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Return exact-date verified parent mappings for CBs observed that day.
+
+    Missing mappings are deliberately not recovered from ``cb_master`` because
+    that would apply a later master record to a historical date.
+    """
+    exact_rows = connection.execute(
+        """
+        SELECT daily.cb_code, mapping.stock_code, mapping.stock_name, mapping.market,
+               mapping.source, mapping.source_url, mapping.verified_at
+        FROM cb_daily AS daily
+        LEFT JOIN cb_parent_stock_mapping AS mapping
+          ON mapping.cb_code = daily.cb_code
+         AND mapping.mapping_date = daily.trade_date
+        WHERE daily.trade_date = ?
+        """,
+        (trade_date,),
+    ).fetchall()
+    result = {
+        str(row["cb_code"]): {
+            "stock_code": str(row["stock_code"]),
+            "stock_name": str(row["stock_name"]),
+            "market": str(row["market"]),
+            "source": str(row["source"]),
+            "source_url": str(row["source_url"]),
+            "verified_at": str(row["verified_at"]),
+            "mapping_level": "EXACT",
+            "mapping_year_month": trade_date[:7],
+        }
+        for row in exact_rows if row["stock_code"] is not None
+    }
+    missing = [str(row["cb_code"]) for row in exact_rows if row["stock_code"] is None]
+    if missing and allow_monthly_verified:
+        placeholders = ",".join("?" for _ in missing)
+        monthly_rows = connection.execute(
+            f"""
+            SELECT cb_code, stock_code, stock_name, market, source, source_url, verified_at
+            FROM cb_parent_stock_monthly_mapping
+            WHERE year_month = ? AND cb_code IN ({placeholders})
+            """,
+            (trade_date[:7], *missing),
+        ).fetchall()
+        for row in monthly_rows:
+            result[str(row["cb_code"])] = {
+                "stock_code": str(row["stock_code"]),
+                "stock_name": str(row["stock_name"]),
+                "market": str(row["market"]),
+                "source": str(row["source"]),
+                "source_url": str(row["source_url"]),
+                "verified_at": str(row["verified_at"]),
+                "mapping_level": "MONTHLY_VERIFIED",
+                "mapping_year_month": trade_date[:7],
+            }
+        missing = [code for code in missing if code not in result]
+    missing = sorted(missing)
+    if missing:
+        raise ValueError(
+            "unverified_parent_stock_mapping: " + ",".join(missing)
+        )
+    return result
+
+
+def upsert_parent_stock_monthly_mappings(
+    connection: sqlite3.Connection, mappings: Iterable[Mapping[str, object]]
+) -> None:
+    """Save a MOPS-verified monthly mapping without converting it to daily data."""
+    rows = [dict(row) for row in mappings]
+    for row in rows:
+        if row.get("source") != "MOPS:t120sg01":
+            raise ValueError("monthly parent-stock mapping must be sourced from MOPS:t120sg01")
+        if row.get("market") not in {"TWSE", "TPEX", "TIB", "UNKNOWN"}:
+            raise ValueError("monthly parent-stock mapping market is invalid")
+        for key in ("cb_code", "year_month", "stock_code", "stock_name", "source_url", "verified_at"):
+            if not str(row.get(key, "")).strip():
+                raise ValueError(f"monthly parent-stock mapping {key} is required")
+        date.fromisoformat(f"{row['year_month']}-01")
+    if not rows:
+        return
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO cb_parent_stock_monthly_mapping (
+                cb_code, year_month, stock_code, stock_name, market, source,
+                source_url, verified_at
+            ) VALUES (
+                :cb_code, :year_month, :stock_code, :stock_name, :market, :source,
+                :source_url, :verified_at
+            )
+            ON CONFLICT(cb_code, year_month) DO UPDATE SET
+                stock_code = excluded.stock_code,
+                stock_name = excluded.stock_name,
+                market = excluded.market,
+                source = excluded.source,
+                source_url = excluded.source_url,
+                verified_at = excluded.verified_at
+            """,
+            rows,
+        )
+
+
+def upsert_stock_daily_coverage(
+    connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
+) -> None:
+    """Persist the official availability/provenance outcome without imputation."""
+    rows = [dict(row) for row in records]
+    if not rows:
+        return
+    valid_markets = {"TWSE", "TPEX", "TIB", "UNKNOWN"}
+    valid_statuses = {
+        "COMPLETE", "OFFICIAL_ZERO", "MISSING_CLOSE", "MISSING_OFFICIAL_ROW",
+        "SOURCE_ERROR",
+    }
+    for row in rows:
+        row.setdefault("mapping_level", "EXACT")
+        row.setdefault("mapping_source_url", None)
+        row.setdefault("mapping_year_month", None)
+        row.setdefault("mapping_verified_at", None)
+        if row.get("market") not in valid_markets or row.get("status") not in valid_statuses:
+            raise ValueError("stock daily coverage market or status is invalid")
+        if row["mapping_level"] not in {"EXACT", "MONTHLY_VERIFIED"}:
+            raise ValueError("stock daily coverage mapping_level is invalid")
+        for key in ("trade_date", "stock_code", "checked_at"):
+            if not str(row.get(key, "")).strip():
+                raise ValueError(f"stock daily coverage {key} is required")
+        date.fromisoformat(str(row["trade_date"]))
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO stock_daily_coverage (
+                trade_date, stock_code, market, status, reason, source_url,
+                response_date, mapping_level, mapping_source_url, mapping_year_month,
+                mapping_verified_at, checked_at
+            ) VALUES (
+                :trade_date, :stock_code, :market, :status, :reason, :source_url,
+                :response_date, :mapping_level, :mapping_source_url, :mapping_year_month,
+                :mapping_verified_at, :checked_at
+            )
+            ON CONFLICT(trade_date, stock_code) DO UPDATE SET
+                market = excluded.market,
+                status = excluded.status,
+                reason = excluded.reason,
+                source_url = excluded.source_url,
+                response_date = excluded.response_date,
+                mapping_level = excluded.mapping_level,
+                mapping_source_url = excluded.mapping_source_url,
+                mapping_year_month = excluded.mapping_year_month,
+                mapping_verified_at = excluded.mapping_verified_at,
+                checked_at = excluded.checked_at
+            """,
+            rows,
+        )
 
 
 def active_parent_stock_codes_on(
