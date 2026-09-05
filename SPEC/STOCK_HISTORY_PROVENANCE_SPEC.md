@@ -21,6 +21,14 @@
 - 日級 mapping 永遠優先。`stock_backfill.py` 預設 strict exact；只有明確傳入 `--allow-monthly-verified`，才可在同月且日級 mapping 缺失時使用月度 mapping。
 - 使用月度 mapping 的 `stock_daily_coverage.mapping_level` 必須為 `MONTHLY_VERIFIED`；coverage 直接保存該日行情的官方 URL／回應日，以及 `mapping_source_url`、`mapping_year_month`、`mapping_verified_at`。日級列使用 `EXACT`。
 
+`cb_parent_stock_monthly_mapping_status` 以 `(cb_code, year_month)` 保存 `SUCCEEDED`、`UNAVAILABLE` 或 `SOURCE_ERROR`、嘗試次數、最後錯誤、來源 URL 與檢查時間。成功 mapping 不重抓；`SOURCE_ERROR` 可在下一批安全重試。collector 支援月份區間、`--batch-size` 與 `--delay-seconds`，每次只處理指定數量候選以利續跑。
+
+## CB 日行情區間回補
+
+`cb_backfill.py --start-date --end-date --batch-size --delay-seconds` 逐一向官方 CB 日行情來源確認每個日曆日。只有官方同日回應成功且回應日期等於請求日，才寫入 `cb_daily`；非交易／未發布日保存 `NON_TRADING`，來源／格式／錯日保存可重試的 `SOURCE_ERROR`。
+
+`cb_daily_backfill_status` 保存每個日期的狀態、嘗試次數、最後錯誤與檢查時間。已成功或確認非交易的日期會在後續批次跳過；來源錯誤會安全重試。CB 日行情回補不讀寫任何母股 mapping。
+
 ## 行情 coverage 與 provenance
 
 `stock_daily_coverage` 以 `(trade_date, stock_code)` 保存市場、狀態、原因、官方 URL、官方回應日期與 `checked_at`。狀態為：

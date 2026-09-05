@@ -4,7 +4,8 @@ import pytest
 import requests
 
 import cb_backfill
-from cb_backfill import BackfillIncompleteError, CountingSession, backfill_cb_daily
+from db import connect
+from cb_backfill import BackfillIncompleteError, CountingSession, backfill_cb_daily, backfill_cb_daily_range
 from collector import DataNotPublished, TpexFormatError
 
 
@@ -106,3 +107,28 @@ def test_counting_session_retries_520_and_counts_each_attempt(monkeypatch):
 
     assert response.status_code == 200
     assert session.request_count == 2
+
+
+def test_range_backfill_confirms_official_days_and_resumes_source_errors(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_collect(day, *_args, **_kwargs):
+        calls.append(day)
+        if day == date(2026, 8, 29):
+            raise DataNotPublished("non-trading")
+        if day == date(2026, 8, 30) and calls.count(day) == 1:
+            raise TpexFormatError("temporary format")
+        return {"trade_date": day.isoformat(), "records_inserted": 1, "records_updated": 0}
+
+    monkeypatch.setattr(cb_backfill, "collect", fake_collect)
+    db_path = tmp_path / "history.db"
+    first = backfill_cb_daily_range(date(2026, 8, 28), date(2026, 8, 30), db_path, batch_size=3, delay_seconds=0)
+    assert (first["succeeded"], first["non_trading"], first["source_errors"]) == (1, 1, 1)
+    second = backfill_cb_daily_range(date(2026, 8, 28), date(2026, 8, 30), db_path, batch_size=3, delay_seconds=0)
+    assert second["skipped"] == 2 and second["succeeded"] == 1
+    with connect(db_path) as connection:
+        rows = connection.execute("SELECT trade_date,status,attempt_count FROM cb_daily_backfill_status ORDER BY trade_date").fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("2026-08-28", "SUCCEEDED", 1), ("2026-08-29", "NON_TRADING", 1),
+        ("2026-08-30", "SUCCEEDED", 2),
+    ]

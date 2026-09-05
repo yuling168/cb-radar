@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from db import (
     connect,
@@ -74,12 +75,16 @@ def test_mops_monthly_mapping_is_separate_and_verifies_provenance(tmp_path):
 def test_mops_mismatch_or_missing_identity_is_rejected_without_monthly_mapping(tmp_path):
     db_path = tmp_path / "history.db"
     seed_master(db_path)
-    with pytest.raises(MonthlyMappingError, match="parent stock name"):
-        collect_monthly_verified_mappings(
-            "2026-08", db_path, session=Session(MOPS_CONTENT.replace("台泥", "錯名"))
-        )
+    result = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=Session(MOPS_CONTENT.replace("台泥", "錯名")),
+        delay_seconds=0,
+    )
+    assert result["unavailable"] == 1
     with connect(db_path) as connection:
         assert connection.execute("SELECT count(*) FROM cb_parent_stock_monthly_mapping").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT status FROM cb_parent_stock_monthly_mapping_status"
+        ).fetchone()[0] == "UNAVAILABLE"
 
 
 def test_exact_mapping_wins_and_monthly_requires_matching_month(tmp_path):
@@ -118,3 +123,43 @@ def test_parser_rejects_non_mops_month_or_non_cb_document():
         parse_mops_monthly_mapping(
             "not official", MOPS_URL, cb_code="11111", stock_code="1101", stock_name="台泥"
         )
+
+
+def test_monthly_status_retries_source_error_and_skips_success(monkeypatch, tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_master(db_path)
+
+    class FailingSession:
+        def get(self, *_args, **_kwargs):
+            raise requests.ConnectionError("offline")
+
+    first = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=FailingSession(), batch_size=1, delay_seconds=0
+    )
+    assert first["source_errors"] == 1
+    second = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=Session(), batch_size=1, delay_seconds=0
+    )
+    assert second["verified"] == 1
+    third = collect_monthly_verified_mappings(
+        "2026-08", db_path, session=Session(), batch_size=1, delay_seconds=0
+    )
+    assert third["skipped_succeeded"] == 1 and third["processed"] == 0
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT status,attempt_count,last_error FROM cb_parent_stock_monthly_mapping_status"
+        ).fetchone()
+    assert tuple(row) == ("SUCCEEDED", 2, None)
+
+
+def test_month_range_and_batch_limit_continue_without_using_candidate_as_result(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_master(db_path)
+    first = collect_monthly_verified_mappings(
+        db_path=db_path, start_month="2026-07", end_month="2026-08",
+        session=Session(), batch_size=1, delay_seconds=0,
+    )
+    assert first["months"] == ["2026-07", "2026-08"]
+    assert first["processed"] == 1 and first["verified"] == 1
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT count(*) FROM cb_parent_stock_monthly_mapping").fetchone()[0] == 1

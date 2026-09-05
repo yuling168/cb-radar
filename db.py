@@ -108,6 +108,25 @@ CREATE TABLE IF NOT EXISTS cb_parent_stock_monthly_mapping (
 CREATE INDEX IF NOT EXISTS idx_cb_parent_stock_monthly_mapping_month
     ON cb_parent_stock_monthly_mapping (year_month, stock_code);
 
+CREATE TABLE IF NOT EXISTS cb_parent_stock_monthly_mapping_status (
+    cb_code TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'UNAVAILABLE', 'SOURCE_ERROR')),
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
+    last_error TEXT,
+    source_url TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, year_month)
+);
+
+CREATE TABLE IF NOT EXISTS cb_daily_backfill_status (
+    trade_date TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'NON_TRADING', 'SOURCE_ERROR')),
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
+    last_error TEXT,
+    checked_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS stock_daily_coverage (
     trade_date TEXT NOT NULL,
     stock_code TEXT NOT NULL,
@@ -801,6 +820,66 @@ def upsert_parent_stock_monthly_mappings(
                 verified_at = excluded.verified_at
             """,
             rows,
+        )
+
+
+def monthly_mapping_statuses(
+    connection: sqlite3.Connection, year_month: str
+) -> dict[str, str]:
+    return {
+        str(row["cb_code"]): str(row["status"])
+        for row in connection.execute(
+            "SELECT cb_code, status FROM cb_parent_stock_monthly_mapping_status WHERE year_month=?",
+            (year_month,),
+        )
+    }
+
+
+def record_monthly_mapping_status(
+    connection: sqlite3.Connection, record: Mapping[str, object]
+) -> None:
+    """Record a retry-safe MOPS verification outcome for one CB/month."""
+    row = dict(record)
+    if row.get("status") not in {"SUCCEEDED", "UNAVAILABLE", "SOURCE_ERROR"}:
+        raise ValueError("monthly mapping status is invalid")
+    date.fromisoformat(f"{row['year_month']}-01")
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO cb_parent_stock_monthly_mapping_status (
+                cb_code, year_month, status, attempt_count, last_error, source_url, checked_at
+            ) VALUES (:cb_code, :year_month, :status, 1, :last_error, :source_url, :checked_at)
+            ON CONFLICT(cb_code, year_month) DO UPDATE SET
+                status=excluded.status,
+                attempt_count=cb_parent_stock_monthly_mapping_status.attempt_count + 1,
+                last_error=excluded.last_error,
+                source_url=excluded.source_url,
+                checked_at=excluded.checked_at
+            """,
+            row,
+        )
+
+
+def record_cb_daily_backfill_status(
+    connection: sqlite3.Connection, record: Mapping[str, object]
+) -> None:
+    row = dict(record)
+    if row.get("status") not in {"SUCCEEDED", "NON_TRADING", "SOURCE_ERROR"}:
+        raise ValueError("CB daily backfill status is invalid")
+    date.fromisoformat(str(row["trade_date"]))
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO cb_daily_backfill_status (
+                trade_date, status, attempt_count, last_error, checked_at
+            ) VALUES (:trade_date, :status, 1, :last_error, :checked_at)
+            ON CONFLICT(trade_date) DO UPDATE SET
+                status=excluded.status,
+                attempt_count=cb_daily_backfill_status.attempt_count + 1,
+                last_error=excluded.last_error,
+                checked_at=excluded.checked_at
+            """,
+            row,
         )
 
 

@@ -3,6 +3,7 @@
 import argparse
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -10,7 +11,10 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import requests
 
 from config import DEFAULT_DB_PATH, HTTP_TIMEOUT_SECONDS, MOPS_BASE_URL
-from db import connect, upsert_parent_stock_monthly_mappings
+from db import (
+    connect, monthly_mapping_statuses, record_monthly_mapping_status,
+    upsert_parent_stock_monthly_mappings,
+)
 
 
 class MonthlyMappingError(RuntimeError):
@@ -80,48 +84,106 @@ def _mops_detail_url(source_urls: str) -> str:
     raise MonthlyMappingError("CB master has no official MOPS t120sg01 candidate URL")
 
 
+def _months(start_month: str, end_month: str) -> list[str]:
+    start = datetime.strptime(start_month, "%Y-%m")
+    end = datetime.strptime(end_month, "%Y-%m")
+    if start > end:
+        raise ValueError("start_month must not be after end_month")
+    result = []
+    current = start
+    while current <= end:
+        result.append(current.strftime("%Y-%m"))
+        current = datetime(current.year + (current.month == 12), (current.month % 12) + 1, 1)
+    return result
+
+
 def collect_monthly_verified_mappings(
-    year_month: str,
+    year_month: str | None = None,
     db_path: Path | str = DEFAULT_DB_PATH,
     session: requests.Session | None = None,
     cb_codes: set[str] | None = None,
+    *,
+    start_month: str | None = None,
+    end_month: str | None = None,
+    batch_size: int = 50,
+    delay_seconds: float = 0.2,
 ) -> dict[str, object]:
     """Use current master only as query candidates; MOPS must prove each mapping."""
-    try:
-        datetime.strptime(year_month, "%Y-%m")
-    except ValueError as exc:
-        raise ValueError("year_month must be YYYY-MM") from exc
-    with connect(db_path) as connection:
-        rows = connection.execute(
-            "SELECT cb_code, stock_code, stock_name, source_url FROM cb_master ORDER BY cb_code"
-        ).fetchall()
-    if cb_codes is not None:
-        rows = [row for row in rows if str(row["cb_code"]) in cb_codes]
-    if not rows:
-        raise MonthlyMappingError("no CB master candidates for monthly verification")
-
+    if batch_size <= 0 or delay_seconds < 0:
+        raise ValueError("batch_size must be positive and delay_seconds must be non-negative")
+    if year_month:
+        if start_month or end_month:
+            raise ValueError("year_month cannot be combined with a month range")
+        months = _months(year_month, year_month)
+    elif start_month and end_month:
+        months = _months(start_month, end_month)
+    else:
+        raise ValueError("supply year_month or both start_month and end_month")
     http = session or requests.Session()
-    mappings = []
-    for row in rows:
-        cb_code = str(row["cb_code"])
-        url = _month_url(_mops_detail_url(str(row["source_url"])), year_month)
-        response = http.get(url, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        mappings.append(parse_mops_monthly_mapping(
-            response.text, url, cb_code=cb_code, stock_code=str(row["stock_code"]),
-            stock_name=str(row["stock_name"]),
-        ))
-
-    with connect(db_path) as connection:
-        upsert_parent_stock_monthly_mappings(connection, mappings)
-    return {"year_month": year_month, "verified": len(mappings), "database": str(db_path)}
+    result = {"months": months, "verified": 0, "unavailable": 0, "source_errors": 0,
+              "skipped_succeeded": 0, "processed": 0, "database": str(db_path)}
+    for month in months:
+        with connect(db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT cb_code, stock_code, stock_name, source_url FROM cb_master
+                WHERE issue_date <= ? AND (delisting_date IS NULL OR delisting_date > ?)
+                ORDER BY cb_code
+                """,
+                (f"{month}-31", f"{month}-01"),
+            ).fetchall()
+            statuses = monthly_mapping_statuses(connection, month)
+        if cb_codes is not None:
+            rows = [row for row in rows if str(row["cb_code"]) in cb_codes]
+        for row in rows:
+            if result["processed"] >= batch_size:
+                return result
+            cb_code = str(row["cb_code"])
+            if statuses.get(cb_code) == "SUCCEEDED":
+                result["skipped_succeeded"] += 1
+                continue
+            url = None
+            try:
+                url = _month_url(_mops_detail_url(str(row["source_url"])), month)
+                response = http.get(url, timeout=HTTP_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                mapping = parse_mops_monthly_mapping(
+                    response.text, url, cb_code=cb_code, stock_code=str(row["stock_code"]),
+                    stock_name=str(row["stock_name"]),
+                )
+            except requests.RequestException as exc:
+                status, error, mapping = "SOURCE_ERROR", str(exc), None
+                result["source_errors"] += 1
+            except MonthlyMappingError as exc:
+                status, error, mapping = "UNAVAILABLE", str(exc), None
+                result["unavailable"] += 1
+            else:
+                status, error = "SUCCEEDED", None
+                result["verified"] += 1
+            with connect(db_path) as connection:
+                if mapping is not None:
+                    upsert_parent_stock_monthly_mappings(connection, [mapping])
+                record_monthly_mapping_status(connection, {
+                    "cb_code": cb_code, "year_month": month, "status": status,
+                    "last_error": error, "source_url": url,
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                })
+            result["processed"] += 1
+            if delay_seconds:
+                time.sleep(delay_seconds)
+    return result
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify monthly CB parent mappings from MOPS")
-    parser.add_argument("--year-month", required=True, help="YYYY-MM")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--year-month", help="YYYY-MM")
+    selection.add_argument("--start-month", help="YYYY-MM; requires --end-month")
+    parser.add_argument("--end-month", help="YYYY-MM")
     parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--cb-code", action="append", dest="cb_codes")
+    parser.add_argument("--batch-size", type=int, default=50)
+    parser.add_argument("--delay-seconds", type=float, default=0.2)
     return parser.parse_args(argv)
 
 
@@ -129,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         result = collect_monthly_verified_mappings(
-            args.year_month, args.database, cb_codes=set(args.cb_codes or []) or None
+            args.year_month, args.database, cb_codes=set(args.cb_codes or []) or None,
+            start_month=args.start_month, end_month=args.end_month,
+            batch_size=args.batch_size, delay_seconds=args.delay_seconds,
         )
     except (MonthlyMappingError, requests.RequestException, ValueError) as exc:
         print(f"monthly_mapping_collector_error: {exc}", file=sys.stderr)
