@@ -246,6 +246,39 @@ CREATE TABLE IF NOT EXISTS historical_company_announcements (
 
 CREATE INDEX IF NOT EXISTS idx_historical_company_announcements_company_date
     ON historical_company_announcements (company_code, spoken_date);
+
+CREATE TABLE IF NOT EXISTS strategy_signals (
+    cb_code TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    strategy_code TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    condition_results_json TEXT NOT NULL,
+    condition_values_json TEXT NOT NULL,
+    data_status TEXT NOT NULL CHECK (data_status = 'AVAILABLE'),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (cb_code, trade_date, strategy_code, strategy_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_signals_date_code
+    ON strategy_signals (trade_date, strategy_code, strategy_version);
+
+CREATE TABLE IF NOT EXISTS strategy_evaluations (
+    evaluation_id INTEGER PRIMARY KEY,
+    cb_code TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    strategy_code TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    condition_results_json TEXT NOT NULL,
+    condition_values_json TEXT NOT NULL,
+    data_status TEXT NOT NULL CHECK (data_status IN ('AVAILABLE', 'UNAVAILABLE')),
+    unavailable_reasons_json TEXT NOT NULL,
+    evaluated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_lookup
+    ON strategy_evaluations (cb_code, trade_date, strategy_code, strategy_version);
 """
 
 
