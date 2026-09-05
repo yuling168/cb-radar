@@ -18,6 +18,8 @@ CONVERSION_EVENT_TABLE_NAME = "conversion_price_events"
 PARENT_FLOW_TABLE_NAME = "parent_flow_metrics"
 INSTITUTIONAL_COVERAGE_TABLE_NAME = "institutional_coverage"
 ETF_STATUS_TABLE_NAME = "active_etf_collection_status"
+STRATEGY_SIGNAL_TABLE_NAME = "strategy_signals"
+STRATEGY_EVALUATION_TABLE_NAME = "strategy_evaluations"
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -63,6 +65,54 @@ PARENT_FLOW_REQUIRED_COLUMNS = {
 INSTITUTIONAL_COVERAGE_REQUIRED_COLUMNS = {"trade_date", "stock_code", "status", "reason"}
 ETF_STATUS_REQUIRED_COLUMNS = {"trade_date", "etf_code", "status"}
 TRACKED_ACTIVE_ETFS = ("00980A", "00985A", "00999A", "00982A", "00992A")
+
+
+def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Read saved A-v1 snapshots only; legacy DBs simply have no strategy data."""
+    database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(database_uri, uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+        if {STRATEGY_SIGNAL_TABLE_NAME, STRATEGY_EVALUATION_TABLE_NAME} - tables:
+            return [], []
+        signals = [dict(row) for row in connection.execute(
+            """SELECT signal.cb_code, signal.trade_date, signal.strategy_code,
+                      signal.strategy_version, signal.strategy_name,
+                      signal.condition_results_json, signal.condition_values_json,
+                      signal.data_status, daily.cb_name, daily.close_price, daily.volume_lots
+               FROM strategy_signals AS signal
+               LEFT JOIN cb_daily AS daily
+                 ON daily.cb_code = signal.cb_code AND daily.trade_date = signal.trade_date
+               WHERE signal.strategy_code = 'A' AND signal.strategy_version = 'v1'
+               ORDER BY signal.trade_date DESC, signal.cb_code ASC"""
+        )]
+        evaluations = [dict(row) for row in connection.execute(
+            """WITH latest AS (
+                   SELECT cb_code, trade_date, strategy_code, strategy_version,
+                          MAX(evaluation_id) AS evaluation_id
+                   FROM strategy_evaluations
+                   WHERE strategy_code = 'A' AND strategy_version = 'v1'
+                   GROUP BY cb_code, trade_date, strategy_code, strategy_version
+               )
+               SELECT evaluation.cb_code, evaluation.trade_date, evaluation.strategy_code,
+                      evaluation.strategy_version, evaluation.strategy_name,
+                      evaluation.condition_results_json, evaluation.condition_values_json,
+                      evaluation.data_status, evaluation.unavailable_reasons_json,
+                      daily.cb_name
+               FROM latest
+               INNER JOIN strategy_evaluations AS evaluation
+                 ON evaluation.evaluation_id = latest.evaluation_id
+               LEFT JOIN cb_daily AS daily
+                 ON daily.cb_code = evaluation.cb_code AND daily.trade_date = evaluation.trade_date
+               WHERE evaluation.cb_code != '__RUN__'
+               ORDER BY evaluation.trade_date DESC, evaluation.cb_code ASC"""
+        )]
+    for row in signals + evaluations:
+        row["condition_results"] = json.loads(row.pop("condition_results_json"))
+        row["condition_values"] = json.loads(row.pop("condition_values_json"))
+        if "unavailable_reasons_json" in row:
+            row["unavailable_reasons"] = json.loads(row.pop("unavailable_reasons_json"))
+    return signals, evaluations
 
 
 def balance_units_for_display(
@@ -289,7 +339,13 @@ def _invalid_is_secured(value: object) -> None:
 def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
     institutional_rows = load_institutional_rows()
-    payload = {"records": rows, "institutional_records": institutional_rows}
+    strategy_signals, strategy_evaluations = load_strategy_a_rows()
+    payload = {
+        "records": rows,
+        "institutional_records": institutional_rows,
+        "strategy_a_signals": strategy_signals,
+        "strategy_a_evaluations": strategy_evaluations,
+    }
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",

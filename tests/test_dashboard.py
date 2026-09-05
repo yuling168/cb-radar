@@ -221,6 +221,39 @@ def test_dashboard_uses_reference_price_for_zero_volume_premium(tmp_path, monkey
     assert row["premium_rate"] == pytest.approx(48.14814815)
 
 
+def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagnostic(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript("""
+            CREATE TABLE strategy_signals (cb_code TEXT, trade_date TEXT, strategy_code TEXT, strategy_version TEXT, strategy_name TEXT, condition_results_json TEXT, condition_values_json TEXT, data_status TEXT, created_at TEXT);
+            CREATE TABLE strategy_evaluations (evaluation_id INTEGER PRIMARY KEY, cb_code TEXT, trade_date TEXT, strategy_code TEXT, strategy_version TEXT, strategy_name TEXT, condition_results_json TEXT, condition_values_json TEXT, data_status TEXT, unavailable_reasons_json TEXT, evaluated_at TEXT);
+        """)
+        values = json.dumps({"close_price": 101.5, "conversion_value": 60.75, "premium_rate_pct": 67.08, "today_volume_lots": 12})
+        connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", '{"premium_rate_above_1_pct":true}', values, "AVAILABLE", "x"))
+        connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (1, "99999", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["old"]', "x"))
+        connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (2, "99999", "2026-08-29", "A", "v1", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["missing_cb_close_price"]', "y"))
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+    build_dashboard.build_dashboard_data()
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["strategy_a_signals"][0]["cb_name"] == "測試 CB"
+    assert payload["strategy_a_signals"][0]["condition_values"]["conversion_value"] == 60.75
+    assert payload["strategy_a_evaluations"][0]["unavailable_reasons"] == ["missing_cb_close_price"]
+
+
+def test_strategy_pages_show_signals_separately_from_unavailable_data():
+    index = DASHBOARD_PATH.read_text(encoding="utf-8")
+    strategy = (DASHBOARD_PATH.parent / "strategy-a.html").read_text(encoding="utf-8")
+    assert 'id="strategySignals"' in index
+    assert "非不符合策略" in index
+    assert 'href="strategy-a.html"' in index
+    assert 'id="dateSelect"' in strategy
+    assert "資料不足、無法評估" in strategy
+    assert "condition_results" in strategy
+
+
 def test_dashboard_exports_parent_flow_for_each_current_cb_and_unavailable_reason(tmp_path, monkeypatch):
     database_path = tmp_path / "history.db"
     output_path = tmp_path / "data.json"

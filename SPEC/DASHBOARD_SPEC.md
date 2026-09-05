@@ -54,6 +54,14 @@ GitHub Pages
 - 日期與 CB 搜尋條件可以同時套用；清空搜尋會恢復該日期全部資料。
 - 結果列及摘要都只使用載入的真實 JSON record。
 
+## 策略 A-v1
+
+JSON 另輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。兩者都是 SQLite 已保存
+的策略快照，Dashboard 不重新計算條件；評估資料每個 CB／日期／版本只輸出最新一筆。
+首頁的「今日策略訊號」依選定交易日顯示訊號的 CB、收盤價、轉換價值、溢價率與今日
+成交量，且明確顯示無訊號。資料不足的 `UNAVAILABLE` 評估會另列為「無法評估」，
+不是不符合策略。`strategy-a.html` 提供日期選擇、完整條件與當日數值。
+
 ## Sorting
 
 表格可依以下欄位排序，重複點擊同一欄切換升冪／降冪：

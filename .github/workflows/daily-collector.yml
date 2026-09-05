@@ -74,6 +74,13 @@ jobs:
           --date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
 
+      - name: Run strategy A-v1
+        if: steps.collector.outputs.trade_date != ''
+        run: >
+          python strategy_engine.py
+          --date "${{ steps.collector.outputs.trade_date }}"
+          --database data/cb_history.db
+
       - name: Validate CB history database
         shell: bash
         run: |

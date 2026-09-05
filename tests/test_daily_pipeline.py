@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -85,3 +86,10 @@ def test_backfill_defaults_to_verified_dates_and_supports_explicit_range(tmp_pat
     calls.clear()
     backfill_institutional_etf(db_path, start_date=date(2026, 9, 1), end_date=date(2026, 9, 2), runner=runner)
     assert calls == [date(2026, 9, 1), date(2026, 9, 2)]
+
+
+def test_workflow_runs_strategy_after_parent_stock_collection_before_dashboard():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/daily-collector.yml").read_text(encoding="utf-8")
+    assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
+    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Build dashboard data")
+    assert "python strategy_engine.py" in workflow
