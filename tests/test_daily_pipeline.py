@@ -91,7 +91,10 @@ def test_backfill_defaults_to_verified_dates_and_supports_explicit_range(tmp_pat
 def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard():
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/daily-collector.yml").read_text(encoding="utf-8")
     assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
-    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy C-v1")
+    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy B-v1")
+    assert workflow.index("- name: Run strategy B-v1") < workflow.index("- name: Run strategy C-v1")
     assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Build dashboard data")
     assert "python strategy_engine.py" in workflow
+    assert "python strategy_b.py" in workflow
     assert "python strategy_c.py" in workflow
+    assert workflow.count("continue-on-error: true") >= 4

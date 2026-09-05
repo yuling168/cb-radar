@@ -56,16 +56,18 @@ GitHub Pages
 
 ## 策略 A-v1
 
-JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v1、C-v1 的
+JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v1、B-v1、C-v1 的
 SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。
-策略 C 另有 `strategy_c_signals` 與 `strategy_c_evaluations`。首頁會以 A／C 標籤區分；C 顯示
+策略 B／C 另有各自的 `strategy_b_signals`／`strategy_b_evaluations`、`strategy_c_signals`／`strategy_c_evaluations`。
+首頁會以 A／B／C 標籤區分；B 顯示收盤價、43 日均價、當日量、10 日均量、轉換價值、溢價率與已轉換比例；C 顯示
 轉換價值、溢價率、已轉換比例、區間及區間排名。兩者都是 SQLite 已保存
 的策略快照，Dashboard 不重新計算條件；訊號保留完整快照。評估資料只輸出每個交易日、
 策略、版本、狀態與不可用原因的筆數彙總，不輸出逐檔評估 JSON。
 首頁的「今日策略訊號」依選定交易日顯示訊號的 CB、收盤價、轉換價值、溢價率與今日
 成交量，且明確顯示無訊號。資料不足的 `UNAVAILABLE` 評估會依策略代號分開列為
-「策略 A／C：資料不足筆數與原因統計」，相同原因不可跨策略合併；沒有資料不足的策略
-不顯示該區塊。這些資料不足不是不符合策略。`strategy-a.html` 提供日期選擇、完整條件與當日數值。
+「策略 A／B／C：資料不足筆數與原因統計」，相同原因不可跨策略合併；沒有資料不足的策略
+不顯示該區塊。這些資料不足不是不符合策略。`strategy-a.html`、`strategy-b.html` 與
+`strategy-c.html` 提供日期選擇、完整條件與當日數值。
 
 ## Sorting
 

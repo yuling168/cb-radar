@@ -356,16 +356,19 @@ def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
     institutional_rows = load_institutional_rows()
     strategy_a_signals, strategy_a_evaluations = load_strategy_rows("A")
+    strategy_b_signals, strategy_b_evaluations = load_strategy_rows("B")
     strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
     payload = {
         "records": rows,
         "institutional_records": institutional_rows,
         # Generic collections let pages show all saved strategies together.
-        "strategy_signals": [*strategy_a_signals, *strategy_c_signals],
-        "strategy_evaluations": [*strategy_a_evaluations, *strategy_c_evaluations],
+        "strategy_signals": [*strategy_a_signals, *strategy_b_signals, *strategy_c_signals],
+        "strategy_evaluations": [*strategy_a_evaluations, *strategy_b_evaluations, *strategy_c_evaluations],
         # Keep the established A-v1 contract for existing pages and consumers.
         "strategy_a_signals": strategy_a_signals,
         "strategy_a_evaluations": strategy_a_evaluations,
+        "strategy_b_signals": strategy_b_signals,
+        "strategy_b_evaluations": strategy_b_evaluations,
         "strategy_c_signals": strategy_c_signals,
         "strategy_c_evaluations": strategy_c_evaluations,
     }
