@@ -150,6 +150,22 @@ CREATE TABLE IF NOT EXISTS stock_daily_coverage (
 CREATE INDEX IF NOT EXISTS idx_stock_daily_coverage_stock_date
     ON stock_daily_coverage (stock_code, trade_date);
 
+CREATE TABLE IF NOT EXISTS stock_backfill_mapping_coverage (
+    trade_date TEXT NOT NULL,
+    cb_code TEXT NOT NULL,
+    mapping_resolution TEXT NOT NULL CHECK (mapping_resolution IN (
+        'EXACT', 'MONTHLY_VERIFIED', 'UNRESOLVED'
+    )),
+    mapping_month TEXT,
+    mapping_status TEXT,
+    unresolved_reason TEXT,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (trade_date, cb_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_backfill_mapping_coverage_date
+    ON stock_backfill_mapping_coverage (trade_date, mapping_resolution);
+
 CREATE TABLE IF NOT EXISTS institutional_daily (
     trade_date TEXT NOT NULL,
     stock_code TEXT NOT NULL,
@@ -785,6 +801,70 @@ def parent_stock_mappings_for_trade_date(
     return result
 
 
+def parent_stock_mapping_resolution_for_trade_date(
+    connection: sqlite3.Connection, trade_date: str, *, allow_monthly_verified: bool
+) -> tuple[dict[str, dict[str, str]], list[dict[str, str | None]]]:
+    """Return verified mappings plus explicit unresolved CB outcomes for backfill only."""
+    if not allow_monthly_verified:
+        raise ValueError("monthly verified mappings must be explicitly enabled")
+    daily_codes = [str(row[0]) for row in connection.execute(
+        "SELECT cb_code FROM cb_daily WHERE trade_date=? ORDER BY cb_code", (trade_date,)
+    )]
+    exact_rows = connection.execute(
+        """
+        SELECT cb_code, stock_code, stock_name, market, source, source_url, verified_at
+        FROM cb_parent_stock_mapping WHERE mapping_date=?
+        """, (trade_date,)
+    ).fetchall()
+    mappings = {
+        str(row["cb_code"]): {
+            "stock_code": str(row["stock_code"]), "stock_name": str(row["stock_name"]),
+            "market": str(row["market"]), "source": str(row["source"]),
+            "source_url": str(row["source_url"]), "verified_at": str(row["verified_at"]),
+            "mapping_level": "EXACT", "mapping_year_month": trade_date[:7],
+        }
+        for row in exact_rows if str(row["cb_code"]) in set(daily_codes)
+    }
+    unresolved_codes = [code for code in daily_codes if code not in mappings]
+    if unresolved_codes:
+        placeholders = ",".join("?" for _ in unresolved_codes)
+        monthly_rows = connection.execute(
+            f"""
+            SELECT cb_code, stock_code, stock_name, market, source, source_url, verified_at
+            FROM cb_parent_stock_monthly_mapping
+            WHERE year_month=? AND cb_code IN ({placeholders})
+            """, (trade_date[:7], *unresolved_codes)
+        ).fetchall()
+        for row in monthly_rows:
+            mappings[str(row["cb_code"])] = {
+                "stock_code": str(row["stock_code"]), "stock_name": str(row["stock_name"]),
+                "market": str(row["market"]), "source": str(row["source"]),
+                "source_url": str(row["source_url"]), "verified_at": str(row["verified_at"]),
+                "mapping_level": "MONTHLY_VERIFIED", "mapping_year_month": trade_date[:7],
+            }
+    statuses = {
+        str(row["cb_code"]): (str(row["status"]), row["last_error"])
+        for row in connection.execute(
+            "SELECT cb_code,status,last_error FROM cb_parent_stock_monthly_mapping_status WHERE year_month=?",
+            (trade_date[:7],)
+        )
+    }
+    unresolved = []
+    for code in daily_codes:
+        if code in mappings:
+            continue
+        status, detail = statuses.get(code, (None, None))
+        unresolved.append({
+            "cb_code": code, "mapping_status": status,
+            "unresolved_reason": (
+                "monthly_mapping_unavailable" if status == "UNAVAILABLE" else
+                "monthly_mapping_source_error" if status == "SOURCE_ERROR" else
+                "monthly_mapping_not_verified"
+            ) if detail is None else str(detail),
+        })
+    return mappings, unresolved
+
+
 def upsert_parent_stock_monthly_mappings(
     connection: sqlite3.Connection, mappings: Iterable[Mapping[str, object]]
 ) -> None:
@@ -933,6 +1013,39 @@ def upsert_stock_daily_coverage(
                 checked_at = excluded.checked_at
             """,
             rows,
+        )
+
+
+def upsert_stock_backfill_mapping_coverage(
+    connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
+) -> None:
+    rows = [dict(row) for row in records]
+    if not rows:
+        return
+    for row in rows:
+        if row.get("mapping_resolution") not in {"EXACT", "MONTHLY_VERIFIED", "UNRESOLVED"}:
+            raise ValueError("mapping coverage resolution is invalid")
+        for key in ("trade_date", "cb_code", "checked_at"):
+            if not str(row.get(key, "")).strip():
+                raise ValueError(f"mapping coverage {key} is required")
+        date.fromisoformat(str(row["trade_date"]))
+    with connection:
+        connection.executemany(
+            """
+            INSERT INTO stock_backfill_mapping_coverage (
+                trade_date, cb_code, mapping_resolution, mapping_month,
+                mapping_status, unresolved_reason, checked_at
+            ) VALUES (
+                :trade_date, :cb_code, :mapping_resolution, :mapping_month,
+                :mapping_status, :unresolved_reason, :checked_at
+            )
+            ON CONFLICT(trade_date, cb_code) DO UPDATE SET
+                mapping_resolution=excluded.mapping_resolution,
+                mapping_month=excluded.mapping_month,
+                mapping_status=excluded.mapping_status,
+                unresolved_reason=excluded.unresolved_reason,
+                checked_at=excluded.checked_at
+            """, rows,
         )
 
 

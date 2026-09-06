@@ -4,7 +4,7 @@ import pytest
 
 from db import (
     connect, upsert_daily, upsert_parent_stock_mappings,
-    upsert_parent_stock_monthly_mappings,
+    upsert_parent_stock_monthly_mappings, record_monthly_mapping_status,
 )
 from stock_backfill import BackfillPreconditionError, backfill_stock_daily_market
 
@@ -172,3 +172,69 @@ def test_monthly_mapping_requires_explicit_backfill_flag(tmp_path):
     )
     assert result["trade_days"] == 1
     assert called[-1][1] == {"allow_monthly_verified": True}
+
+
+def test_partial_mapping_requires_monthly_verified_opt_in(tmp_path):
+    with pytest.raises(ValueError, match="requires --allow-monthly-verified"):
+        backfill_stock_daily_market(tmp_path / "history.db", days=1, allow_partial_mapping=True)
+
+
+def test_partial_mapping_records_unresolved_and_only_collects_verified_scope(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        add_phase1_day(connection, "2026-08-31", "11111")
+        add_phase1_day(connection, "2026-08-31", "99999")
+        upsert_parent_stock_monthly_mappings(connection, [{
+            "cb_code": "11111", "year_month": "2026-08", "stock_code": "1101",
+            "stock_name": "台泥", "market": "TWSE", "source": "MOPS:t120sg01",
+            "source_url": "https://example.test/mops", "verified_at": "2026-08-31T00:00:00+00:00",
+        }])
+        record_monthly_mapping_status(connection, {
+            "cb_code": "99999", "year_month": "2026-08", "status": "UNAVAILABLE",
+            "last_error": "not found", "source_url": "https://example.test/mops",
+            "checked_at": "2026-08-31T00:00:00+00:00",
+        })
+    calls = []
+    def collector(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"target_stocks": 1, "records_inserted": 1, "records_updated": 0}
+    result = backfill_stock_daily_market(
+        db_path, days=1, allow_monthly_verified=True, allow_partial_mapping=True,
+        collector=collector,
+    )
+    assert result["resolved_cb_mappings"] == 1
+    assert result["unresolved_cb_mappings"] == 1
+    assert calls[0][1]["verified_mappings"] == {
+        "11111": {
+            "stock_code": "1101", "stock_name": "台泥", "market": "TWSE",
+            "source": "MOPS:t120sg01", "source_url": "https://example.test/mops",
+            "verified_at": "2026-08-31T00:00:00+00:00", "mapping_level": "MONTHLY_VERIFIED",
+            "mapping_year_month": "2026-08",
+        }
+    }
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT cb_code,mapping_resolution,mapping_month,mapping_status,unresolved_reason "
+            "FROM stock_backfill_mapping_coverage ORDER BY cb_code"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("11111", "MONTHLY_VERIFIED", "2026-08", None, None),
+        ("99999", "UNRESOLVED", "2026-08", "UNAVAILABLE", "not found"),
+    ]
+
+
+def test_partial_mapping_coverage_is_idempotent(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        add_phase1_day(connection, "2026-08-31", "99999")
+    def collector(*_args, **_kwargs):
+        return {"target_stocks": 0, "records_inserted": 0, "records_updated": 0}
+    for _ in range(2):
+        backfill_stock_daily_market(
+            db_path, days=1, allow_monthly_verified=True, allow_partial_mapping=True,
+            collector=collector,
+        )
+    with connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM stock_backfill_mapping_coverage"
+        ).fetchone()[0] == 1

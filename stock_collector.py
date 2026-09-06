@@ -208,15 +208,19 @@ def collect_stock_daily_market(
     session: requests.Session | None = None,
     *,
     allow_monthly_verified: bool = False,
+    verified_mappings: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, object]:
-    with connect(db_path) as connection:
-        try:
-            mappings = parent_stock_mappings_for_trade_date(
-                connection, trade_date.isoformat(),
-                allow_monthly_verified=allow_monthly_verified,
-            )
-        except ValueError as exc:
-            raise ParentStockMappingError(str(exc)) from exc
+    if verified_mappings is None:
+        with connect(db_path) as connection:
+            try:
+                mappings = parent_stock_mappings_for_trade_date(
+                    connection, trade_date.isoformat(),
+                    allow_monthly_verified=allow_monthly_verified,
+                )
+            except ValueError as exc:
+                raise ParentStockMappingError(str(exc)) from exc
+    else:
+        mappings = {str(code): dict(mapping) for code, mapping in verified_mappings.items()}
     if not mappings:
         return {"trade_date": trade_date.isoformat(), "target_stocks": 0, "records_inserted": 0, "records_updated": 0}
 
