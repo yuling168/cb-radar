@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="台灣可轉換公司債每日行情查詢">
+  <title>CB Radar｜每日行情</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17211b;
+      --muted: #637068;
+      --line: #dce4de;
+      --paper: #f4f7f3;
+      --card: #ffffff;
+      --green: #185c42;
+      --green-soft: #e7f1eb;
+      --gold: #a5782b;
+      --shadow: 0 14px 38px rgba(25, 53, 39, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(165, 120, 43, 0.11), transparent 28rem),
+        var(--paper);
+      color: var(--ink);
+      font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    }
+
+    .page {
+      width: 100%;
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 46px 16px 64px;
+    }
+
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--gold);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Noto Serif TC", serif;
+      font-size: clamp(2rem, 5vw, 3.65rem);
+      font-weight: 600;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+    }
+
+    .subtitle {
+      max-width: 31rem;
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .source-badge {
+      flex: 0 0 auto;
+      padding: 9px 14px;
+      border: 1px solid #c7d7cd;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.65);
+      color: var(--green);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .panel {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: minmax(190px, 0.7fr) minmax(260px, 1.3fr);
+      gap: 16px;
+      padding: 20px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfa;
+    }
+
+    label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    select, input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #cbd7cf;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-size: 1rem;
+      outline: none;
+      padding: 10px 12px;
+    }
+
+    select:focus, input:focus {
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(24, 92, 66, 0.12);
+    }
+
+    .result-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 20px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .table-wrap {
+      width: 100%;
+      max-width: 100%;
+      max-height: min(70vh, 720px);
+      overflow: auto;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+      border-top: 1px solid var(--line);
+    }
+
+    table {
+      width: 100%;
+      min-width: 1900px;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 14px 18px;
+      border-bottom: 1px solid #edf1ee;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .sticky-name {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      min-width: 150px;
+      max-width: 240px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      background: var(--card);
+      box-shadow: 2px 0 0 var(--line);
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f6f9f6;
+      color: #4e5c54;
+      font-size: 0.77rem;
+      letter-spacing: 0.03em;
+    }
+
+    th.sticky-name {
+      z-index: 3;
+      background: #f6f9f6;
+    }
+
+    tbody tr:hover .sticky-name { background: #fbfcfa; }
+
+    th button {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 800;
+      padding: 0;
+    }
+
+    th button:hover, th button:focus-visible { color: var(--green); }
+    .sort-mark { width: 1em; color: var(--gold); }
+    td { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+    td.numeric { text-align: right; }
+    tbody tr:hover { background: #fbfcfa; }
+    .zero { color: var(--muted); }
+    .null { color: #98a29c; }
+
+    .state {
+      padding: 50px 20px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: right;
+    }
+
+    .strategy-panel { margin-bottom: 20px; padding: 20px; }
+    .strategy-panel h2 { margin: 0 0 8px; font-size: 1.2rem; }
+    .strategy-panel p { margin: 0; color: var(--muted); }
+    .signal-list { display: grid; gap: 10px; margin-top: 14px; }
+    .signal-item { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 12px; border: 1px solid #c7d7cd; border-radius: 10px; background: var(--green-soft); }
+    .signal-item strong { color: var(--green); }
+
+    @media (max-width: 768px) {
+      .page { padding: 28px 12px 48px; }
+      header { align-items: start; flex-direction: column; }
+      h1 { font-size: clamp(1.85rem, 8vw, 2.5rem); }
+      .subtitle { margin-top: 8px; font-size: 0.9rem; }
+      .source-badge { align-self: start; }
+      .controls { grid-template-columns: 1fr; gap: 12px; padding: 15px; }
+      select, input { width: 100%; min-width: 0; font-size: 16px; }
+      .result-bar { align-items: start; flex-direction: column; padding: 12px 15px; }
+      th, td { padding: 12px 14px; }
+      table { min-width: 2100px; }
+      th { font-size: 0.75rem; }
+      td { font-size: 0.85rem; }
+      th:first-child, td:first-child { font-size: 0.76rem; }
+    }
+
+    @media (max-width: 480px) {
+      .page { padding-right: 12px; padding-left: 12px; }
+      header { gap: 14px; margin-bottom: 20px; }
+      h1 { font-size: 1.85rem; }
+      .panel { border-radius: 15px; }
+      table { min-width: 2100px; }
+      th, td { padding: 10px 12px; }
+      th { font-size: 0.72rem; }
+      td { font-size: 0.82rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Taiwan Convertible Bonds</p>
+        <h1>CB Radar｜每日行情</h1>
+        <p class="subtitle">依交易日期查閱 TPEx 官方等價市場資料。零張代表當日存在於官方資料，但沒有成交。</p>
+      </div>
+      <div class="source-badge">資料來源 · TPEx</div>
+    </header>
+
+    <nav aria-label="全站導覽" style="margin:0 0 18px;display:flex;flex-wrap:wrap;gap:8px 14px"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
+
+    <section class="panel strategy-panel" aria-labelledby="strategy-title">
+      <h2 id="strategy-title">今日策略訊號</h2>
+      <p id="strategyStatus">策略資料載入中…</p>
+      <div id="strategySignals" class="signal-list"></div>
+    </section>
+
+    <section class="panel">
+      <div class="controls">
+        <label>交易日期
+          <select id="dateSelect" aria-label="選擇交易日期"></select>
+        </label>
+        <label>搜尋 CB
+          <input id="searchInput" type="search" placeholder="輸入 CB 名稱或代號" autocomplete="off">
+        </label>
+      </div>
+
+      <div class="result-bar">
+        <strong id="resultCount">載入中…</strong>
+        <span id="activeFilter">準備行情資料</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="cb_code">CB代號 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="issue_date">發行日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="maturity_date">到期日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="put_date">首次賣回日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="issue_units">發行張數 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="issue_amount_yi">發行總額（億元） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_units">餘額張數 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_date">餘額日期 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="current_conversion_price">最新轉換價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="current_conversion_price_effective_date">轉換價生效日 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="is_secured">擔保 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="delisting_date">下市日期 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="delisting_reason">下市原因 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="reference_price">參考價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="p_close_price">母股收盤價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="p_volume_lots">母股成交量（張） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="conversion_value">轉換價值 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="balance_ratio">餘額比例 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="remaining_days">剩餘天數 <span class="sort-mark"></span></button></th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody"><tr><td class="state" colspan="23">行情資料載入中…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>每日資料由 CB Collector 自動更新</footer>
+  </main>
+
+  <script>
+    const state = { records: [], strategySignals: [], strategyEvaluations: [], selectedDate: "", query: "", sortKey: "cb_code", sortDirection: "asc" };
+    const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 4 });
+    const valuationFormat = new Intl.NumberFormat("zh-TW", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    const SORT_TYPES = {
+      cb_name: "text",
+      cb_code: "text",
+      issue_date: "date",
+      maturity_date: "date",
+      put_date: "date",
+      remaining_days: "number",
+      issue_units: "number",
+      issue_amount_yi: "number",
+      balance_units: "number",
+      balance_date: "date",
+      balance_ratio: "number",
+      current_conversion_price: "number",
+      current_conversion_price_effective_date: "date",
+      is_secured: "text",
+      delisting_date: "date",
+      delisting_reason: "text",
+      close_price: "number",
+      reference_price: "number",
+      volume_lots: "number",
+      p_close_price: "number",
+      p_volume_lots: "number",
+      conversion_value: "number",
+      premium_rate: "number"
+    };
+    const elements = {
+      dateSelect: document.querySelector("#dateSelect"),
+      searchInput: document.querySelector("#searchInput"),
+      body: document.querySelector("#resultsBody"),
+      resultCount: document.querySelector("#resultCount"),
+      activeFilter: document.querySelector("#activeFilter"),
+      strategyStatus: document.querySelector("#strategyStatus"),
+      strategySignals: document.querySelector("#strategySignals")
+    };
+
+    function hasValue(value) {
+      return value !== null && value !== undefined && value !== "";
+    }
+
+    function compareValues(a, b) {
+      const aValue = a[state.sortKey];
+      const bValue = b[state.sortKey];
+      if (!hasValue(aValue) && !hasValue(bValue)) return 0;
+      if (!hasValue(aValue)) return 1;
+      if (!hasValue(bValue)) return -1;
+
+      const sortType = SORT_TYPES[state.sortKey];
+      const result = sortType === "number"
+        ? Number(aValue) - Number(bValue)
+        : sortType === "date"
+          ? new Date(`${aValue}T00:00:00Z`) - new Date(`${bValue}T00:00:00Z`)
+          : String(aValue).localeCompare(String(bValue), "zh-Hant", { numeric: true, sensitivity: "base" });
+      return state.sortDirection === "asc" ? result : -result;
+    }
+
+    function selectedDateRows() {
+      return state.records.filter((record) => record.trade_date === state.selectedDate);
+    }
+
+    function filteredRows() {
+      const query = state.query.trim().toLocaleLowerCase("zh-Hant");
+      return selectedDateRows()
+        .filter((record) => !query || record.cb_code.toLocaleLowerCase().includes(query) || record.cb_name.toLocaleLowerCase("zh-Hant").includes(query))
+        .sort(compareValues);
+    }
+
+    function cell(value, className = "") {
+      const node = document.createElement("td");
+      node.className = className;
+      node.textContent = value;
+      return node;
+    }
+
+    function updateSortHeaders() {
+      document.querySelectorAll("th[aria-sort]").forEach((header) => {
+        const button = header.querySelector("button");
+        const active = button.dataset.sort === state.sortKey;
+        header.setAttribute("aria-sort", active ? (state.sortDirection === "asc" ? "ascending" : "descending") : "none");
+        button.querySelector(".sort-mark").textContent = active ? (state.sortDirection === "asc" ? "▲" : "▼") : "";
+      });
+    }
+
+    function render() {
+      updateSortHeaders();
+      const rows = filteredRows();
+      elements.resultCount.textContent = `共 ${numberFormat.format(rows.length)} 筆結果`;
+      elements.activeFilter.textContent = state.query.trim() ? `${state.selectedDate} · 搜尋「${state.query.trim()}」` : state.selectedDate;
+      elements.body.replaceChildren();
+
+      if (!rows.length) {
+        const row = document.createElement("tr");
+        row.append(cell("沒有符合條件的 CB", "state"));
+        row.firstChild.colSpan = 23;
+        elements.body.append(row);
+        renderStrategy();
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      rows.forEach((record) => {
+        const row = document.createElement("tr");
+        row.append(cell(record.cb_name, "sticky-name"));
+        row.append(cell(record.cb_code));
+        row.append(cell(record.issue_date));
+        row.append(cell(record.maturity_date));
+        row.append(cell(record.put_date));
+        row.append(cell(record.issue_units === null ? "" : numberFormat.format(record.issue_units), "numeric"));
+        row.append(cell(record.issue_amount_yi === null ? "" : numberFormat.format(record.issue_amount_yi), "numeric"));
+        row.append(cell(record.balance_units === null ? "" : numberFormat.format(record.balance_units), "numeric"));
+        row.append(cell(record.balance_date));
+        row.append(cell(record.current_conversion_price === null ? "" : numberFormat.format(record.current_conversion_price), "numeric"));
+        row.append(cell(record.current_conversion_price_effective_date));
+        row.append(cell(record.is_secured));
+        row.append(cell(record.delisting_date));
+        row.append(cell(record.delisting_reason));
+        row.append(cell(record.close_price === null ? "" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
+        row.append(cell(record.reference_price === null ? "" : numberFormat.format(record.reference_price), `numeric ${record.reference_price === null ? "null" : ""}`));
+        row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
+        row.append(cell(record.p_close_price === null ? "" : numberFormat.format(record.p_close_price), `numeric ${record.p_close_price === null ? "null" : ""}`));
+        row.append(cell(record.p_volume_lots === null ? "" : numberFormat.format(record.p_volume_lots), `numeric ${record.p_volume_lots === 0 ? "zero" : ""}`));
+        row.append(cell(record.conversion_value === null ? "" : valuationFormat.format(record.conversion_value), `numeric ${record.conversion_value === null ? "null" : ""}`));
+        row.append(cell(record.premium_rate === null ? "" : `${valuationFormat.format(record.premium_rate)}%`, `numeric ${record.premium_rate === null ? "null" : ""}`));
+        row.append(cell(record.balance_ratio === null ? "" : `${valuationFormat.format(record.balance_ratio)}%`, `numeric ${record.balance_ratio === null ? "null" : ""}`));
+        row.append(cell(record.remaining_days === null ? "" : numberFormat.format(record.remaining_days), `numeric ${record.remaining_days === null ? "null" : ""}`));
+        fragment.append(row);
+      });
+      elements.body.append(fragment);
+      renderStrategy();
+    }
+
+    function renderStrategy() {
+      const signals = state.strategySignals.filter((row) => row.trade_date === state.selectedDate);
+      const unavailable = state.strategyEvaluations.filter((row) => row.trade_date === state.selectedDate && row.data_status === "UNAVAILABLE");
+      elements.strategySignals.replaceChildren();
+      if (signals.length) {
+        elements.strategyStatus.textContent = `${state.selectedDate} 有 ${signals.length} 檔策略訊號。`;
+        const fragment = document.createDocumentFragment();
+        signals.forEach((row) => {
+          const values = row.condition_values;
+          const item = document.createElement("div");
+          item.className = "signal-item";
+          const label = ({A:"成交量10日新高",B:"CB突破轉換價",C:"CB資優生",G:"時間發動"}[row.strategy_code] || "策略訊號");
+          const details = row.strategy_code === "C"
+            ? `<span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span><span>區間 ${values.conversion_value_bucket}</span><span>區間第 ${values.bucket_rank} 名</span>`
+            : row.strategy_code === "B"
+              ? `<span>收盤 ${valuationFormat.format(values.close_price)}</span><span>43 日均價 ${valuationFormat.format(values.average_43_close_price)}</span><span>當日量 ${numberFormat.format(values.today_volume_lots)} 張</span><span>10 日均量 ${valuationFormat.format(values.average_10_volume_lots)} 張</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span>`
+              : row.strategy_code === "G"
+                ? `<span>觸發 ${Array.isArray(values.trigger_types) ? values.trigger_types.join("／") : "—"}</span><span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>已轉換 ${valuationFormat.format(values.converted_ratio_pct)}%</span>`
+              : `<span>收盤 ${valuationFormat.format(values.close_price)}</span><span>轉換價值 ${valuationFormat.format(values.conversion_value)}</span><span>溢價率 ${valuationFormat.format(values.premium_rate_pct)}%</span><span>成交量 ${numberFormat.format(values.today_volume_lots)} 張</span>`;
+          item.innerHTML = `<strong>${label}｜${row.cb_name || "—"}（${row.cb_code}）</strong>${details}<span>符合策略</span>`;
+          fragment.append(item);
+        });
+        elements.strategySignals.append(fragment);
+      } else {
+        elements.strategyStatus.textContent = `${state.selectedDate} 沒有符合策略的訊號。`;
+      }
+      if (unavailable.length) {
+        const unavailableByStrategy = new Map();
+        unavailable.forEach((row) => {
+          const strategyCode = row.strategy_code || "—";
+          if (!unavailableByStrategy.has(strategyCode)) unavailableByStrategy.set(strategyCode, []);
+          unavailableByStrategy.get(strategyCode).push(row);
+        });
+        [...unavailableByStrategy.entries()]
+          .sort(([left], [right]) => left.localeCompare(right, "en"))
+          .forEach(([strategyCode, rows]) => {
+            const reasonCounts = new Map();
+            rows.forEach((row) => {
+              const reason = row.unavailable_reason || "unknown";
+              reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + row.evaluation_count);
+            });
+            const unavailableCount = rows.reduce((total, row) => total + row.evaluation_count, 0);
+            const reasons = [...reasonCounts.entries()]
+              .sort(([left], [right]) => left.localeCompare(right, "en"))
+              .map(([reason, count]) => `${reason}（${count}）`)
+              .join("、");
+            const note = document.createElement("p");
+            note.textContent = `策略 ${strategyCode}：資料不足 ${unavailableCount} 檔，無法評估（非不符合策略）：${reasons}`;
+            elements.strategySignals.append(note);
+          });
+      }
+    }
+
+    document.querySelectorAll("button[data-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.sort;
+        if (state.sortKey === key) state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";
+        else {
+          state.sortKey = key;
+          state.sortDirection = "asc";
+        }
+        render();
+      });
+    });
+
+    elements.dateSelect.addEventListener("change", () => {
+      state.selectedDate = elements.dateSelect.value;
+      render();
+    });
+
+    elements.searchInput.addEventListener("input", () => {
+      state.query = elements.searchInput.value;
+      render();
+    });
+
+    fetch("./data.json", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        if (!payload || !Array.isArray(payload.records)) throw new Error("資料格式不正確");
+        state.records = payload.records;
+        state.strategySignals = Array.isArray(payload.strategy_signals) ? payload.strategy_signals : (Array.isArray(payload.strategy_a_signals) ? payload.strategy_a_signals : []);
+        state.strategyEvaluations = Array.isArray(payload.strategy_evaluations) ? payload.strategy_evaluations : (Array.isArray(payload.strategy_a_evaluations) ? payload.strategy_a_evaluations : []);
+        const dates = [...new Set(state.records.map((record) => record.trade_date))].sort().reverse();
+        if (!dates.length) throw new Error("資料庫目前沒有行情資料");
+        dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
+        state.selectedDate = dates[0];
+        render();
+      })
+      .catch((error) => {
+        elements.resultCount.textContent = "載入失敗";
+        elements.activeFilter.textContent = error.message;
+        const row = document.createElement("tr");
+        row.append(cell("無法載入行情資料，請稍後再試。", "state"));
+        row.firstChild.colSpan = 23;
+        elements.body.replaceChildren(row);
+      });
+  </script>
+</body>
+</html>

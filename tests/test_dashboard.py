@@ -8,7 +8,9 @@ import pytest
 from scripts import build_dashboard
 
 
-DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "docs" / "index.html"
+DOCS_PATH = Path(__file__).resolve().parents[1] / "docs"
+DASHBOARD_PATH = DOCS_PATH / "daily-market.html"
+HOME_PATH = DOCS_PATH / "index.html"
 
 
 class DashboardHeaderParser(HTMLParser):
@@ -272,22 +274,51 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
     assert "condition_values" not in payload["strategy_evaluations"][0]
 
 
+def test_dashboard_exports_existing_announcements_without_collecting_them(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("""
+            CREATE TABLE company_announcements (
+                company_code TEXT, company_name TEXT, fact_date TEXT,
+                spoken_time TEXT, subject TEXT
+            )
+        """)
+        connection.execute(
+            "INSERT INTO company_announcements VALUES (?,?,?,?,?)",
+            ("1101", "台泥", "2026-08-29", "13:30", "測試公告"),
+        )
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    build_dashboard.build_dashboard_data()
+
+    assert json.loads(output_path.read_text(encoding="utf-8"))["announcements"] == [{
+        "company_code": "1101", "company_name": "台泥",
+        "announcement_date": "2026-08-29", "announcement_time": "13:30",
+        "subject": "測試公告",
+    }]
+
+
 def test_strategy_pages_show_signals_separately_from_unavailable_data():
-    index = DASHBOARD_PATH.read_text(encoding="utf-8")
+    index = HOME_PATH.read_text(encoding="utf-8")
     strategy = (DASHBOARD_PATH.parent / "strategy-a.html").read_text(encoding="utf-8")
     strategy_b = (DASHBOARD_PATH.parent / "strategy-b.html").read_text(encoding="utf-8")
     strategy_c = (DASHBOARD_PATH.parent / "strategy-c.html").read_text(encoding="utf-8")
     strategy_g = (DASHBOARD_PATH.parent / "strategy-g.html").read_text(encoding="utf-8")
-    assert 'id="strategySignals"' in index
-    assert "非不符合策略" in index
-    assert "unavailableByStrategy" in index
-    assert "策略 ${strategyCode}：資料不足 ${unavailableCount} 檔" in index
-    assert "reasonCounts" in index
+    assert "CB Radar｜今日策略雷達" in index
+    assert 'id="signals"' in index
+    assert 'id="gSignals"' in index
+    assert 'id="announcements"' in index
+    assert "G 發行滿一年" in index
     assert 'href="strategy-a.html"' in index
     assert 'href="strategy-b.html"' in index
     assert 'href="strategy-g.html"' in index
-    assert "策略 ${row.strategy_code || \"A\"}-v1" in index
-    assert "average_43_close_price" in index
+    assert "成交量10日新高" in index
+    assert "CB突破轉換價" in index
+    assert "CB資優生" in index
+    assert "時間發動" in index
     assert 'id="dateSelect"' in strategy
     assert "資料不足、無法評估" in strategy
     assert "condition_results" in strategy
@@ -297,7 +328,6 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "prior_19_high_close_price" in strategy_b
     assert "資料不足、無法評估" in strategy_b
     assert 'href="strategy-c.html"' in index
-    assert "策略 C-v1" in index
     assert 'id="dateSelect"' in strategy_c
     assert "conversion_value_bucket" in strategy_c
     assert "資料不足、無法評估" in strategy_c
@@ -306,7 +336,11 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert 'id="dateSelect"' in strategy_g
     assert "strategy_g_signals" in strategy_g
     assert "trigger_types" in strategy_g
-    assert "prior_19_high_close_price" in strategy_g
+    assert "發動基本條件" in strategy_g
+    assert "已轉換比例 &lt; 10%" in strategy_g
+    assert "發行滿一年" in strategy_g
+    assert "賣回日後發動" in strategy_g
+    assert "到期前一年" in strategy_g
     assert "資料不足、無法評估" in strategy_g
     assert 'href="strategy-g.html"' in strategy
     assert 'href="strategy-g.html"' in strategy_b

@@ -65,6 +65,7 @@ PARENT_FLOW_REQUIRED_COLUMNS = {
 INSTITUTIONAL_COVERAGE_REQUIRED_COLUMNS = {"trade_date", "stock_code", "status", "reason"}
 ETF_STATUS_REQUIRED_COLUMNS = {"trade_date", "etf_code", "status"}
 TRACKED_ACTIVE_ETFS = ("00980A", "00985A", "00999A", "00982A", "00992A")
+ANNOUNCEMENT_TABLE_NAME = "company_announcements"
 
 
 def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -129,6 +130,29 @@ def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], lis
 def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Compatibility helper retained for A-v1 consumers and tests."""
     return load_strategy_rows("A")
+
+
+def load_announcements(limit: int = 12) -> list[dict[str, object]]:
+    """Export a small, read-only list of already-collected company announcements."""
+    database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(database_uri, uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        columns = {
+            row[1] for row in connection.execute(f"PRAGMA table_info({ANNOUNCEMENT_TABLE_NAME})")
+        }
+        required = {"company_code", "company_name", "subject"}
+        if not required.issubset(columns):
+            return []
+        date_column = "fact_date" if "fact_date" in columns else "api_batch_date"
+        time_column = "spoken_time" if "spoken_time" in columns else "NULL"
+        return [dict(row) for row in connection.execute(
+            f"""SELECT company_code, company_name, {date_column} AS announcement_date,
+                       {time_column} AS announcement_time, subject
+                FROM {ANNOUNCEMENT_TABLE_NAME}
+                ORDER BY announcement_date DESC, announcement_time DESC
+                LIMIT ?""",
+            (limit,),
+        )]
 
 
 def balance_units_for_display(
@@ -359,9 +383,11 @@ def build_dashboard_data() -> tuple[int, int]:
     strategy_b_signals, strategy_b_evaluations = load_strategy_rows("B")
     strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
     strategy_g_signals, strategy_g_evaluations = load_strategy_rows("G")
+    announcements = load_announcements()
     payload = {
         "records": rows,
         "institutional_records": institutional_rows,
+        "announcements": announcements,
         # Generic collections let pages show all saved strategies together.
         "strategy_signals": [*strategy_a_signals, *strategy_b_signals, *strategy_c_signals, *strategy_g_signals],
         "strategy_evaluations": [*strategy_a_evaluations, *strategy_b_evaluations, *strategy_c_evaluations, *strategy_g_evaluations],

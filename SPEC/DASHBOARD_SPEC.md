@@ -9,7 +9,7 @@ data/cb_history.db (SQLite / cb_daily)
 ↓ scripts/build_dashboard.py
 docs/data.json
 ↓ fetch("./data.json")
-docs/index.html (HTML + CSS + vanilla JavaScript)
+docs/index.html（策略雷達首頁）與各獨立頁面（HTML + CSS + vanilla JavaScript）
 ↓
 GitHub Pages
 ```
@@ -46,6 +46,15 @@ GitHub Pages
 
 輸出順序是 `trade_date DESC, cb_code ASC`。產生器會先驗證 `cb_daily` 及上述必要欄位存在。
 
+## 網站資訊架構與導覽
+
+全站導覽固定使用正式名稱：**首頁｜法人籌碼｜成交量10日新高｜CB突破轉換價｜CB資優生｜時間發動｜每日行情**。策略代號與版本僅在策略內頁顯示。
+
+- `index.html` 是「CB Radar｜今日策略雷達」首頁，使用最新資料日的已保存策略訊號，提供今日新觸發、時間發動提醒、法人／ETF 同步看好、今日新觸發標的、策略總覽及重要公告與新聞的入口／摘要；不放完整行情大表，也不重新計算策略。
+- `daily-market.html` 提供原完整每日行情查詢、篩選、排序與摘要功能。
+- `institutional.html` 是法人籌碼獨立頁；`strategy-a.html`、`strategy-b.html`、`strategy-c.html`、`strategy-g.html` 分別是四個策略獨立頁。
+- `announcements` 是 `company_announcements` 中已存在資料的少量唯讀輸出；若資料表或必要欄位不存在，首頁顯示空狀態。Dashboard 不抓取外部新聞或公告、不寫入 DB。
+
 ## Filtering
 
 - 日期選單使用 JSON 中實際存在的所有 `trade_date`，由新到舊排序，預設最新日期。
@@ -54,7 +63,7 @@ GitHub Pages
 - 日期與 CB 搜尋條件可以同時套用；清空搜尋會恢復該日期全部資料。
 - 結果列及摘要都只使用載入的真實 JSON record。
 
-## 策略 A-v1
+## 已保存策略訊號
 
 JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v1、B-v1、C-v1、G-v1 的
 SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。
@@ -63,11 +72,7 @@ SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signal
 轉換價值、溢價率、已轉換比例、區間及區間排名；G 顯示 G1／G2／G3 觸發類型、收盤、轉換價值與已轉換比例。這些都是 SQLite 已保存
 的策略快照，Dashboard 不重新計算條件；訊號保留完整快照。評估資料只輸出每個交易日、
 策略、版本、狀態與不可用原因的筆數彙總，不輸出逐檔評估 JSON。
-首頁的「今日策略訊號」依選定交易日顯示訊號的 CB、收盤價、轉換價值、溢價率與今日
-成交量，且明確顯示無訊號。資料不足的 `UNAVAILABLE` 評估會依策略代號分開列為
-「策略 A／B／C／G：資料不足筆數與原因統計」，相同原因不可跨策略合併；沒有資料不足的策略
-不顯示該區塊。這些資料不足不是不符合策略。各策略頁提供日期選擇、完整條件與當日數值；
-`strategy-g.html` 另顯示觸發類型、事件日期與 G2 突破窗口快照。
+首頁的「今日新觸發」使用最新交易日的已保存訊號，並以正式策略名稱與 G1／G2／G3 簡短標籤呈現；資料不足不是不符合策略。各策略頁提供日期選擇、完整條件與當日數值。`strategy-g.html` 先呈現三個既有發動基本條件，之後再按 G1／G2／G3 顯示事件計數、觸發類型、事件日期與 G2 突破窗口快照；同一訊號可顯示多個已保存 trigger type。
 
 ## Sorting
 
@@ -80,7 +85,7 @@ SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signal
 
 初始排序為 CB 代號升冪。`null` 收盤價排在非 null 值之後。
 
-## Summary Cards
+## 每日行情摘要卡
 
 頁面顯示：
 
