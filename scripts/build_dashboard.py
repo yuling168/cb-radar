@@ -133,7 +133,7 @@ def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, obje
 
 
 def load_announcements(limit: int = 12) -> list[dict[str, object]]:
-    """Export a small, read-only list of already-collected company announcements."""
+    """Export saved, material announcements for issuers with an active CB."""
     database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
     with sqlite3.connect(database_uri, uri=True) as connection:
         connection.row_factory = sqlite3.Row
@@ -145,13 +145,31 @@ def load_announcements(limit: int = 12) -> list[dict[str, object]]:
             return []
         date_column = "fact_date" if "fact_date" in columns else "api_batch_date"
         time_column = "spoken_time" if "spoken_time" in columns else "NULL"
+        material_terms = (
+            "%可轉換公司債%", "%可轉債%", "%公司債%", "%轉換價格%", "%轉換價%",
+            "%提前贖回%", "%強制贖回%", "%到期%", "%下市%", "%庫藏股%",
+            "%現金增資%", "%私募%", "%併購%", "%合併%", "%收購%", "%重大處分%",
+            "%重大資產%", "%重大財務%", "%重大營運%",
+        )
+        subject_filter = " OR ".join("lower(announcement.subject) LIKE ?" for _ in material_terms)
         return [dict(row) for row in connection.execute(
-            f"""SELECT company_code, company_name, {date_column} AS announcement_date,
-                       {time_column} AS announcement_time, subject
-                FROM {ANNOUNCEMENT_TABLE_NAME}
+            f"""WITH latest_trade_date AS (
+                    SELECT MAX(trade_date) AS trade_date FROM cb_daily
+                ), active_issuers AS (
+                    SELECT DISTINCT master.stock_code
+                    FROM cb_master AS master, latest_trade_date
+                    WHERE master.issue_date <= latest_trade_date.trade_date
+                      AND (master.delisting_date IS NULL OR master.delisting_date > latest_trade_date.trade_date)
+                )
+                SELECT announcement.company_code, announcement.company_name,
+                       announcement.{date_column} AS announcement_date,
+                       announcement.{time_column} AS announcement_time, announcement.subject
+                FROM {ANNOUNCEMENT_TABLE_NAME} AS announcement
+                WHERE announcement.company_code IN (SELECT stock_code FROM active_issuers)
+                  AND ({subject_filter})
                 ORDER BY announcement_date DESC, announcement_time DESC
                 LIMIT ?""",
-            (limit,),
+            (*material_terms, limit),
         )]
 
 

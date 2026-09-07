@@ -287,7 +287,7 @@ def test_dashboard_exports_existing_announcements_without_collecting_them(tmp_pa
         """)
         connection.execute(
             "INSERT INTO company_announcements VALUES (?,?,?,?,?)",
-            ("1101", "台泥", "2026-08-29", "13:30", "測試公告"),
+            ("1101", "台泥", "2026-08-29", "13:30", "公告本公司可轉換公司債轉換價格調整"),
         )
     monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
     monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
@@ -297,7 +297,7 @@ def test_dashboard_exports_existing_announcements_without_collecting_them(tmp_pa
     assert json.loads(output_path.read_text(encoding="utf-8"))["announcements"] == [{
         "company_code": "1101", "company_name": "台泥",
         "announcement_date": "2026-08-29", "announcement_time": "13:30",
-        "subject": "測試公告",
+        "subject": "公告本公司可轉換公司債轉換價格調整",
     }]
 
 
@@ -307,11 +307,18 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     strategy_b = (DASHBOARD_PATH.parent / "strategy-b.html").read_text(encoding="utf-8")
     strategy_c = (DASHBOARD_PATH.parent / "strategy-c.html").read_text(encoding="utf-8")
     strategy_g = (DASHBOARD_PATH.parent / "strategy-g.html").read_text(encoding="utf-8")
-    assert "CB Radar｜今日策略雷達" in index
+    assert "CB策略雷達" in index
+    assert "TAIWAN CONVERTIBLE BONDS" not in index
     assert 'id="signals"' in index
-    assert 'id="gSignals"' in index
     assert 'id="announcements"' in index
     assert "G 發行滿一年" in index
+    assert "現CB價格" in index
+    assert "到期／賣回" in index
+    assert "已轉換比率" in index
+    assert "當日CB量" in index
+    assert "nearerEvent" in index
+    assert "100-r.balance_ratio" in index
+    assert "策略總覽" not in index
     assert 'href="strategy-a.html"' in index
     assert 'href="strategy-b.html"' in index
     assert 'href="strategy-g.html"' in index
