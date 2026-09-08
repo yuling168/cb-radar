@@ -328,22 +328,26 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "時間發動" in index
     assert 'id="dateSelect"' in strategy
     assert "資料不足、無法評估" in strategy
-    assert "condition_results" in strategy
+    assert "完整策略條件" in strategy
+    assert "signal-card" in index
+    assert 'id="sortKey"' in index
     assert 'id="dateSelect"' in strategy_b
     assert "strategy_b_signals" in strategy_b
     assert "window_43_trade_dates" in strategy_b
     assert "prior_19_high_close_price" in strategy_b
     assert "資料不足、無法評估" in strategy_b
+    assert "完整策略條件" in strategy_b
     assert 'href="strategy-c.html"' in index
     assert 'id="dateSelect"' in strategy_c
     assert "conversion_value_bucket" in strategy_c
     assert "資料不足、無法評估" in strategy_c
+    assert "完整策略條件" in strategy_c
     assert "evaluation_count" in strategy
     assert "evaluation_count" in strategy_c
     assert 'id="dateSelect"' in strategy_g
     assert "strategy_g_signals" in strategy_g
     assert "trigger_types" in strategy_g
-    assert "發動基本條件" in strategy_g
+    assert "完整策略條件" in strategy_g
     assert "已轉換比例 &lt; 10%" in strategy_g
     assert "發行滿一年" in strategy_g
     assert "賣回日後發動" in strategy_g
