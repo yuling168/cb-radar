@@ -90,6 +90,13 @@ def test_backfill_defaults_to_verified_dates_and_supports_explicit_range(tmp_pat
 
 def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard():
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/daily-collector.yml").read_text(encoding="utf-8")
+    assert "- name: Refresh strict daily CB parent mapping" in workflow
+    assert "- name: Verify strict daily CB parent mapping completeness" in workflow
+    assert workflow.index("- name: Run CB master collector") < workflow.index("- name: Refresh strict daily CB parent mapping")
+    assert workflow.index("- name: Refresh strict daily CB parent mapping") < workflow.index("- name: Verify strict daily CB parent mapping completeness")
+    assert workflow.index("- name: Verify strict daily CB parent mapping completeness") < workflow.index("- name: Run parent stock market collector")
+    refresh_section = workflow[workflow.index("- name: Refresh strict daily CB parent mapping"):workflow.index("- name: Verify strict daily CB parent mapping completeness")]
+    assert "continue-on-error" not in refresh_section
     assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
     assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy B-v1")
     assert workflow.index("- name: Run strategy B-v1") < workflow.index("- name: Run strategy C-v1")

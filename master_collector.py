@@ -34,7 +34,7 @@ from config import (
     TPEX_CB_LISTED_URL,
     TDCC_BOOK_ENTRY_URL,
 )
-from db import connect, upsert_master_data
+from db import connect, upsert_master_data, upsert_parent_stock_mappings
 
 
 TPEX_REQUIRED_FIELDS = {
@@ -200,6 +200,107 @@ def parse_tpex_issues(payload: object) -> dict[str, dict[str, object]]:
     if not parsed:
         raise MasterFormatError("TPEx issue endpoint contained no active TWD CBs")
     return parsed
+
+
+def refresh_daily_exact_parent_stock_mappings(
+    trade_date: date,
+    db_path: Path | str = DEFAULT_DB_PATH,
+    session: requests.Session | None = None,
+    *,
+    write: bool = True,
+) -> dict[str, object]:
+    """Verify every CB observed on ``trade_date`` from one TPEx issue batch.
+
+    This is deliberately separate from the incremental master collector. Its
+    universe comes only from ``cb_daily`` for the requested date; it never
+    resolves a missing CB through a current ``cb_master`` row or a monthly
+    mapping. Validation completes for the entire universe before the single
+    exact-date mapping upsert, so a failed refresh cannot leave a partial
+    daily mapping behind.
+    """
+    trade_date_text = trade_date.isoformat()
+    with connect(db_path) as connection:
+        daily_rows = connection.execute(
+            """
+            SELECT cb_code, cb_name
+            FROM cb_daily
+            WHERE trade_date = ?
+            ORDER BY cb_code
+            """,
+            (trade_date_text,),
+        ).fetchall()
+    if not daily_rows:
+        raise MasterFormatError(
+            f"daily exact parent mapping has no cb_daily universe for {trade_date_text}"
+        )
+
+    http = session or requests.Session()
+    if session is None:
+        retry = Retry(
+            total=4, connect=4, read=4, backoff_factor=1,
+            status_forcelist=(429, 500, 502, 503, 504, 520),
+            allowed_methods=frozenset({"GET"}),
+        )
+        http.mount("https://", HTTPAdapter(max_retries=retry))
+    http.headers.update(
+        {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
+    )
+    try:
+        issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
+    except MasterFormatError as exc:
+        requested_codes = ",".join(str(row["cb_code"]) for row in daily_rows)
+        raise MasterFormatError(
+            f"daily exact parent mapping source cannot verify {requested_codes}: {exc}"
+        ) from exc
+
+    missing: list[str] = []
+    mappings: list[dict[str, str]] = []
+    verified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for daily in daily_rows:
+        cb_code = str(daily["cb_code"])
+        issue = issues.get(cb_code)
+        if issue is None:
+            missing.append(f"{cb_code}({daily['cb_name']}):missing_from_tpex_issue_batch")
+            continue
+        # parse_tpex_issues already validates these fields, but keep the
+        # exact-mapping boundary explicit and future-proof.
+        stock_code = str(issue.get("stock_code", "")).strip()
+        stock_name = str(issue.get("stock_name", "")).strip()
+        if not stock_code or not stock_name:
+            missing.append(f"{cb_code}({daily['cb_name']}):incomplete_issuer_identity")
+            continue
+        mappings.append(
+            {
+                "cb_code": cb_code,
+                "mapping_date": trade_date_text,
+                "stock_code": stock_code,
+                "stock_name": stock_name,
+                "market": "UNKNOWN",
+                "source": TPEX_ISSUE_SOURCE,
+                "source_url": TPEX_CB_ISSUE_URL,
+                "verified_at": verified_at,
+            }
+        )
+
+    if missing:
+        raise MasterFormatError(
+            "daily exact parent mapping unavailable: " + "; ".join(missing)
+        )
+    if len(mappings) != len(daily_rows):
+        raise MasterFormatError("daily exact parent mapping preflight count mismatch")
+
+    if write:
+        with connect(db_path) as connection:
+            upsert_parent_stock_mappings(connection, mappings)
+    return {
+        "trade_date": trade_date_text,
+        "universe_cbs": len(daily_rows),
+        "verified_mappings": len(mappings),
+        "missing_mappings": 0,
+        "records_written": len(mappings) if write else 0,
+        "dry_run": not write,
+        "source_url": TPEX_CB_ISSUE_URL,
+    }
 
 
 def parse_tpex_mops_links(payload: object) -> dict[str, str]:
@@ -1717,6 +1818,7 @@ def collect_master(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect official TPEx/MOPS CB master data")
     parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument("--date", type=date.fromisoformat, help="trade date (YYYY-MM-DD)")
     parser.add_argument(
         "--codes",
         help="comma-separated active CB codes; omit to collect all active TWD CBs",
@@ -1726,6 +1828,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("all", "tpex", "tdcc", "mops"),
         default="all",
         help="run one independently-atomic Phase 2 module, or all modules",
+    )
+    parser.add_argument(
+        "--refresh-daily-parent-mapping",
+        action="store_true",
+        help="verify and save exact CB-to-parent-stock mappings for --date only",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate a daily mapping refresh without writing mappings",
     )
     return parser.parse_args(argv)
 
@@ -1804,8 +1916,28 @@ def collect_phase2_modules(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.refresh_daily_parent_mapping:
+        if args.date is None:
+            print("master_collector_error: --refresh-daily-parent-mapping requires --date", file=sys.stderr)
+            return 2
+        try:
+            result = refresh_daily_exact_parent_stock_mappings(
+                args.date, args.database, write=not args.dry_run
+            )
+        except (requests.RequestException, MasterFormatError, ValueError) as exc:
+            print(f"master_collector_error: {exc}", file=sys.stderr)
+            return 1
+        for key in (
+            "trade_date", "universe_cbs", "verified_mappings", "missing_mappings",
+            "records_written", "dry_run", "source_url",
+        ):
+            print(f"{key}: {result[key]}")
+        return 0
+    if args.dry_run:
+        print("master_collector_error: --dry-run requires --refresh-daily-parent-mapping", file=sys.stderr)
+        return 2
     codes = {code.strip() for code in args.codes.split(",") if code.strip()} if args.codes else None
-    results = collect_phase2_modules(args.database, codes, module=args.module)
+    results = collect_phase2_modules(args.database, codes, as_of_date=args.date, module=args.module)
     for name in ("tpex", "tdcc", "mops"):
         if name in results:
             result = results[name]

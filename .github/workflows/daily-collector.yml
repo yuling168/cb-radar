@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "30 11 * * 1-5"
   workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "Optional single TPEx trade date for a narrow recovery (YYYY-MM-DD)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -39,7 +44,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          output="$(python collector.py --database data/cb_history.db)"
+          args=(--database data/cb_history.db)
+          if [[ -n "${{ inputs.trade_date }}" ]]; then
+            args+=(--date "${{ inputs.trade_date }}")
+          fi
+          output="$(python collector.py "${args[@]}")"
           printf '%s\n' "$output"
 
           trade_date="$(printf '%s\n' "$output" | sed -n 's/^trade_date: //p' | tail -n 1)"
@@ -61,11 +70,52 @@ jobs:
       - name: Run CB master collector
         id: master
         continue-on-error: true
+        if: steps.collector.outputs.trade_date != ''
         shell: bash
         run: |
           set -o pipefail
-          python master_collector.py --database data/cb_history.db 2>&1 | tee phase2-modules.log
+          python master_collector.py --database data/cb_history.db --date "${{ steps.collector.outputs.trade_date }}" 2>&1 | tee phase2-modules.log
           exit "${PIPESTATUS[0]}"
+
+      - name: Refresh strict daily CB parent mapping
+        if: steps.collector.outputs.trade_date != ''
+        run: >
+          python master_collector.py
+          --refresh-daily-parent-mapping
+          --date "${{ steps.collector.outputs.trade_date }}"
+          --database data/cb_history.db
+
+      - name: Verify strict daily CB parent mapping completeness
+        if: steps.collector.outputs.trade_date != ''
+        shell: bash
+        run: |
+          python - "${{ steps.collector.outputs.trade_date }}" <<'PY'
+          import sqlite3
+          import sys
+
+          trade_date = sys.argv[1]
+          connection = sqlite3.connect("data/cb_history.db")
+          try:
+              missing = connection.execute(
+                  """
+                  SELECT daily.cb_code
+                  FROM cb_daily AS daily
+                  LEFT JOIN cb_parent_stock_mapping AS mapping
+                    ON mapping.cb_code = daily.cb_code
+                   AND mapping.mapping_date = daily.trade_date
+                  WHERE daily.trade_date = ? AND mapping.cb_code IS NULL
+                  ORDER BY daily.cb_code
+                  """,
+                  (trade_date,),
+              ).fetchall()
+          finally:
+              connection.close()
+          if missing:
+              raise SystemExit(
+                  "Strict exact parent mapping incomplete: "
+                  + ",".join(row[0] for row in missing)
+              )
+          print(f"Strict exact parent mapping complete for {trade_date}")
 
       - name: Run parent stock market collector
         if: steps.collector.outputs.trade_date != ''

@@ -11,6 +11,7 @@ from db import (
     parent_stock_codes_for_trade_date,
     upsert_daily,
     upsert_master_data,
+    upsert_parent_stock_monthly_mappings,
 )
 from master_collector import (
     MasterFormatError,
@@ -41,6 +42,7 @@ from master_collector import (
     parse_tpex_issues,
     parse_tpex_delistings,
     parse_tpex_mops_links,
+    refresh_daily_exact_parent_stock_mappings,
     secured_for_display,
     select_current_balance,
     sync_tdcc_balances,
@@ -998,6 +1000,114 @@ class NewCbBootstrapSession:
 
     def post(self, _url, **_kwargs):
         return FakeResponse(text=ANNOUNCEMENT_HTML)
+
+
+class DailyExactMappingSession:
+    def __init__(self, issue_rows):
+        self.headers = {}
+        self.issue_rows = issue_rows
+        self.get_urls = []
+
+    def get(self, url, **_kwargs):
+        self.get_urls.append(url)
+        assert url.endswith("bond_ISSBD5_data")
+        return FakeResponse(json_payload=self.issue_rows)
+
+
+def _seed_daily_mapping_universe(db_path, codes=("30882",)):
+    with connect(db_path) as connection:
+        upsert_daily(connection, [
+            {
+                "trade_date": "2026-09-08", "cb_code": code,
+                "cb_name": f"測試{code}", "close_price": 100.0,
+                "volume_lots": 1, "source": "test", "collected_at": "x",
+            }
+            for code in codes
+        ])
+
+
+def test_daily_exact_mapping_refresh_uses_one_batch_and_writes_verified_universe(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("30882", "31494"))
+    session = DailyExactMappingSession([ISSUE_ROW, NEW_ISSUE_ROW])
+
+    result = refresh_daily_exact_parent_stock_mappings(
+        date(2026, 9, 8), db_path, session=session
+    )
+
+    assert result["universe_cbs"] == 2
+    assert result["verified_mappings"] == 2
+    assert result["missing_mappings"] == 0
+    assert result["records_written"] == 2
+    assert len(session.get_urls) == 1
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """SELECT cb_code, mapping_date, stock_code, stock_name, source,
+                      source_url, verified_at
+               FROM cb_parent_stock_mapping ORDER BY cb_code"""
+        ).fetchall()
+    assert [(row["cb_code"], row["mapping_date"], row["stock_code"]) for row in rows] == [
+        ("30882", "2026-09-08", "3088"),
+        ("31494", "2026-09-08", "3149"),
+    ]
+    assert all(row["source"] == TPEX_ISSUE_SOURCE for row in rows)
+    assert all(row["source_url"].endswith("bond_ISSBD5_data") for row in rows)
+    assert all(row["verified_at"].endswith("+00:00") for row in rows)
+
+
+def test_daily_exact_mapping_refresh_is_atomic_and_does_not_fallback_to_master(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("30882", "140201", "140202"))
+    with connect(db_path) as connection:
+        upsert_master_data(connection, [{
+            **parse_tpex_issues([ISSUE_ROW])["30882"],
+            "issue_units": 1, "balance_amount": None, "balance_date": None,
+            "current_conversion_price": 100.0,
+            "current_conversion_price_effective_date": "2026-08-28",
+            "delisting_date": None, "delisting_reason": None,
+            "source": "must_not_be_used", "source_url": "master-only",
+            "collected_at": "2026-09-08T00:00:00+00:00",
+        }], [], [])
+    with pytest.raises(MasterFormatError, match="140201.*140202"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 8), db_path, session=DailyExactMappingSession([ISSUE_ROW])
+        )
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cb_parent_stock_mapping").fetchone()[0] == 0
+
+
+def test_daily_exact_mapping_refresh_never_promotes_monthly_mapping(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path)
+    with connect(db_path) as connection:
+        upsert_parent_stock_monthly_mappings(connection, [{
+            "cb_code": "30882", "year_month": "2026-09", "stock_code": "9999",
+            "stock_name": "月度資料", "market": "TWSE", "source": "MOPS:t120sg01",
+            "source_url": "https://example.test/monthly", "verified_at": "2026-09-08T00:00:00+00:00",
+        }])
+    with pytest.raises(MasterFormatError, match="30882"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 8), db_path, session=DailyExactMappingSession([])
+        )
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cb_parent_stock_mapping").fetchone()[0] == 0
+
+
+def test_daily_exact_mapping_refresh_rejects_non_expected_or_incomplete_issue_identity(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path)
+    non_expected = dict(ISSUE_ROW, BondType="4")
+    with pytest.raises(MasterFormatError, match="30882"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 8), db_path, session=DailyExactMappingSession([non_expected])
+        )
+    incomplete = dict(ISSUE_ROW, IssuerName="")
+    with pytest.raises(MasterFormatError, match="blank identity fields"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 8), db_path, session=DailyExactMappingSession([incomplete])
+        )
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cb_parent_stock_mapping").fetchone()[0] == 0
 
 
 def _seed_incremental_master(db_path, *, monthly=True):
