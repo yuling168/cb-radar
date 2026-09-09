@@ -257,6 +257,7 @@
         <label>搜尋 CB
           <input id="searchInput" type="search" placeholder="輸入 CB 名稱或代號" autocomplete="off">
         </label>
+        <button id="exportExcel" type="button">匯出 Excel</button>
       </div>
 
       <div class="result-bar">
@@ -285,6 +286,10 @@
               <th aria-sort="none"><button type="button" data-sort="close_price">收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="reference_price">參考價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="volume_ma5">5日均量 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="volume_ma10">10日均量 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="price_ma20">20日均價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="price_ma43">43日均價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="p_close_price">母股收盤價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="p_volume_lots">母股成交量（張） <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="conversion_value">轉換價值 <span class="sort-mark"></span></button></th>
@@ -293,13 +298,14 @@
               <th aria-sort="none"><button type="button" data-sort="remaining_days">剩餘天數 <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="23">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="27">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
     <footer>每日資料由 CB Collector 自動更新</footer>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
     const state = { records: [], selectedDate: "", query: "", sortKey: "cb_code", sortDirection: "asc" };
     const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 4 });
@@ -327,6 +333,10 @@
       close_price: "number",
       reference_price: "number",
       volume_lots: "number",
+      volume_ma5: "number",
+      volume_ma10: "number",
+      price_ma20: "number",
+      price_ma43: "number",
       p_close_price: "number",
       p_volume_lots: "number",
       conversion_value: "number",
@@ -337,7 +347,8 @@
       searchInput: document.querySelector("#searchInput"),
       body: document.querySelector("#resultsBody"),
       resultCount: document.querySelector("#resultCount"),
-      activeFilter: document.querySelector("#activeFilter")
+      activeFilter: document.querySelector("#activeFilter"),
+      exportExcel: document.querySelector("#exportExcel")
     };
 
     function hasValue(value) {
@@ -397,7 +408,7 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 23;
+        row.firstChild.colSpan = 27;
         elements.body.append(row);
         renderStrategy();
         return;
@@ -423,6 +434,10 @@
         row.append(cell(record.close_price === null ? "" : numberFormat.format(record.close_price), `numeric ${record.close_price === null ? "null" : ""}`));
         row.append(cell(record.reference_price === null ? "" : numberFormat.format(record.reference_price), `numeric ${record.reference_price === null ? "null" : ""}`));
         row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
+        row.append(cell(record.volume_ma5 === null ? "" : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 0 }).format(record.volume_ma5), "numeric"));
+        row.append(cell(record.volume_ma10 === null ? "" : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 0 }).format(record.volume_ma10), "numeric"));
+        row.append(cell(record.price_ma20 === null ? "" : valuationFormat.format(record.price_ma20), "numeric"));
+        row.append(cell(record.price_ma43 === null ? "" : valuationFormat.format(record.price_ma43), "numeric"));
         row.append(cell(record.p_close_price === null ? "" : numberFormat.format(record.p_close_price), `numeric ${record.p_close_price === null ? "null" : ""}`));
         row.append(cell(record.p_volume_lots === null ? "" : numberFormat.format(record.p_volume_lots), `numeric ${record.p_volume_lots === 0 ? "zero" : ""}`));
         row.append(cell(record.conversion_value === null ? "" : valuationFormat.format(record.conversion_value), `numeric ${record.conversion_value === null ? "null" : ""}`));
@@ -456,6 +471,24 @@
       render();
     });
 
+    const EXPORT_COLUMNS = [
+      ["CB名稱", "cb_name"], ["CB代號", "cb_code"], ["發行日", "issue_date"], ["到期日", "maturity_date"], ["首次賣回日", "put_date"],
+      ["發行張數", "issue_units"], ["發行總額（億元）", "issue_amount_yi"], ["餘額張數", "balance_units"], ["餘額日期", "balance_date"], ["最新轉換價", "current_conversion_price"],
+      ["轉換價生效日", "current_conversion_price_effective_date"], ["擔保", "is_secured"], ["下市日期", "delisting_date"], ["下市原因", "delisting_reason"], ["收盤價", "close_price"],
+      ["參考價", "reference_price"], ["成交量（張）", "volume_lots"], ["5日均量", "volume_ma5"], ["10日均量", "volume_ma10"], ["20日均價", "price_ma20"], ["43日均價", "price_ma43"],
+      ["母股收盤價", "p_close_price"], ["母股成交量（張）", "p_volume_lots"], ["轉換價值", "conversion_value"], ["溢價率", "premium_rate"], ["餘額比例", "balance_ratio"], ["剩餘天數", "remaining_days"]
+    ];
+    elements.exportExcel.addEventListener("click", () => {
+      if (typeof XLSX === "undefined") return window.alert("Excel 匯出元件載入失敗，請確認網路連線後重試。");
+      const sheet = XLSX.utils.aoa_to_sheet([
+        EXPORT_COLUMNS.map(([label]) => label),
+        ...filteredRows().map((record) => EXPORT_COLUMNS.map(([, key]) => record[key] ?? ""))
+      ]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "每日行情");
+      XLSX.writeFile(workbook, `CB每日行情_${state.selectedDate}.xlsx`);
+    });
+
     fetch("./data.json", { cache: "no-store" })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -475,7 +508,7 @@
         elements.activeFilter.textContent = error.message;
         const row = document.createElement("tr");
         row.append(cell("無法載入行情資料，請稍後再試。", "state"));
-        row.firstChild.colSpan = 23;
+        row.firstChild.colSpan = 27;
         elements.body.replaceChildren(row);
       });
   </script>

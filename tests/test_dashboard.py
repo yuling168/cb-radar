@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -177,6 +178,10 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "delisting_reason": None,
         "issue_amount_yi": 2.0,
         "balance_units": 1983,
+        "volume_ma5": None,
+        "volume_ma10": None,
+        "price_ma20": None,
+        "price_ma43": None,
     }
     institutional = payload["institutional_records"]
     assert institutional == [{
@@ -201,6 +206,35 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
     assert missing_master["p_volume_lots"] is None
     assert missing_master["conversion_value"] is None
     assert missing_master["premium_rate"] is None
+
+
+def test_dashboard_calculates_cb_rolling_averages_from_observed_rows(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        start = date(2026, 1, 1)
+        connection.executemany(
+            "INSERT INTO cb_daily VALUES (?,?,?,?,?,?)",
+            [
+                ((start + timedelta(days=index)).isoformat(), "12345", "測試 CB", 100.0,
+                 99.0, 0 if index == 41 else index + 1)
+                for index in range(42)
+            ],
+        )
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+
+    build_dashboard.build_dashboard_data()
+
+    rows = json.loads(output_path.read_text(encoding="utf-8"))["records"]
+    row = next(item for item in rows if item["trade_date"] == "2026-08-29" and item["cb_code"] == "12345")
+    assert row["volume_ma5"] == pytest.approx((39 + 40 + 41 + 0 + 12) / 5)
+    assert row["volume_ma10"] == pytest.approx((sum(range(34, 42)) + 0 + 12) / 10)
+    assert row["price_ma20"] == pytest.approx((19 * 100 + 101.5) / 20)
+    assert row["price_ma43"] == pytest.approx((42 * 100 + 101.5) / 43)
+    short_history = next(item for item in rows if item["cb_code"] == "99999")
+    assert all(short_history[key] is None for key in ("volume_ma5", "volume_ma10", "price_ma20", "price_ma43"))
 
 
 def test_dashboard_uses_reference_price_for_zero_volume_premium(tmp_path, monkeypatch):
@@ -544,6 +578,10 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
         "close_price",
         "reference_price",
         "volume_lots",
+        "volume_ma5",
+        "volume_ma10",
+        "price_ma20",
+        "price_ma43",
         "p_close_price",
         "p_volume_lots",
         "conversion_value",
@@ -563,6 +601,12 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'p_volume_lots: "number"' in source
     assert 'conversion_value: "number"' in source
     assert 'premium_rate: "number"' in source
+    assert 'volume_ma5: "number"' in source
+    assert 'price_ma43: "number"' in source
+    assert 'id="exportExcel"' in source
+    assert 'xlsx@0.18.5' in source
+    assert 'filteredRows().map' in source
+    assert 'CB每日行情_${state.selectedDate}.xlsx' in source
     assert 'minimumFractionDigits: 2' in source
     assert 'maximumFractionDigits: 2' in source
     assert 'valuationFormat.format(record.conversion_value)' in source

@@ -218,6 +218,47 @@ def balance_ratio(
     return balance_amount / 100_000 / issue_units * 100
 
 
+def add_cb_rolling_averages(records: list[dict[str, object]]) -> None:
+    """Add display-only CB rolling averages from observed cb_daily rows.
+
+    Rows are grouped by CB and ordered by their actual trade dates.  This never
+    invents non-trading-day rows or substitutes missing prices; a metric remains
+    None until its complete window of observed values is available.
+    """
+    by_code: dict[str, list[dict[str, object]]] = {}
+    for record in records:
+        by_code.setdefault(str(record["cb_code"]), []).append(record)
+    for rows in by_code.values():
+        rows.sort(key=lambda record: str(record["trade_date"]))
+        for index, record in enumerate(rows):
+            for key, source, window in (
+                ("volume_ma5", "volume_lots", 5),
+                ("volume_ma10", "volume_lots", 10),
+                ("price_ma20", "close_price", 20),
+                ("price_ma43", "close_price", 43),
+            ):
+                values = [item[source] for item in rows[index - window + 1:index + 1]]
+                record[key] = (
+                    sum(values) / window
+                    if len(values) == window and all(value is not None for value in values)
+                    else None
+                )
+
+
+def add_display_averages_to_signals(
+    signals: list[dict[str, object]], records: list[dict[str, object]]
+) -> None:
+    """Expose precomputed dashboard metrics beside saved strategy snapshots."""
+    metrics = {
+        (str(record["trade_date"]), str(record["cb_code"])): record
+        for record in records
+    }
+    for signal in signals:
+        record = metrics.get((str(signal["trade_date"]), str(signal["cb_code"])))
+        for key in ("volume_ma5", "volume_ma10", "price_ma20", "price_ma43"):
+            signal[key] = record[key] if record is not None else None
+
+
 def load_rows() -> list[dict[str, object]]:
     if not DB_PATH.is_file():
         raise FileNotFoundError(f"SQLite database not found: {DB_PATH}")
@@ -337,6 +378,7 @@ def load_rows() -> list[dict[str, object]]:
                 else _invalid_is_secured(record["is_secured"])
             )
             records.append(record)
+        add_cb_rolling_averages(records)
         return records
 
 
@@ -401,6 +443,8 @@ def build_dashboard_data() -> tuple[int, int]:
     strategy_b_signals, strategy_b_evaluations = load_strategy_rows("B")
     strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
     strategy_g_signals, strategy_g_evaluations = load_strategy_rows("G")
+    for signals in (strategy_a_signals, strategy_b_signals, strategy_c_signals, strategy_g_signals):
+        add_display_averages_to_signals(signals, rows)
     announcements = load_announcements()
     payload = {
         "records": rows,
