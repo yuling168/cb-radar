@@ -304,7 +304,11 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "trade_date": "2026-08-29", "strategy_code": "C", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_historical_balance", "evaluation_count": 1,
     }]
-    assert payload["strategy_g_signals"][0]["condition_values"]["trigger_types"] == ["G1", "G3"]
+    g_signal = payload["strategy_g_signals"][0]
+    assert g_signal["condition_values"]["trigger_types"] == ["G1", "G3"]
+    assert g_signal["cb_name"] == "測試 CB"
+    assert g_signal["cb_code"] == "12345"
+    assert next(row for row in payload["records"] if row["cb_code"] == "12345")["premium_rate"] == pytest.approx(67.0781893)
     assert payload["strategy_g_evaluations"] == [{
         "trade_date": "2026-08-29", "strategy_code": "G", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "baseline_unknown", "evaluation_count": 1,
@@ -425,6 +429,12 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert '<th>市價</th><th>轉換價值</th><th>溢價率</th><th>成交量</th>' in strategy_g
     assert '<th>發行日</th><th>賣回日</th><th>到期日</th>' in strategy_g
     assert 'lots(r.volume_lots)' in strategy_g
+    assert 'cbCell.textContent=r.cb_name??""' in strategy_g
+    assert 'cbCell.append(`（${r.cb_code}）`)' in strategy_g
+    assert 'decimal(record.premium_rate,"%")' in strategy_g
+    assert 'decimal(record.balance_ratio,"%")' in strategy_g
+    assert 'n===null||n===undefined?""' in strategy_g
+    assert 'recordsByKey=new Map((p.records||[]).map' in strategy_g
     assert 'formatDate(v.issue_date),formatDate(v.put_date),formatDate(v.maturity_date)' in strategy_g
     assert '市價／轉換價值／溢價率' not in strategy_g
     assert '對應關鍵日期' not in strategy_g
