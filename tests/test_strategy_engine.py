@@ -14,7 +14,7 @@ from strategy_engine import (
 
 def _seed_a_v1_data(connection, *, missing_day: int | None = None):
     start = date(2026, 8, 3)
-    volumes = [10, 20, 30, 40, 50, 10, 10, 20, 30, 100]
+    volumes = [10, 20, 30, 40, 50, 10, 10, 20, 30, 110]
     records = []
     for index, volume in enumerate(volumes):
         if index == missing_day:
@@ -58,8 +58,9 @@ def test_a_v1_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
 
         assert result["data_status"] == "AVAILABLE"
         assert all(result["conditions"].values())
-        assert result["values"]["prior_9_max_volume_lots"] == 50
-        assert result["values"]["ten_day_total_volume_lots"] == 320
+        assert result["values"]["average_10_volume_lots"] == 33
+        assert result["values"]["average_5_volume_lots"] == 36
+        assert result["values"]["ten_day_total_volume_lots"] == 330
         assert result["values"]["conversion_value"] == pytest.approx(110)
         assert result["values"]["premium_rate_pct"] > 1
 

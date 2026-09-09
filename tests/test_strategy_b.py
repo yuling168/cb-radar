@@ -55,7 +55,6 @@ def test_b_v1_uses_inclusive_windows_and_saves_complete_snapshot(tmp_path):
     assert len(values["window_43_trade_dates"]) == 43
     assert len(values["window_10_trade_dates"]) == 10
     assert len(values["window_5_trade_dates"]) == 5
-    assert len(values["prior_19_trade_dates"]) == 19
     assert values["window_43_trade_dates"][-1] == TRADE_DATE
     assert values["balance_date"] == "2026-06-30"
     assert values["average_43_close_price"] == pytest.approx((42 * 100 + 110) / 43)
@@ -71,13 +70,13 @@ def test_b_v1_requires_43_effective_market_days(tmp_path):
     assert result["unavailable_reasons"] == ["insufficient_market_calendar_for_43_days"]
 
 
-def test_b_v1_same_close_is_not_a_new_high(tmp_path):
+def test_b_v1_same_close_is_not_above_20_day_average(tmp_path):
     with connect(tmp_path / "b.db") as connection:
         _seed(connection, closes=[100.0] * 43)
         result = _only_result(connection)
     assert result["data_status"] == "AVAILABLE"
-    assert not result["conditions"]["close_price_strictly_above_prior_19_high"]
-    assert result["values"]["prior_19_high_close_price"] == 100.0
+    assert not result["conditions"]["close_price_above_20_day_average"]
+    assert result["values"]["average_20_close_price"] == 100.0
 
 
 def test_b_v1_uses_strict_and_inclusive_condition_boundaries(tmp_path):

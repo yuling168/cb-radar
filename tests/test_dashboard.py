@@ -347,7 +347,9 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert 'id="announcements"' in index
     assert "G 發行滿一年" in index
     assert "現CB價格" in index
-    assert "到期／賣回" in index
+    assert "到期／賣回" not in index
+    assert "new-issue" in index
+    assert "新發行" in index
     assert "已轉換比率" in index
     assert "當日CB量" in index
     assert "nearerEvent" in index
@@ -367,8 +369,18 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert 'id="sortKey"' in index
     assert 'id="dateSelect"' in strategy_b
     assert "strategy_b_signals" in strategy_b
-    assert "window_43_trade_dates" in strategy_b
-    assert "prior_19_high_close_price" in strategy_b
+    assert "43日均價" in strategy_b
+    assert "10日均量" in strategy_b
+    assert "5日均量" in strategy_b
+    assert "20日均價" in strategy_b
+    assert "window_43_trade_dates" not in strategy_b
+    assert "prior_19_trade_dates" not in strategy_b
+    assert "前19日" not in strategy_b
+    assert "前19日最高收盤" not in strategy_b
+    assert "餘額日期" not in strategy_b
+    assert "窗口日期" not in strategy_b
+    assert "prior_19_high_close_price" not in strategy_b
+    assert "20日均價" in strategy_b
     assert "資料不足、無法評估" in strategy_b
     assert "完整策略條件" in strategy_b
     assert 'href="strategy-c.html"' in index

@@ -225,22 +225,26 @@ def add_cb_rolling_averages(records: list[dict[str, object]]) -> None:
     invents non-trading-day rows or substitutes missing prices; a metric remains
     None until its complete window of observed values is available.
     """
-    by_code: dict[str, list[dict[str, object]]] = {}
+    by_code: dict[str, dict[str, dict[str, object]]] = {}
     for record in records:
-        by_code.setdefault(str(record["cb_code"]), []).append(record)
-    for rows in by_code.values():
-        rows.sort(key=lambda record: str(record["trade_date"]))
-        for index, record in enumerate(rows):
+        by_code.setdefault(str(record["cb_code"]), {})[str(record["trade_date"])] = record
+    calendar = sorted({str(record["trade_date"]) for record in records})
+    for observed_by_date in by_code.values():
+        for index, trade_date in enumerate(calendar):
+            record = observed_by_date.get(trade_date)
+            if record is None:
+                continue
             for key, source, window in (
                 ("volume_ma5", "volume_lots", 5),
                 ("volume_ma10", "volume_lots", 10),
                 ("price_ma20", "close_price", 20),
                 ("price_ma43", "close_price", 43),
             ):
-                values = [item[source] for item in rows[index - window + 1:index + 1]]
+                dates = calendar[index - window + 1:index + 1]
+                values = [observed_by_date[day][source] for day in dates if day in observed_by_date]
                 record[key] = (
                     sum(values) / window
-                    if len(values) == window and all(value is not None for value in values)
+                    if len(dates) == window and len(values) == window and all(value is not None for value in values)
                     else None
                 )
 

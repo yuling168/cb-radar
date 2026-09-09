@@ -149,21 +149,21 @@ def evaluate_a_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         close_price = float(today["close_price"])
         conversion_value = float(stock[0]) / float(conversion[0]) * 100
         premium_rate_pct = (close_price / conversion_value - 1) * 100
-        prior_nine_max = max(volumes[:-1])
-        prior_five_average = sum(volumes[-6:-1]) / 5
+        average_10_volume = sum(volumes) / 10
+        average_5_volume = sum(volumes[-5:]) / 5
         conditions = {
-            "volume_strictly_above_prior_9_max": volumes[-1] > prior_nine_max,
+            "volume_above_10_day_average": volumes[-1] > average_10_volume,
             "close_price_in_115_to_150": 115 <= close_price <= 150,
             "close_price_above_conversion_value": close_price > conversion_value,
             "premium_rate_above_1_pct": premium_rate_pct > 1,
             "ten_day_volume_above_300_lots": sum(volumes) > 300,
-            "volume_above_prior_5_average_times_3": volumes[-1] > prior_five_average * 3,
+            "volume_above_5_day_average_times_3": volumes[-1] > average_5_volume * 3,
         }
         values = {
             "window_trade_dates": window_dates,
             "today_volume_lots": volumes[-1],
-            "prior_9_max_volume_lots": prior_nine_max,
-            "prior_5_average_volume_lots": prior_five_average,
+            "average_10_volume_lots": average_10_volume,
+            "average_5_volume_lots": average_5_volume,
             "ten_day_total_volume_lots": sum(volumes),
             "close_price": close_price,
             "conversion_price": float(conversion[0]),

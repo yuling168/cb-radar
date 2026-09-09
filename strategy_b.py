@@ -131,7 +131,6 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
     window_43_dates = calendar_dates[position - 42 : position + 1]
     window_10_dates = window_43_dates[-10:]
     window_5_dates = window_43_dates[-5:]
-    prior_19_dates = window_43_dates[-20:-1]
     results: list[dict[str, Any]] = []
     for today in today_rows:
         cb_code = str(today["cb_code"])
@@ -202,7 +201,7 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         average_43_close = sum(closes) / len(closes)
         average_10_volume = Decimal(sum(volumes[-10:])) / 10
         average_5_volume = Decimal(sum(volumes[-5:])) / 5
-        prior_19_high_close = max(closes[-20:-1])
+        average_20_close = sum(closes[-20:]) / 20
         conditions = {
             "close_price_above_43_day_average": closes[-1] > average_43_close,
             "volume_above_10_day_average": Decimal(volumes[-1]) > average_10_volume,
@@ -210,7 +209,7 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
             "conversion_value_in_90_to_110": Decimal("90") <= conversion_value <= Decimal("110"),
             "converted_ratio_at_most_20_pct": converted_ratio_pct <= Decimal("20"),
             "five_day_average_volume_above_50_lots": average_5_volume > Decimal("50"),
-            "close_price_strictly_above_prior_19_high": closes[-1] > prior_19_high_close,
+            "close_price_above_20_day_average": closes[-1] > average_20_close,
         }
         values = {
             "trigger_reason": "all_b_v1_conditions_met",
@@ -219,11 +218,10 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
             "window_43_trade_dates": window_43_dates,
             "window_10_trade_dates": window_10_dates,
             "window_5_trade_dates": window_5_dates,
-            "prior_19_trade_dates": prior_19_dates,
             "average_43_close_price": float(average_43_close),
             "average_10_volume_lots": float(average_10_volume),
             "average_5_volume_lots": float(average_5_volume),
-            "prior_19_high_close_price": float(prior_19_high_close),
+            "average_20_close_price": float(average_20_close),
             "conversion_price": float(conversion["conversion_price"]),
             "parent_stock_close_price": float(stock["p_close_price"]),
             "conversion_value": float(conversion_value),
