@@ -80,10 +80,12 @@ def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], lis
             """SELECT signal.cb_code, signal.trade_date, signal.strategy_code,
                       signal.strategy_version, signal.strategy_name,
                       signal.condition_results_json, signal.condition_values_json,
-                      signal.data_status, daily.cb_name, daily.close_price, daily.volume_lots
+                      signal.data_status, daily.cb_name, daily.close_price, daily.volume_lots,
+                      master.put_date, master.maturity_date
                FROM strategy_signals AS signal
                LEFT JOIN cb_daily AS daily
                  ON daily.cb_code = signal.cb_code AND daily.trade_date = signal.trade_date
+               LEFT JOIN cb_master AS master ON master.cb_code = signal.cb_code
                WHERE signal.strategy_code = ? AND signal.strategy_version = 'v1'
                ORDER BY signal.trade_date DESC, signal.cb_code ASC""",
             (strategy_code,)

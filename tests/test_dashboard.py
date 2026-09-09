@@ -295,7 +295,11 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "trade_date": "2026-08-29", "strategy_code": "B", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_daily_rows", "evaluation_count": 1,
     }]
-    assert payload["strategy_c_signals"][0]["condition_values"]["bucket_rank"] == 1
+    c_signal = payload["strategy_c_signals"][0]
+    assert c_signal["condition_values"]["bucket_rank"] == 1
+    assert c_signal["close_price"] == 101.5
+    assert c_signal["put_date"] is None
+    assert c_signal["maturity_date"] == "2027-01-01"
     assert payload["strategy_c_evaluations"] == [{
         "trade_date": "2026-08-29", "strategy_code": "C", "strategy_version": "v1",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_historical_balance", "evaluation_count": 1,
@@ -352,7 +356,10 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "新發行" in index
     assert "已轉換比率" in index
     assert "當日CB量" in index
-    assert "nearerEvent" in index
+    assert "nearerEventDate" in index
+    assert '[r.put_date,r.maturity_date].filter(Boolean).sort()' in index
+    assert 'return dates.length?formatDate(dates[0]):""' in index
+    assert '${eventDate?`<span class="fact">${eventDate}</span>`:""}' in index
     assert "100-r.balance_ratio" in index
     assert "策略總覽" not in index
     assert 'href="strategy-a.html"' in index
@@ -386,6 +393,13 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert 'href="strategy-c.html"' in index
     assert 'id="dateSelect"' in strategy_c
     assert "conversion_value_bucket" in strategy_c
+    assert "收盤價" in strategy_c
+    assert "賣回日" in strategy_c
+    assert "到期日" in strategy_c
+    assert "餘額日期" not in strategy_c
+    assert "priceFormat" in strategy_c
+    assert "formatDate(r.put_date)" in strategy_c
+    assert "formatDate(r.maturity_date)" in strategy_c
     assert "資料不足、無法評估" in strategy_c
     assert "完整策略條件" in strategy_c
     assert "evaluation_count" in strategy
