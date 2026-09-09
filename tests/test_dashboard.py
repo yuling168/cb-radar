@@ -417,6 +417,17 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "發動基本條件" not in strategy_g
     assert "時間發動分類條件" not in strategy_g
     assert "basic-grid" not in strategy_g
+    assert "conditions-panel ol" in strategy_g
+    assert 'G1：首次進入或基本條件首次轉為成立。' not in strategy_g
+    assert 'G2：保留既有量價突破條件。' not in strategy_g
+    assert 'G3：首次進入或基本條件首次轉為成立。' not in strategy_g
+    assert 'padding:10px 14px' in strategy_g
+    assert '<th>市價</th><th>轉換價值</th><th>溢價率</th><th>成交量</th>' in strategy_g
+    assert '<th>發行日</th><th>賣回日</th><th>到期日</th>' in strategy_g
+    assert 'lots(r.volume_lots)' in strategy_g
+    assert 'formatDate(v.issue_date),formatDate(v.put_date),formatDate(v.maturity_date)' in strategy_g
+    assert '市價／轉換價值／溢價率' not in strategy_g
+    assert '對應關鍵日期' not in strategy_g
     assert "發行滿一年" in strategy_g
     assert "賣回日後發動" in strategy_g
     assert "到期前一年" in strategy_g
