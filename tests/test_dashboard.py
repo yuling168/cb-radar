@@ -357,8 +357,9 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "已轉換比率" in index
     assert "當日CB量" in index
     assert "nearerEventDate" in index
-    assert '[r.put_date,r.maturity_date].filter(Boolean).sort()' in index
-    assert 'return dates.length?formatDate(dates[0]):""' in index
+    assert 'if(r.put_date&&(!r.maturity_date||r.put_date<=r.maturity_date))return `賣回日 ${formatDate(r.put_date)}`' in index
+    assert 'if(r.maturity_date)return `到期日 ${formatDate(r.maturity_date)}`' in index
+    assert 'return ""' in index
     assert '${eventDate?`<span class="fact">${eventDate}</span>`:""}' in index
     assert "100-r.balance_ratio" in index
     assert "策略總覽" not in index
@@ -409,6 +410,13 @@ def test_strategy_pages_show_signals_separately_from_unavailable_data():
     assert "trigger_types" in strategy_g
     assert "完整策略條件" in strategy_g
     assert "已轉換比例 &lt; 10%" in strategy_g
+    assert "轉換價值 ≥ 90" in strategy_g
+    assert "當日收盤價 ≤ 130" in strategy_g
+    assert "價格突破（收盤價 &gt; 20日均價）" in strategy_g
+    assert "成交量放大（成交量 &gt; 5日均量 × 3倍）" in strategy_g
+    assert "發動基本條件" not in strategy_g
+    assert "時間發動分類條件" not in strategy_g
+    assert "basic-grid" not in strategy_g
     assert "發行滿一年" in strategy_g
     assert "賣回日後發動" in strategy_g
     assert "到期前一年" in strategy_g
