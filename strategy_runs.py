@@ -163,12 +163,163 @@ def run_a_v2_recalculation(
         raise
 
 
+def dashboard_a_baseline_coverage(connection: sqlite3.Connection, run_id: int) -> dict[str, Any]:
+    """Validate baseline coverage against all Dashboard dates observed at publication time."""
+    required = connection.execute(
+        "SELECT MIN(trade_date), MAX(trade_date), COUNT(DISTINCT trade_date) FROM cb_daily"
+    ).fetchone()
+    start_date, end_date, date_count = required
+    if start_date is None:
+        raise ValueError("Cannot publish Strategy A run: Dashboard has no cb_daily dates")
+    run = connection.execute(
+        "SELECT start_date, end_date FROM strategy_run WHERE run_id=?", (run_id,)
+    ).fetchone()
+    assert run is not None
+    missing_date = connection.execute(
+        """SELECT daily.trade_date
+           FROM (SELECT DISTINCT trade_date FROM cb_daily) AS daily
+           WHERE NOT EXISTS (
+               SELECT 1 FROM strategy_run_evaluations AS evaluation
+               WHERE evaluation.run_id = ? AND evaluation.trade_date = daily.trade_date
+           )
+           ORDER BY daily.trade_date LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    coverage = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "trade_date_count": date_count,
+        "run_start_date": run["start_date"],
+        "run_end_date": run["end_date"],
+    }
+    if run["start_date"] > start_date or run["end_date"] < end_date:
+        coverage["valid"] = False
+        coverage["reason"] = (
+            f"run range {run['start_date']}..{run['end_date']} does not cover "
+            f"Dashboard range {start_date}..{end_date}"
+        )
+    elif missing_date is not None:
+        coverage["valid"] = False
+        coverage["reason"] = f"run cache is missing Dashboard trade date {missing_date['trade_date']}"
+    else:
+        coverage["valid"] = True
+    return coverage
+
+
+def _a_run(connection: sqlite3.Connection, run_id: int) -> sqlite3.Row:
+    run = connection.execute(
+        """SELECT run.run_id, run.status, run.start_date, run.end_date, definition.definition_id,
+                  definition.strategy_code, definition.strategy_version
+           FROM strategy_run AS run
+           INNER JOIN strategy_definition AS definition ON definition.definition_id = run.definition_id
+           WHERE run.run_id=?""",
+        (run_id,),
+    ).fetchone()
+    if run is None:
+        raise ValueError(f"Cannot publish Strategy A run {run_id}: run does not exist")
+    return run
+
+
+def _validate_active_completed_a_run(connection: sqlite3.Connection, run_id: int) -> sqlite3.Row:
+    """Return an A run only when it is completed at the registry-active version."""
+    strategy = get_strategy("A")
+    run = _a_run(connection, run_id)
+    if run["strategy_code"] != strategy.strategy_code:
+        raise ValueError(f"Cannot publish run {run_id}: strategy is {run['strategy_code']}, expected A")
+    if run["strategy_version"] != strategy.active_version:
+        raise ValueError(
+            f"Cannot publish A run {run_id}: version is {run['strategy_version']}, "
+            f"registry active version is {strategy.active_version}"
+        )
+    if run["status"] != "COMPLETED":
+        raise ValueError(f"Cannot publish A run {run_id}: status is {run['status']}, expected COMPLETED")
+    return run
+
+
+def publish_a_baseline(connection: sqlite3.Connection, run_id: int) -> dict[str, Any]:
+    """Publish a complete historical A baseline for the registry-active definition.
+
+    Recalculation never calls this function, so ordinary historical and test
+    runs cannot affect the site.  Publishing a new version replaces the series
+    pointer; date overrides remain definition-scoped and cannot cross versions.
+    """
+    strategy = get_strategy("A")
+    run = _validate_active_completed_a_run(connection, run_id)
+    coverage = dashboard_a_baseline_coverage(connection, run_id)
+    if not coverage["valid"]:
+        raise ValueError(f"Cannot publish A run {run_id}: insufficient Dashboard coverage: {coverage['reason']}")
+    connection.execute(
+        """INSERT INTO strategy_published_series
+           (strategy_code, definition_id, baseline_run_id, published_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(strategy_code) DO UPDATE SET
+             definition_id=excluded.definition_id, baseline_run_id=excluded.baseline_run_id,
+             published_at=excluded.published_at""",
+        (strategy.strategy_code, run["definition_id"], run_id, _now()),
+    )
+    connection.commit()
+    return {
+        "strategy_code": strategy.strategy_code,
+        "run_id": run_id,
+        "definition_id": run["definition_id"],
+        "coverage": coverage,
+    }
+
+
+def publish_a_date(connection: sqlite3.Connection, run_id: int, trade_date: str) -> dict[str, Any]:
+    """Publish one completed A incremental or correction run for one date."""
+    series = connection.execute(
+        "SELECT definition_id FROM strategy_published_series WHERE strategy_code='A'"
+    ).fetchone()
+    if series is None:
+        raise ValueError("Cannot publish A date: no published Strategy A baseline series")
+    run = _validate_active_completed_a_run(connection, run_id)
+    if run["definition_id"] != series["definition_id"]:
+        raise ValueError(
+            f"Cannot publish A date {trade_date}: run definition {run['definition_id']} "
+            f"does not match published series definition {series['definition_id']}"
+        )
+    missing = connection.execute(
+        """SELECT daily.cb_code FROM cb_daily AS daily
+           WHERE daily.trade_date=?
+             AND NOT EXISTS (
+                 SELECT 1 FROM strategy_run_evaluations AS evaluation
+                 WHERE evaluation.run_id=? AND evaluation.trade_date=daily.trade_date
+                   AND evaluation.cb_code=daily.cb_code
+             )
+           ORDER BY daily.cb_code LIMIT 1""",
+        (trade_date, run_id),
+    ).fetchone()
+    if missing is not None:
+        raise ValueError(
+            f"Cannot publish A date {trade_date}: run {run_id} is missing evaluation cache for {missing['cb_code']}"
+        )
+    cached = connection.execute(
+        "SELECT 1 FROM strategy_run_evaluations WHERE run_id=? AND trade_date=? LIMIT 1",
+        (run_id, trade_date),
+    ).fetchone()
+    if cached is None:
+        raise ValueError(f"Cannot publish A date {trade_date}: run {run_id} has no evaluation cache for that date")
+    connection.execute(
+        """INSERT INTO strategy_published_date (definition_id, trade_date, run_id, published_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(definition_id, trade_date) DO UPDATE SET
+             run_id=excluded.run_id, published_at=excluded.published_at""",
+        (series["definition_id"], trade_date, run_id, _now()),
+    )
+    connection.commit()
+    return {"definition_id": series["definition_id"], "trade_date": trade_date, "run_id": run_id}
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run an isolated Strategy A-v2 historical recalculation")
     dates = parser.add_mutually_exclusive_group(required=True)
     dates.add_argument("--date", help="one effective trade date (YYYY-MM-DD)")
     dates.add_argument("--start-date", help="inclusive range start (YYYY-MM-DD)")
+    dates.add_argument("--publish-baseline", type=int, help="publish a completed, Dashboard-complete A-v2 baseline")
+    dates.add_argument("--publish-date", type=int, help="publish one completed A-v2 run for --publish-trade-date")
     parser.add_argument("--end-date", help="inclusive range end; required with --start-date")
+    parser.add_argument("--publish-trade-date", help="date to override with --publish-date (YYYY-MM-DD)")
     parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
     args = parser.parse_args(argv)
     if args.start_date and not args.end_date:
@@ -177,6 +328,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--end-date requires --start-date")
     if args.start_date and args.start_date > args.end_date:
         parser.error("--start-date must not be after --end-date")
+    if args.publish_date is not None and not args.publish_trade_date:
+        parser.error("--publish-date requires --publish-trade-date")
+    if args.publish_trade_date and args.publish_date is None:
+        parser.error("--publish-trade-date requires --publish-date")
     return args
 
 
@@ -184,8 +339,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     start_date = args.date or args.start_date
     with connect(args.database) as connection:
-        run_id = run_a_v2_recalculation(connection, start_date, args.end_date)
-    print(f"run_id: {run_id}")
+        if args.publish_baseline is not None:
+            published = publish_a_baseline(connection, args.publish_baseline)
+            print(f"published baseline_run_id: {published['run_id']}")
+        elif args.publish_date is not None:
+            published = publish_a_date(connection, args.publish_date, args.publish_trade_date)
+            print(f"published date: {published['trade_date']} run_id: {published['run_id']}")
+        else:
+            run_id = run_a_v2_recalculation(connection, start_date, args.end_date)
+            print(f"run_id: {run_id}")
     return 0
 
 

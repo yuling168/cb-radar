@@ -4,13 +4,17 @@ from pathlib import Path
 
 import pytest
 
+import strategy_runs
 from db import connect
+from strategy_registry import StrategyDefinition
 from strategy_runs import (
     A_V2_PARAMETERS,
     RUN_TYPE_HISTORICAL_RECALCULATION,
     a_v2_rule_hash,
     current_git_commit,
     parse_args,
+    publish_a_baseline,
+    publish_a_date,
     run_a_v2_recalculation,
 )
 
@@ -29,6 +33,38 @@ def _legacy_counts(connection):
         connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in ("strategy_signals", "strategy_evaluations")
     )
+
+
+def _publish_fixture(connection):
+    """Create a two-day Dashboard history and a fully cached completed A-v2 run."""
+    connection.executemany(
+        """INSERT INTO cb_daily
+           (trade_date, cb_code, cb_name, close_price, reference_price, volume_lots, source, collected_at)
+           VALUES (?, '12345', '測試 CB', 120, 120, 10, 'test', '2026-01-01T00:00:00+00:00')""",
+        [("2026-01-02",), ("2026-01-03",)],
+    )
+    connection.execute(
+        """INSERT INTO strategy_definition
+           (strategy_code, strategy_version, strategy_name, parameters_json, rule_hash,
+            git_commit, is_active, created_at)
+           VALUES ('A', 'v2', 'test A-v2', '{}', 'test-rule', 'test-commit', 1, 'x')"""
+    )
+    definition_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+    connection.execute(
+        """INSERT INTO strategy_run
+           (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+           VALUES (?, '2026-01-02', '2026-01-03', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'y')""",
+        (definition_id,),
+    )
+    run_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+    connection.executemany(
+        """INSERT INTO strategy_run_evaluations
+           (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+            data_status, unavailable_reasons_json, evaluated_at)
+           VALUES (?, '12345', ?, '{}', '{}', 'AVAILABLE', '[]', 'x')""",
+        [(run_id, "2026-01-02"), (run_id, "2026-01-03")],
+    )
+    return definition_id, run_id
 
 
 def test_a_v2_historical_run_caches_2026_09_09_without_touching_legacy_tables(tmp_path):
@@ -125,6 +161,137 @@ def test_run_cli_accepts_one_date_or_a_range():
     assert parse_args(["--date", "2026-09-09"]).date == "2026-09-09"
     args = parse_args(["--start-date", "2026-09-08", "--end-date", "2026-09-09"])
     assert (args.start_date, args.end_date) == ("2026-09-08", "2026-09-09")
+    assert parse_args(["--publish-baseline", "42"]).publish_baseline == 42
+    args = parse_args(["--publish-date", "42", "--publish-trade-date", "2026-09-09"])
+    assert (args.publish_date, args.publish_trade_date) == (42, "2026-09-09")
+
+
+def test_publish_a_baseline_requires_completed_active_version_and_full_dashboard_coverage(tmp_path):
+    with connect(tmp_path / "publish.db") as connection:
+        definition_id, complete_run = _publish_fixture(connection)
+        published = publish_a_baseline(connection, complete_run)
+        assert published["run_id"] == complete_run
+        assert published["definition_id"] == definition_id
+        assert published["coverage"] == {
+            "start_date": "2026-01-02", "end_date": "2026-01-03", "trade_date_count": 2,
+            "run_start_date": "2026-01-02", "run_end_date": "2026-01-03", "valid": True,
+        }
+        assert connection.execute(
+            "SELECT baseline_run_id FROM strategy_published_series WHERE strategy_code='A'"
+        ).fetchone()[0] == complete_run
+
+
+def test_publish_a_date_requires_the_published_definition_and_replaces_only_that_date(tmp_path, monkeypatch):
+    with connect(tmp_path / "publish-date.db") as connection:
+        definition_id, baseline_run = _publish_fixture(connection)
+        publish_a_baseline(connection, baseline_run)
+
+        def completed_incremental(date_text, marker):
+            connection.execute(
+                """INSERT INTO strategy_run
+                   (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+                   VALUES (?, ?, ?, 'HISTORICAL_RECALCULATION', 'COMPLETED', ?, ?)""",
+                (definition_id, date_text, date_text, marker, marker),
+            )
+            run_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            connection.execute(
+                """INSERT INTO strategy_run_evaluations
+                   (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+                    data_status, unavailable_reasons_json, evaluated_at)
+                   VALUES (?, '12345', ?, '{}', ?, 'AVAILABLE', '[]', ?)""",
+                (run_id, date_text, json.dumps({"marker": marker}), marker),
+            )
+            return run_id
+
+        first = completed_incremental("2026-01-03", "first")
+        assert publish_a_date(connection, first, "2026-01-03") == {
+            "definition_id": definition_id, "trade_date": "2026-01-03", "run_id": first,
+        }
+        unpublish = completed_incremental("2026-01-03", "unpublished")
+        assert connection.execute(
+            "SELECT run_id FROM strategy_published_date WHERE definition_id=? AND trade_date='2026-01-03'",
+            (definition_id,),
+        ).fetchone()[0] == first
+        replacement = completed_incremental("2026-01-03", "replacement")
+        publish_a_date(connection, replacement, "2026-01-03")
+        assert connection.execute(
+            "SELECT run_id FROM strategy_published_date WHERE definition_id=? AND trade_date='2026-01-03'",
+            (definition_id,),
+        ).fetchone()[0] == replacement
+        assert unpublish != replacement
+        with pytest.raises(ValueError, match="missing evaluation cache"):
+            publish_a_date(connection, replacement, "2026-01-02")
+
+        connection.execute(
+            """INSERT INTO strategy_definition
+               (strategy_code, strategy_version, strategy_name, parameters_json, rule_hash,
+                git_commit, is_active, created_at)
+               VALUES ('A', 'v3', 'test A-v3', '{}', 'v3-rule', 'v3-commit', 0, 'x')"""
+        )
+        v3_definition_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-01-03', '2026-01-03', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'z')""",
+            (v3_definition_id,),
+        )
+        v3_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run_evaluations
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+                data_status, unavailable_reasons_json, evaluated_at)
+               VALUES (?, '12345', '2026-01-03', '{}', '{}', 'AVAILABLE', '[]', 'x')""",
+            (v3_run,),
+        )
+        with monkeypatch.context() as patched:
+            patched.setattr(
+                strategy_runs, "get_strategy", lambda _code: StrategyDefinition("A", "v3", "test A-v3"),
+            )
+            with pytest.raises(ValueError, match="does not match published series definition"):
+                publish_a_date(connection, v3_run, "2026-01-03")
+
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-01-03', '2026-01-03', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'z')""",
+            (definition_id,),
+        )
+        single_day_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        with pytest.raises(ValueError, match="does not cover Dashboard range"):
+            publish_a_baseline(connection, single_day_run)
+
+        for status in ("FAILED", "RUNNING"):
+            connection.execute(
+                """INSERT INTO strategy_run
+                   (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+                   VALUES (?, '2026-01-02', '2026-01-03', 'HISTORICAL_RECALCULATION', ?, 'x', 'z')""",
+                (definition_id, status),
+            )
+            run_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            with pytest.raises(ValueError, match=f"status is {status}"):
+                publish_a_baseline(connection, run_id)
+
+        connection.execute(
+            """INSERT INTO strategy_definition
+               (strategy_code, strategy_version, strategy_name, parameters_json, rule_hash,
+                git_commit, is_active, created_at)
+               VALUES ('A', 'v1', 'test A-v1', '{}', 'old-rule', 'old-commit', 0, 'x')"""
+        )
+        v1_definition_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-01-02', '2026-01-03', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'z')""",
+            (v1_definition_id,),
+        )
+        v1_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        with pytest.raises(ValueError, match="registry active version is v2"):
+            publish_a_baseline(connection, v1_run)
+
+        # The rejected runs cannot replace the existing published pointer.
+        assert connection.execute(
+            "SELECT baseline_run_id FROM strategy_published_series WHERE strategy_code='A'"
+        ).fetchone()[0] == baseline_run
 
 
 def test_current_git_commit_uses_the_repository_head():

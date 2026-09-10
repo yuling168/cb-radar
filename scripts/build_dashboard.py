@@ -22,6 +22,12 @@ INSTITUTIONAL_COVERAGE_TABLE_NAME = "institutional_coverage"
 ETF_STATUS_TABLE_NAME = "active_etf_collection_status"
 STRATEGY_SIGNAL_TABLE_NAME = "strategy_signals"
 STRATEGY_EVALUATION_TABLE_NAME = "strategy_evaluations"
+STRATEGY_DEFINITION_TABLE_NAME = "strategy_definition"
+STRATEGY_RUN_TABLE_NAME = "strategy_run"
+STRATEGY_RUN_SIGNAL_TABLE_NAME = "strategy_run_signals"
+STRATEGY_RUN_EVALUATION_TABLE_NAME = "strategy_run_evaluations"
+STRATEGY_PUBLISHED_SERIES_TABLE_NAME = "strategy_published_series"
+STRATEGY_PUBLISHED_DATE_TABLE_NAME = "strategy_published_date"
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -134,7 +140,158 @@ def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], lis
 
 def load_strategy_a_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Compatibility helper retained for Strategy A consumers and tests."""
-    return load_strategy_rows("A")
+    signals, evaluations, _ = load_strategy_a_rows_with_source()
+    return signals, evaluations
+
+
+def select_active_strategy_a_run(connection: sqlite3.Connection) -> dict[str, object] | None:
+    """Select the registry-active published A baseline, never an ordinary run."""
+    required_tables = {
+        STRATEGY_DEFINITION_TABLE_NAME,
+        STRATEGY_RUN_TABLE_NAME,
+        STRATEGY_RUN_SIGNAL_TABLE_NAME,
+        STRATEGY_RUN_EVALUATION_TABLE_NAME,
+        STRATEGY_PUBLISHED_SERIES_TABLE_NAME,
+        STRATEGY_PUBLISHED_DATE_TABLE_NAME,
+    }
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+    if not required_tables.issubset(tables):
+        return None
+    strategy = get_strategy("A")
+    row = connection.execute(
+        """SELECT series.baseline_run_id, definition.definition_id, definition.strategy_code,
+                  definition.strategy_version, definition.strategy_name, run.start_date, run.end_date
+           FROM strategy_published_series AS series
+           INNER JOIN strategy_run AS run ON run.run_id = series.baseline_run_id
+           INNER JOIN strategy_definition AS definition ON definition.definition_id = series.definition_id
+           WHERE series.strategy_code = ?
+             AND definition.strategy_code = ?
+             AND definition.strategy_version = ?
+             AND run.definition_id = definition.definition_id
+             AND run.status = 'COMPLETED'
+           LIMIT 1""",
+        (strategy.strategy_code, strategy.strategy_code, strategy.active_version),
+    ).fetchone()
+    if row is None:
+        return None
+    selected = dict(row)
+    override = connection.execute(
+        """SELECT COUNT(*), MAX(trade_date) FROM strategy_published_date
+           WHERE definition_id=?""",
+        (row["definition_id"],),
+    ).fetchone()
+    selected["coverage"] = {
+        "baseline_start_date": row["start_date"], "baseline_end_date": row["end_date"],
+        "published_through_date": max(row["end_date"], override[1]) if override[1] else row["end_date"],
+        "override_date_count": override[0],
+    }
+    return selected
+
+
+def load_strategy_a_rows_with_source() -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, object]]:
+    """Load A from its latest completed active-version run, or from the legacy snapshot."""
+    database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(database_uri, uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        active_run = select_active_strategy_a_run(connection)
+        if active_run is None:
+            signals, evaluations = load_strategy_rows("A")
+            return signals, evaluations, {
+                "source": "LEGACY", "definition_id": None, "baseline_run_id": None,
+            }
+        baseline_run_id = active_run["baseline_run_id"]
+        signals = [dict(row) for row in connection.execute(
+            """WITH published_dates AS (
+                   SELECT published.trade_date, published.run_id
+                   FROM strategy_published_date AS published
+                   INNER JOIN strategy_run AS run ON run.run_id = published.run_id
+                   WHERE published.definition_id = ? AND run.definition_id = published.definition_id
+                     AND run.status = 'COMPLETED'
+                     AND EXISTS (SELECT 1 FROM strategy_run_evaluations AS evaluation
+                                 WHERE evaluation.run_id = published.run_id
+                                   AND evaluation.trade_date = published.trade_date)
+               ), selected_signals AS (
+                   SELECT signal.cb_code, signal.trade_date, signal.condition_results_json,
+                          signal.condition_values_json
+                   FROM strategy_run_signals AS signal
+                   WHERE signal.run_id = ?
+                     AND NOT EXISTS (SELECT 1 FROM published_dates
+                                     WHERE published_dates.trade_date = signal.trade_date)
+                   UNION ALL
+                   SELECT signal.cb_code, signal.trade_date, signal.condition_results_json,
+                          signal.condition_values_json
+                   FROM strategy_run_signals AS signal
+                   INNER JOIN published_dates
+                     ON published_dates.run_id = signal.run_id
+                    AND published_dates.trade_date = signal.trade_date
+               )
+               SELECT signal.cb_code, signal.trade_date, definition.strategy_code,
+                      definition.strategy_version, definition.strategy_name,
+                      signal.condition_results_json, signal.condition_values_json,
+                      'AVAILABLE' AS data_status, daily.cb_name, daily.close_price, daily.volume_lots,
+                      master.put_date, master.maturity_date
+               FROM selected_signals AS signal
+               LEFT JOIN cb_daily AS daily
+                 ON daily.cb_code = signal.cb_code AND daily.trade_date = signal.trade_date
+               LEFT JOIN cb_master AS master ON master.cb_code = signal.cb_code
+               CROSS JOIN strategy_definition AS definition
+               WHERE definition.definition_id = ?
+               ORDER BY signal.trade_date DESC, signal.cb_code ASC""",
+            (active_run["definition_id"], baseline_run_id, active_run["definition_id"]),
+        )]
+        evaluations = [dict(row) for row in connection.execute(
+            """WITH published_dates AS (
+                   SELECT published.trade_date, published.run_id
+                   FROM strategy_published_date AS published
+                   INNER JOIN strategy_run AS run ON run.run_id = published.run_id
+                   WHERE published.definition_id = ? AND run.definition_id = published.definition_id
+                     AND run.status = 'COMPLETED'
+                     AND EXISTS (SELECT 1 FROM strategy_run_evaluations AS cached
+                                 WHERE cached.run_id = published.run_id
+                                   AND cached.trade_date = published.trade_date)
+               ), current AS (
+                   SELECT evaluation.trade_date, definition.strategy_code, definition.strategy_version,
+                          evaluation.data_status, evaluation.unavailable_reasons_json
+                   FROM strategy_run_evaluations AS evaluation
+                   CROSS JOIN strategy_definition AS definition
+                   WHERE evaluation.run_id = ? AND definition.definition_id = ?
+                     AND NOT EXISTS (SELECT 1 FROM published_dates
+                                     WHERE published_dates.trade_date = evaluation.trade_date)
+                   UNION ALL
+                   SELECT evaluation.trade_date, definition.strategy_code, definition.strategy_version,
+                          evaluation.data_status, evaluation.unavailable_reasons_json
+                   FROM strategy_run_evaluations AS evaluation
+                   INNER JOIN published_dates
+                     ON published_dates.run_id = evaluation.run_id
+                    AND published_dates.trade_date = evaluation.trade_date
+                   CROSS JOIN strategy_definition AS definition
+                   WHERE definition.definition_id = ?
+               ), available AS (
+                   SELECT trade_date, strategy_code, strategy_version, data_status,
+                          NULL AS unavailable_reason, COUNT(*) AS evaluation_count
+                   FROM current WHERE data_status = 'AVAILABLE'
+                   GROUP BY trade_date, strategy_code, strategy_version, data_status
+               ), unavailable AS (
+                   SELECT current.trade_date, current.strategy_code, current.strategy_version,
+                          current.data_status, json_each.value AS unavailable_reason,
+                          COUNT(*) AS evaluation_count
+                   FROM current, json_each(current.unavailable_reasons_json)
+                   WHERE current.data_status = 'UNAVAILABLE'
+                   GROUP BY current.trade_date, current.strategy_code, current.strategy_version,
+                            current.data_status, json_each.value
+               )
+               SELECT * FROM available UNION ALL SELECT * FROM unavailable
+               ORDER BY trade_date DESC, data_status ASC, unavailable_reason ASC""",
+            (active_run["definition_id"], baseline_run_id, active_run["definition_id"], active_run["definition_id"]),
+        )]
+    for row in signals:
+        row["condition_results"] = json.loads(row.pop("condition_results_json"))
+        row["condition_values"] = json.loads(row.pop("condition_values_json"))
+    return signals, evaluations, {
+        "source": "RUN_CACHE", "definition_id": active_run["definition_id"],
+        "baseline_run_id": baseline_run_id,
+        "coverage": active_run["coverage"],
+    }
 
 
 def load_announcements(limit: int = 12) -> list[dict[str, object]]:
@@ -448,8 +605,8 @@ def _invalid_is_secured(value: object) -> None:
 def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
     institutional_rows = load_institutional_rows()
-    strategy_rows = {code: load_strategy_rows(code) for code in active_strategy_codes()}
-    strategy_a_signals, strategy_a_evaluations = strategy_rows["A"]
+    strategy_a_signals, strategy_a_evaluations, strategy_a_source = load_strategy_a_rows_with_source()
+    strategy_rows = {code: load_strategy_rows(code) for code in active_strategy_codes() if code != "A"}
     strategy_b_signals, strategy_b_evaluations = strategy_rows["B"]
     strategy_c_signals, strategy_c_evaluations = strategy_rows["C"]
     strategy_g_signals, strategy_g_evaluations = strategy_rows["G"]
@@ -457,6 +614,8 @@ def build_dashboard_data() -> tuple[int, int]:
         add_display_averages_to_signals(signals, rows)
     announcements = load_announcements()
     payload = {
+        # Additive provenance; existing strategy collections retain their established schema.
+        "metadata": {"strategy_sources": {"A": strategy_a_source}},
         "records": rows,
         "institutional_records": institutional_rows,
         "announcements": announcements,

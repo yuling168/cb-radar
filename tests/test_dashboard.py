@@ -1,4 +1,5 @@
 import json
+import shutil
 import sqlite3
 from datetime import date, timedelta
 from html.parser import HTMLParser
@@ -7,12 +8,15 @@ from pathlib import Path
 import pytest
 
 from scripts import build_dashboard
+from db import connect
 from strategy_registry import get_strategy
+from strategy_runs import publish_a_baseline, publish_a_date, run_a_v2_recalculation
 
 
 DOCS_PATH = Path(__file__).resolve().parents[1] / "docs"
 DASHBOARD_PATH = DOCS_PATH / "daily-market.html"
 HOME_PATH = DOCS_PATH / "index.html"
+SOURCE_DATABASE = Path(__file__).resolve().parents[1] / "data" / "cb_history.db"
 
 
 class DashboardHeaderParser(HTMLParser):
@@ -291,6 +295,9 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
         "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_close_price", "evaluation_count": 1,
     }]
+    assert payload["metadata"]["strategy_sources"]["A"] == {
+        "source": "LEGACY", "definition_id": None, "baseline_run_id": None,
+    }
     assert {row["strategy_code"] for row in payload["strategy_signals"]} == {"A", "B", "C", "G"}
     assert payload["strategy_b_signals"][0]["condition_values"]["average_43_close_price"] == 98.5
     assert payload["strategy_b_evaluations"] == [{
@@ -316,6 +323,190 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         "data_status": "UNAVAILABLE", "unavailable_reason": "baseline_unknown", "evaluation_count": 1,
     }]
     assert "condition_values" not in payload["strategy_evaluations"][0]
+
+
+def test_dashboard_does_not_use_unpublished_a_run_cache(
+    tmp_path, monkeypatch,
+):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    shutil.copy2(SOURCE_DATABASE, database_path)
+    with connect(database_path) as connection:
+        first_run = run_a_v2_recalculation(
+            connection, "2026-09-09", git_commit="dashboard-cache-test",
+        )
+        definition_id = connection.execute(
+            "SELECT definition_id FROM strategy_run WHERE run_id=?", (first_run,)
+        ).fetchone()[0]
+        # A newer failed active-version run must never replace the completed cache.
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at, error_message)
+               VALUES (?, '2026-09-09', '2026-09-09', 'HISTORICAL_RECALCULATION', 'FAILED',
+                       '2099-01-01T00:00:00+00:00', '2099-01-01T00:00:00+00:00', 'intentional')""",
+            (definition_id,),
+        )
+        failed_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # A newer completed A-v1 run must also be excluded by the registry-active version.
+        connection.execute(
+            """INSERT INTO strategy_definition
+               (strategy_code, strategy_version, strategy_name, parameters_json, rule_hash,
+                git_commit, is_active, created_at)
+               VALUES ('A', 'v1', 'obsolete', '{}', 'obsolete-rule', 'obsolete-commit', 0,
+                       '2099-01-01T00:00:00+00:00')"""
+        )
+        v1_definition_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-09-09', '2026-09-09', 'HISTORICAL_RECALCULATION', 'COMPLETED',
+                       '2099-01-02T00:00:00+00:00', '2099-01-02T00:00:00+00:00')""",
+            (v1_definition_id,),
+        )
+        latest_run = run_a_v2_recalculation(
+            connection, "2026-09-09", git_commit="dashboard-cache-test",
+        )
+        selected = build_dashboard.select_active_strategy_a_run(connection)
+        assert latest_run != failed_run
+        assert selected is None
+
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+    build_dashboard.build_dashboard_data()
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert payload["metadata"]["strategy_sources"]["A"] == {
+        "source": "LEGACY", "definition_id": None, "baseline_run_id": None,
+    }
+    assert {row["strategy_code"] for row in payload["strategy_signals"]} >= {"B", "C", "G"}
+
+
+def test_dashboard_uses_only_explicitly_published_a_run_and_keeps_that_pointer(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    output_path = tmp_path / "data.json"
+    create_dashboard_database(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.executescript("""
+            CREATE TABLE strategy_definition (
+                definition_id INTEGER PRIMARY KEY, strategy_code TEXT, strategy_version TEXT,
+                strategy_name TEXT, parameters_json TEXT, rule_hash TEXT, git_commit TEXT,
+                is_active INTEGER, created_at TEXT
+            );
+            CREATE TABLE strategy_run (
+                run_id INTEGER PRIMARY KEY, definition_id INTEGER, start_date TEXT, end_date TEXT,
+                run_type TEXT, status TEXT, started_at TEXT, completed_at TEXT, error_message TEXT
+            );
+            CREATE TABLE strategy_run_evaluations (
+                run_id INTEGER, cb_code TEXT, trade_date TEXT, condition_results_json TEXT,
+                condition_values_json TEXT, data_status TEXT, unavailable_reasons_json TEXT, evaluated_at TEXT
+            );
+            CREATE TABLE strategy_run_signals (
+                run_id INTEGER, cb_code TEXT, trade_date TEXT, condition_results_json TEXT,
+                condition_values_json TEXT, created_at TEXT
+            );
+            CREATE TABLE strategy_published_series (
+                strategy_code TEXT PRIMARY KEY, definition_id INTEGER, baseline_run_id INTEGER UNIQUE,
+                published_at TEXT
+            );
+            CREATE TABLE strategy_published_date (
+                definition_id INTEGER, trade_date TEXT, run_id INTEGER, published_at TEXT,
+                PRIMARY KEY (definition_id, trade_date)
+            );
+        """)
+        connection.execute(
+            """INSERT INTO strategy_definition
+               (strategy_code, strategy_version, strategy_name, parameters_json, rule_hash,
+                git_commit, is_active, created_at)
+               VALUES ('A', 'v2', 'CB 成交量創 10 日新高', '{}', 'test-rule', 'test-commit', 1, 'x')"""
+        )
+        definition_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-08-29', '2026-08-29', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'y')""",
+            (definition_id,),
+        )
+        published_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run_evaluations
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+                data_status, unavailable_reasons_json, evaluated_at)
+               VALUES (?, '12345', '2026-08-29', '{"all":true}', '{"today_volume_lots":12}',
+                       'AVAILABLE', '[]', 'x')""",
+            (published_run,),
+        )
+        connection.execute(
+            """INSERT INTO strategy_run_signals
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json, created_at)
+               VALUES (?, '12345', '2026-08-29', '{"all":true}', '{"today_volume_lots":12}', 'x')""",
+            (published_run,),
+        )
+        publish_a_baseline(connection, published_run)
+        # A subsequent normal completed run is intentionally not published.
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-08-29', '2026-08-29', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'z')""",
+            (definition_id,),
+        )
+        later_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # A new market date and its completed but unpublished run must not change the site.
+        connection.execute(
+            "INSERT INTO cb_daily VALUES ('2026-08-30', '12345', '測試 CB', 102.0, 100.0, 20)"
+        )
+        connection.execute(
+            """INSERT INTO strategy_run
+               (definition_id, start_date, end_date, run_type, status, started_at, completed_at)
+               VALUES (?, '2026-08-30', '2026-08-30', 'HISTORICAL_RECALCULATION', 'COMPLETED', 'x', 'z')""",
+            (definition_id,),
+        )
+        incremental_run = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            """INSERT INTO strategy_run_evaluations
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+                data_status, unavailable_reasons_json, evaluated_at)
+               VALUES (?, '12345', '2026-08-30', '{"incremental":true}', '{"marker":"incremental"}',
+                       'AVAILABLE', '[]', 'x')""",
+            (incremental_run,),
+        )
+        connection.execute(
+            """INSERT INTO strategy_run_signals
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json, created_at)
+               VALUES (?, '12345', '2026-08-30', '{"incremental":true}', '{"marker":"incremental"}', 'x')""",
+            (incremental_run,),
+        )
+
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
+    build_dashboard.build_dashboard_data()
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert payload["metadata"]["strategy_sources"]["A"] == {
+        "source": "RUN_CACHE", "definition_id": definition_id, "baseline_run_id": published_run,
+        "coverage": {
+            "baseline_start_date": "2026-08-29", "baseline_end_date": "2026-08-29",
+            "published_through_date": "2026-08-29", "override_date_count": 0,
+        },
+    }
+    assert payload["strategy_a_signals"][0]["cb_code"] == "12345"
+    assert payload["strategy_a_evaluations"] == [{
+        "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
+        "data_status": "AVAILABLE", "unavailable_reason": None, "evaluation_count": 1,
+    }]
+    assert later_run != published_run
+    assert all(row["trade_date"] != "2026-08-30" for row in payload["strategy_a_signals"])
+
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        publish_a_date(connection, incremental_run, "2026-08-30")
+    build_dashboard.build_dashboard_data()
+    published_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert any(row["trade_date"] == "2026-08-30" for row in published_payload["strategy_a_signals"])
+    assert published_payload["metadata"]["strategy_sources"]["A"]["coverage"] == {
+        "baseline_start_date": "2026-08-29", "baseline_end_date": "2026-08-29",
+        "published_through_date": "2026-08-30", "override_date_count": 1,
+    }
 
 
 def test_dashboard_exports_existing_announcements_without_collecting_them(tmp_path, monkeypatch):

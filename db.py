@@ -430,6 +430,27 @@ CREATE TABLE IF NOT EXISTS strategy_run_signals (
 
 CREATE INDEX IF NOT EXISTS idx_strategy_run_signals_date
     ON strategy_run_signals (run_id, trade_date);
+
+CREATE TABLE IF NOT EXISTS strategy_published_series (
+    -- Exactly one published baseline may exist for each strategy code.
+    strategy_code TEXT PRIMARY KEY,
+    definition_id INTEGER NOT NULL,
+    baseline_run_id INTEGER NOT NULL UNIQUE,
+    published_at TEXT NOT NULL,
+    FOREIGN KEY (definition_id) REFERENCES strategy_definition(definition_id),
+    FOREIGN KEY (baseline_run_id) REFERENCES strategy_run(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS strategy_published_date (
+    -- An explicitly published run overrides its published baseline for one date.
+    definition_id INTEGER NOT NULL,
+    trade_date TEXT NOT NULL,
+    run_id INTEGER NOT NULL,
+    published_at TEXT NOT NULL,
+    PRIMARY KEY (definition_id, trade_date),
+    FOREIGN KEY (definition_id) REFERENCES strategy_definition(definition_id),
+    FOREIGN KEY (run_id) REFERENCES strategy_run(run_id)
+);
 """
 
 
