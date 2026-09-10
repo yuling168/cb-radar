@@ -11,11 +11,13 @@ from strategy_runs import (
     A_V2_PARAMETERS,
     RUN_TYPE_HISTORICAL_RECALCULATION,
     a_v2_rule_hash,
+    create_a_baseline,
     current_git_commit,
     parse_args,
     publish_a_baseline,
     publish_a_date,
     run_a_v2_recalculation,
+    validate_a_baseline,
 )
 
 
@@ -62,6 +64,12 @@ def _publish_fixture(connection):
            (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
             data_status, unavailable_reasons_json, evaluated_at)
            VALUES (?, '12345', ?, '{}', '{}', 'AVAILABLE', '[]', 'x')""",
+        [(run_id, "2026-01-02"), (run_id, "2026-01-03")],
+    )
+    connection.executemany(
+        """INSERT INTO strategy_run_signals
+           (run_id, cb_code, trade_date, condition_results_json, condition_values_json, created_at)
+           VALUES (?, '12345', ?, '{}', '{}', 'x')""",
         [(run_id, "2026-01-02"), (run_id, "2026-01-03")],
     )
     return definition_id, run_id
@@ -162,6 +170,8 @@ def test_run_cli_accepts_one_date_or_a_range():
     args = parse_args(["--start-date", "2026-09-08", "--end-date", "2026-09-09"])
     assert (args.start_date, args.end_date) == ("2026-09-08", "2026-09-09")
     assert parse_args(["--publish-baseline", "42"]).publish_baseline == 42
+    assert parse_args(["--create-baseline"]).create_baseline
+    assert parse_args(["--validate-baseline", "42"]).validate_baseline == 42
     args = parse_args(["--publish-date", "42", "--publish-trade-date", "2026-09-09"])
     assert (args.publish_date, args.publish_trade_date) == (42, "2026-09-09")
 
@@ -172,10 +182,8 @@ def test_publish_a_baseline_requires_completed_active_version_and_full_dashboard
         published = publish_a_baseline(connection, complete_run)
         assert published["run_id"] == complete_run
         assert published["definition_id"] == definition_id
-        assert published["coverage"] == {
-            "start_date": "2026-01-02", "end_date": "2026-01-03", "trade_date_count": 2,
-            "run_start_date": "2026-01-02", "run_end_date": "2026-01-03", "valid": True,
-        }
+        assert published["coverage"]["valid"] is True
+        assert published["coverage"]["evaluation_count"] == 2
         assert connection.execute(
             "SELECT baseline_run_id FROM strategy_published_series WHERE strategy_code='A'"
         ).fetchone()[0] == complete_run
@@ -292,6 +300,54 @@ def test_publish_a_date_requires_the_published_definition_and_replaces_only_that
         assert connection.execute(
             "SELECT baseline_run_id FROM strategy_published_series WHERE strategy_code='A'"
         ).fetchone()[0] == baseline_run
+
+
+def test_create_and_validate_a_baseline_uses_cb_daily_min_max_and_detects_coverage_faults(tmp_path):
+    with connect(tmp_path / "baseline.db") as connection:
+        with pytest.raises(ValueError, match="no effective trade dates"):
+            create_a_baseline(connection, git_commit="test-baseline")
+        connection.executemany(
+            """INSERT INTO cb_daily
+               (trade_date, cb_code, cb_name, close_price, reference_price, volume_lots, source, collected_at)
+               VALUES (?, ?, '測試', 120, 120, 1, 'test', 'x')""",
+            [
+                ("2026-01-02", "10001"), ("2026-01-02", "10002"),
+                ("2026-01-05", "10001"), ("2026-01-05", "10002"),
+            ],
+        )
+
+        def evaluator(conn, trade_date):
+            return [{
+                "cb_code": row[0], "trade_date": trade_date,
+                "conditions": {"test": True}, "values": {"trade_date": trade_date},
+                "data_status": "AVAILABLE", "unavailable_reasons": [], "evaluated_at": "x",
+            } for row in conn.execute("SELECT cb_code FROM cb_daily WHERE trade_date=?", (trade_date,))]
+
+        summary = create_a_baseline(connection, git_commit="test-baseline", evaluator=evaluator)
+        assert summary["valid"] is True
+        assert (summary["start_date"], summary["end_date"]) == ("2026-01-02", "2026-01-05")
+        assert summary["evaluation_count"] == 4
+        assert summary["signal_count"] == 4
+        assert summary["available_count"] == 4
+        run_id = summary["run_id"]
+
+        connection.execute(
+            "DELETE FROM strategy_run_evaluations WHERE run_id=? AND trade_date='2026-01-05' AND cb_code='10002'",
+            (run_id,),
+        )
+        failed = validate_a_baseline(connection, run_id)
+        assert failed["valid"] is False
+        assert any("evaluation CB count mismatch" in error for error in failed["errors"])
+
+
+def test_validate_a_baseline_rejects_failed_and_non_active_runs(tmp_path):
+    with connect(tmp_path / "invalid-baseline.db") as connection:
+        _, run_id = _publish_fixture(connection)
+        connection.execute("UPDATE strategy_run SET status='FAILED' WHERE run_id=?", (run_id,))
+        assert any("status is FAILED" in error for error in validate_a_baseline(connection, run_id)["errors"])
+        connection.execute("UPDATE strategy_run SET status='COMPLETED' WHERE run_id=?", (run_id,))
+        connection.execute("UPDATE strategy_definition SET strategy_version='v1' WHERE definition_id=1")
+        assert any("registry active version is v2" in error for error in validate_a_baseline(connection, run_id)["errors"])
 
 
 def test_current_git_commit_uses_the_repository_head():

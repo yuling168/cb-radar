@@ -437,6 +437,13 @@ def test_dashboard_uses_only_explicitly_published_a_run_and_keeps_that_pointer(t
             (published_run,),
         )
         connection.execute(
+            """INSERT INTO strategy_run_evaluations
+               (run_id, cb_code, trade_date, condition_results_json, condition_values_json,
+                data_status, unavailable_reasons_json, evaluated_at)
+               VALUES (?, '99999', '2026-08-29', '{}', '{}', 'UNAVAILABLE', '["missing_cb_close_price"]', 'x')""",
+            (published_run,),
+        )
+        connection.execute(
             """INSERT INTO strategy_run_signals
                (run_id, cb_code, trade_date, condition_results_json, condition_values_json, created_at)
                VALUES (?, '12345', '2026-08-29', '{"all":true}', '{"today_volume_lots":12}', 'x')""",
@@ -490,10 +497,10 @@ def test_dashboard_uses_only_explicitly_published_a_run_and_keeps_that_pointer(t
         },
     }
     assert payload["strategy_a_signals"][0]["cb_code"] == "12345"
-    assert payload["strategy_a_evaluations"] == [{
+    assert payload["strategy_a_evaluations"][0] == {
         "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
         "data_status": "AVAILABLE", "unavailable_reason": None, "evaluation_count": 1,
-    }]
+    }
     assert later_run != published_run
     assert all(row["trade_date"] != "2026-08-30" for row in payload["strategy_a_signals"])
 

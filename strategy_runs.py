@@ -163,6 +163,177 @@ def run_a_v2_recalculation(
         raise
 
 
+def _run_cache_summary(connection: sqlite3.Connection, run_id: int) -> dict[str, Any]:
+    counts = connection.execute(
+        """SELECT COUNT(*) AS evaluation_count,
+                  SUM(data_status='AVAILABLE') AS available_count,
+                  SUM(data_status='UNAVAILABLE') AS unavailable_count
+           FROM strategy_run_evaluations WHERE run_id=?""",
+        (run_id,),
+    ).fetchone()
+    signal_count = connection.execute(
+        "SELECT COUNT(*) FROM strategy_run_signals WHERE run_id=?", (run_id,)
+    ).fetchone()[0]
+    return {
+        "evaluation_count": int(counts["evaluation_count"]),
+        "available_count": int(counts["available_count"] or 0),
+        "unavailable_count": int(counts["unavailable_count"] or 0),
+        "signal_count": int(signal_count),
+    }
+
+
+def validate_a_baseline(connection: sqlite3.Connection, run_id: int) -> dict[str, Any]:
+    """Return a complete, non-mutating validation summary for an A baseline run."""
+    errors: list[str] = []
+    run = connection.execute(
+        """SELECT run.run_id, run.start_date, run.end_date, run.status,
+                  definition.definition_id, definition.strategy_code, definition.strategy_version,
+                  definition.rule_hash, definition.git_commit
+           FROM strategy_run AS run
+           INNER JOIN strategy_definition AS definition ON definition.definition_id = run.definition_id
+           WHERE run.run_id=?""",
+        (run_id,),
+    ).fetchone()
+    if run is None:
+        return {"run_id": run_id, "valid": False, "errors": ["run does not exist"]}
+    strategy = get_strategy("A")
+    if run["strategy_code"] != "A":
+        errors.append(f"strategy is {run['strategy_code']}, expected A")
+    if run["strategy_version"] != strategy.active_version:
+        errors.append(
+            f"version is {run['strategy_version']}, registry active version is {strategy.active_version}"
+        )
+    if run["status"] != "COMPLETED":
+        errors.append(f"status is {run['status']}, expected COMPLETED")
+    if not run["rule_hash"] or not run["git_commit"]:
+        errors.append("definition provenance requires non-empty rule_hash and git_commit")
+
+    expected_dates = [row[0] for row in connection.execute(
+        "SELECT DISTINCT trade_date FROM cb_daily ORDER BY trade_date"
+    )]
+    if not expected_dates:
+        errors.append("cb_daily has no effective trade dates")
+    else:
+        if run["start_date"] > expected_dates[0] or run["end_date"] < expected_dates[-1]:
+            errors.append(
+                f"run range {run['start_date']}..{run['end_date']} does not cover "
+                f"Dashboard range {expected_dates[0]}..{expected_dates[-1]}"
+            )
+
+    expected_by_date = {
+        row["trade_date"]: int(row["cb_count"])
+        for row in connection.execute(
+            "SELECT trade_date, COUNT(*) AS cb_count FROM cb_daily GROUP BY trade_date"
+        )
+    }
+    actual_by_date = {
+        row["trade_date"]: int(row["cb_count"])
+        for row in connection.execute(
+            """SELECT trade_date, COUNT(*) AS cb_count FROM strategy_run_evaluations
+               WHERE run_id=? GROUP BY trade_date""",
+            (run_id,),
+        )
+    }
+    missing_dates = sorted(set(expected_by_date) - set(actual_by_date))
+    extra_dates = sorted(set(actual_by_date) - set(expected_by_date))
+    if missing_dates:
+        errors.append("missing evaluation dates: " + ",".join(missing_dates))
+    if extra_dates:
+        errors.append("unexpected evaluation dates: " + ",".join(extra_dates))
+    mismatched_dates = [
+        trade_date for trade_date, count in expected_by_date.items()
+        if actual_by_date.get(trade_date) != count
+    ]
+    if mismatched_dates:
+        errors.append("evaluation CB count mismatch: " + ",".join(sorted(mismatched_dates)))
+    inconsistent = connection.execute(
+        """SELECT evaluation.trade_date, evaluation.cb_code
+           FROM strategy_run_evaluations AS evaluation
+           LEFT JOIN cb_daily AS daily
+             ON daily.trade_date=evaluation.trade_date AND daily.cb_code=evaluation.cb_code
+           WHERE evaluation.run_id=? AND daily.cb_code IS NULL LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    if inconsistent is not None:
+        errors.append(f"evaluation has no cb_daily row: {inconsistent['trade_date']}/{inconsistent['cb_code']}")
+    duplicate = connection.execute(
+        """SELECT trade_date, cb_code FROM strategy_run_evaluations WHERE run_id=?
+           GROUP BY trade_date, cb_code HAVING COUNT(*) > 1 LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    if duplicate is not None:
+        errors.append(f"duplicate evaluation cache: {duplicate['trade_date']}/{duplicate['cb_code']}")
+    duplicate_signal = connection.execute(
+        """SELECT trade_date, cb_code FROM strategy_run_signals WHERE run_id=?
+           GROUP BY trade_date, cb_code HAVING COUNT(*) > 1 LIMIT 1""",
+        (run_id,),
+    ).fetchone()
+    if duplicate_signal is not None:
+        errors.append(f"duplicate signal cache: {duplicate_signal['trade_date']}/{duplicate_signal['cb_code']}")
+
+    evaluations = {
+        (row["trade_date"], row["cb_code"]): row
+        for row in connection.execute(
+            """SELECT trade_date, cb_code, data_status, condition_results_json, condition_values_json
+               FROM strategy_run_evaluations WHERE run_id=?""",
+            (run_id,),
+        )
+    }
+    signals = list(connection.execute(
+        """SELECT trade_date, cb_code, condition_results_json, condition_values_json
+           FROM strategy_run_signals WHERE run_id=?""",
+        (run_id,),
+    ))
+    signal_keys = {(row["trade_date"], row["cb_code"]) for row in signals}
+    for signal in signals:
+        evaluation = evaluations.get((signal["trade_date"], signal["cb_code"]))
+        if evaluation is None:
+            errors.append(f"signal has no evaluation: {signal['trade_date']}/{signal['cb_code']}")
+            break
+        if (evaluation["data_status"] != "AVAILABLE"
+                or evaluation["condition_results_json"] != signal["condition_results_json"]
+                or evaluation["condition_values_json"] != signal["condition_values_json"]):
+            errors.append(f"signal cache differs from evaluation: {signal['trade_date']}/{signal['cb_code']}")
+            break
+    for key, evaluation in evaluations.items():
+        if evaluation["data_status"] == "AVAILABLE" and all(json.loads(evaluation["condition_results_json"]).values()):
+            if key not in signal_keys:
+                errors.append(f"eligible evaluation has no signal: {key[0]}/{key[1]}")
+                break
+
+    return {
+        "run_id": run_id,
+        "definition_id": run["definition_id"],
+        "strategy_code": run["strategy_code"],
+        "strategy_version": run["strategy_version"],
+        "start_date": run["start_date"],
+        "end_date": run["end_date"],
+        "status": run["status"],
+        "dashboard_start_date": expected_dates[0] if expected_dates else None,
+        "dashboard_end_date": expected_dates[-1] if expected_dates else None,
+        "trade_date_count": len(expected_dates),
+        **_run_cache_summary(connection, run_id),
+        "valid": not errors,
+        "errors": errors,
+    }
+
+
+def create_a_baseline(
+    connection: sqlite3.Connection, *, git_commit: str | None = None,
+    evaluator: Callable[[sqlite3.Connection, str], list[dict[str, Any]]] = evaluate_a_v2,
+) -> dict[str, Any]:
+    """Create, but never publish, a full active-A baseline from saved CB dates."""
+    bounds = connection.execute(
+        "SELECT MIN(trade_date), MAX(trade_date) FROM cb_daily"
+    ).fetchone()
+    if bounds[0] is None:
+        raise ValueError("Cannot create A baseline: cb_daily has no effective trade dates")
+    run_id = run_a_v2_recalculation(
+        connection, bounds[0], bounds[1], git_commit=git_commit, evaluator=evaluator,
+    )
+    return validate_a_baseline(connection, run_id)
+
+
 def dashboard_a_baseline_coverage(connection: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     """Validate baseline coverage against all Dashboard dates observed at publication time."""
     required = connection.execute(
@@ -245,9 +416,12 @@ def publish_a_baseline(connection: sqlite3.Connection, run_id: int) -> dict[str,
     """
     strategy = get_strategy("A")
     run = _validate_active_completed_a_run(connection, run_id)
-    coverage = dashboard_a_baseline_coverage(connection, run_id)
-    if not coverage["valid"]:
-        raise ValueError(f"Cannot publish A run {run_id}: insufficient Dashboard coverage: {coverage['reason']}")
+    validation = validate_a_baseline(connection, run_id)
+    if not validation["valid"]:
+        raise ValueError(
+            f"Cannot publish A run {run_id}: baseline validation failed: "
+            + "; ".join(validation["errors"])
+        )
     connection.execute(
         """INSERT INTO strategy_published_series
            (strategy_code, definition_id, baseline_run_id, published_at)
@@ -262,7 +436,7 @@ def publish_a_baseline(connection: sqlite3.Connection, run_id: int) -> dict[str,
         "strategy_code": strategy.strategy_code,
         "run_id": run_id,
         "definition_id": run["definition_id"],
-        "coverage": coverage,
+        "coverage": validation,
     }
 
 
@@ -316,6 +490,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     dates = parser.add_mutually_exclusive_group(required=True)
     dates.add_argument("--date", help="one effective trade date (YYYY-MM-DD)")
     dates.add_argument("--start-date", help="inclusive range start (YYYY-MM-DD)")
+    dates.add_argument("--create-baseline", action="store_true", help="create a full active-A baseline from cb_daily min/max; never publish")
+    dates.add_argument("--validate-baseline", type=int, help="validate a completed A baseline without publishing")
     dates.add_argument("--publish-baseline", type=int, help="publish a completed, Dashboard-complete A-v2 baseline")
     dates.add_argument("--publish-date", type=int, help="publish one completed A-v2 run for --publish-trade-date")
     parser.add_argument("--end-date", help="inclusive range end; required with --start-date")
@@ -339,7 +515,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     start_date = args.date or args.start_date
     with connect(args.database) as connection:
-        if args.publish_baseline is not None:
+        if args.create_baseline:
+            summary = create_a_baseline(connection)
+            print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+            if not summary["valid"]:
+                return 1
+        elif args.validate_baseline is not None:
+            summary = validate_a_baseline(connection, args.validate_baseline)
+            print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+            if not summary["valid"]:
+                return 1
+        elif args.publish_baseline is not None:
             published = publish_a_baseline(connection, args.publish_baseline)
             print(f"published baseline_run_id: {published['run_id']}")
         elif args.publish_date is not None:
