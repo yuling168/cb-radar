@@ -1,4 +1,7 @@
+import json
+import sqlite3
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -6,9 +9,13 @@ from db import connect, upsert_daily, upsert_stock_daily_market
 from strategy_engine import (
     STRATEGY_CODE,
     STRATEGY_VERSION,
+    evaluate_a_v2,
+    evaluate_a_active,
     evaluate_a_v1_on,
     parse_args,
+    run_a_active,
     run_a_v1,
+    run_a_v2,
 )
 
 
@@ -51,10 +58,10 @@ def _seed_a_v1_data(connection, *, missing_day: int | None = None):
     }])
 
 
-def test_a_v1_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
+def test_a_v2_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
     with connect(tmp_path / "strategy.db") as connection:
         _seed_a_v1_data(connection)
-        result = evaluate_a_v1_on(connection, "2026-08-12")[0]
+        result = evaluate_a_v2(connection, "2026-08-12")[0]
 
         assert result["data_status"] == "AVAILABLE"
         assert all(result["conditions"].values())
@@ -64,12 +71,12 @@ def test_a_v1_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
         assert result["values"]["conversion_value"] == pytest.approx(110)
         assert result["values"]["premium_rate_pct"] > 1
 
-        assert run_a_v1(connection, ["2026-08-12"])["signals_inserted"] == 1
+        assert run_a_v2(connection, ["2026-08-12"])["signals_inserted"] == 1
         first = connection.execute(
             "SELECT condition_values_json FROM strategy_signals WHERE cb_code = '12345'"
         ).fetchone()[0]
         connection.execute("UPDATE cb_daily SET close_price = 115 WHERE cb_code = '12345' AND trade_date = '2026-08-12'")
-        rerun = run_a_v1(connection, ["2026-08-12"])
+        rerun = run_a_v2(connection, ["2026-08-12"])
         assert rerun["signals_existing"] == 1
         assert connection.execute(
             "SELECT condition_values_json FROM strategy_signals WHERE cb_code = '12345'"
@@ -91,7 +98,7 @@ def test_a_v2_does_not_require_a_new_prior_9_day_volume_high(tmp_path):
                 (volume, (date(2026, 8, 3) + timedelta(days=index)).isoformat()),
             )
 
-        result = evaluate_a_v1_on(connection, "2026-08-12")[0]
+        result = evaluate_a_v2(connection, "2026-08-12")[0]
 
         assert result["data_status"] == "AVAILABLE"
         assert all(result["conditions"].values())
@@ -100,15 +107,84 @@ def test_a_v2_does_not_require_a_new_prior_9_day_volume_high(tmp_path):
         assert result["values"]["average_5_volume_lots"] == 20
 
 
+def test_a_v2_pure_evaluator_does_not_modify_database(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+        before_counts = tuple(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("strategy_signals", "strategy_evaluations")
+        )
+        before_changes = connection.total_changes
+
+        results = evaluate_a_v2(connection, "2026-08-12")
+
+        assert results[0]["data_status"] == "AVAILABLE"
+        assert tuple(
+            connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("strategy_signals", "strategy_evaluations")
+        ) == before_counts
+        assert connection.total_changes == before_changes
+
+
+def test_a_active_uses_the_registry_selected_v2_evaluator(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+
+        assert evaluate_a_active(connection, "2026-08-12") == evaluate_a_v2(connection, "2026-08-12")
+        assert run_a_active(connection, ["2026-08-12"])["matched"] == 1
+
+
+def test_a_v1_aliases_are_deprecated_compatibility_only(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+
+        with pytest.deprecated_call(match="evaluate_a_v1_on is deprecated"):
+            assert evaluate_a_v1_on(connection, "2026-08-12")[0]["data_status"] == "AVAILABLE"
+        with pytest.deprecated_call(match="run_a_v1 is deprecated"):
+            assert run_a_v1(connection, ["2026-08-12"])["matched"] == 1
+
+
+def test_a_v2_writer_preserves_pure_evaluator_result(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+        expected = evaluate_a_v2(connection, "2026-08-12")[0]
+
+        totals = run_a_v2(connection, ["2026-08-12"])
+        saved = connection.execute(
+            """SELECT data_status, condition_results_json, condition_values_json,
+                      unavailable_reasons_json
+               FROM strategy_evaluations WHERE cb_code='12345'"""
+        ).fetchone()
+
+        assert totals["matched"] == int(all(expected["conditions"].values()))
+        assert saved["data_status"] == expected["data_status"]
+        assert json.loads(saved["condition_results_json"]) == expected["conditions"]
+        assert json.loads(saved["condition_values_json"]) == expected["values"]
+        assert json.loads(saved["unavailable_reasons_json"]) == expected["unavailable_reasons"]
+
+
+def test_a_v2_811210_matches_2026_09_09_saved_history_without_writing():
+    database_path = Path(__file__).resolve().parents[1] / "data" / "cb_history.db"
+    connection = sqlite3.connect(f"{database_path.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        result = next(row for row in evaluate_a_v2(connection, "2026-09-09") if row["cb_code"] == "811210")
+    finally:
+        connection.close()
+
+    assert result["data_status"] == "AVAILABLE"
+    assert all(result["conditions"].values())
+
+
 def test_a_v1_missing_daily_row_is_unavailable_not_zero_filled(tmp_path):
     with connect(tmp_path / "strategy.db") as connection:
         _seed_a_v1_data(connection, missing_day=4)
-        result = evaluate_a_v1_on(connection, "2026-08-12")[0]
+        result = evaluate_a_v2(connection, "2026-08-12")[0]
 
         assert result["data_status"] == "UNAVAILABLE"
         assert result["unavailable_reasons"] == ["missing_cb_daily_rows"]
         assert result["values"]["missing_trade_dates"] == ["2026-08-07"]
-        totals = run_a_v1(connection, ["2026-08-12"])
+        totals = run_a_v2(connection, ["2026-08-12"])
         assert totals["signals_inserted"] == 0
         assert totals["unavailable"] == 1
         assert connection.execute("SELECT COUNT(*) FROM strategy_signals").fetchone()[0] == 0
@@ -118,7 +194,7 @@ def test_a_v1_missing_conversion_or_parent_close_is_diagnostic(tmp_path):
     with connect(tmp_path / "strategy.db") as connection:
         _seed_a_v1_data(connection)
         connection.execute("DELETE FROM conversion_price_events")
-        assert evaluate_a_v1_on(connection, "2026-08-12")[0]["unavailable_reasons"] == [
+        assert evaluate_a_v2(connection, "2026-08-12")[0]["unavailable_reasons"] == [
             "missing_conversion_price_event"
         ]
         connection.execute(
@@ -127,7 +203,7 @@ def test_a_v1_missing_conversion_or_parent_close_is_diagnostic(tmp_path):
                 VALUES ('12345', '2026-01-01', 100, 'test', 'https://example.test', 'x')"""
         )
         connection.execute("DELETE FROM stock_daily_market")
-        assert evaluate_a_v1_on(connection, "2026-08-12")[0]["unavailable_reasons"] == [
+        assert evaluate_a_v2(connection, "2026-08-12")[0]["unavailable_reasons"] == [
             "missing_parent_stock_close"
         ]
 

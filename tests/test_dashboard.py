@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts import build_dashboard
+from strategy_registry import get_strategy
 
 
 DOCS_PATH = Path(__file__).resolve().parents[1] / "docs"
@@ -283,6 +284,7 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
     monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", output_path)
     build_dashboard.build_dashboard_data()
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert get_strategy("A").active_version == "v2"
     assert payload["strategy_a_signals"][0]["cb_name"] == "測試 CB"
     assert payload["strategy_a_signals"][0]["condition_values"]["conversion_value"] == 60.75
     assert payload["strategy_a_evaluations"] == [{

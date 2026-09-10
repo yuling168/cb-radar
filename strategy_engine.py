@@ -5,17 +5,20 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import warnings
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from config import DEFAULT_DB_PATH
 from db import connect
+from strategy_registry import get_strategy
 
 
-STRATEGY_CODE = "A"
-STRATEGY_VERSION = "v2"
-STRATEGY_NAME = "CB 成交量創 10 日新高"
+STRATEGY = get_strategy("A")
+STRATEGY_CODE = STRATEGY.strategy_code
+STRATEGY_VERSION = STRATEGY.active_version
+STRATEGY_NAME = STRATEGY.strategy_name
 
 
 def _json(value: Any) -> str:
@@ -80,8 +83,8 @@ def _unavailable_result(cb_code: str, trade_date: str, reasons: list[str], value
     }
 
 
-def evaluate_a_v2_on(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
-    """Evaluate all CB rows on one date without filling any absent observations.
+def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
+    """Pure read-only A-v2 evaluator for one trade date.
 
     A valid day is a day present in the official ``cb_daily`` calendar.  Every
     one of the required per-CB rows must exist on that calendar; a zero volume
@@ -186,7 +189,7 @@ def run_a_v2(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict
     totals = {"evaluations": 0, "unavailable": 0, "matched": 0, "signals_inserted": 0, "signals_existing": 0}
     with connection:
         for trade_date in trade_dates:
-            for result in evaluate_a_v2_on(connection, trade_date):
+            for result in evaluate_a_v2(connection, trade_date):
                 _record_evaluation(connection, result)
                 totals["evaluations"] += 1
                 if result["data_status"] == "UNAVAILABLE":
@@ -200,9 +203,38 @@ def run_a_v2(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict
     return totals
 
 
-# Kept for callers that imported the original helper; both execute A-v2 rules.
-evaluate_a_v1_on = evaluate_a_v2_on
-run_a_v1 = run_a_v2
+def evaluate_a_active(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
+    """Evaluate the registry-selected active A version without writing results."""
+    if get_strategy("A").active_version != "v2":
+        raise RuntimeError("Strategy A active version has no registered evaluator")
+    return evaluate_a_v2(connection, trade_date)
+
+
+def run_a_active(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict[str, int]:
+    """Run the registry-selected active A version using the legacy persistence path."""
+    if get_strategy("A").active_version != "v2":
+        raise RuntimeError("Strategy A active version has no registered writer")
+    return run_a_v2(connection, trade_dates)
+
+
+def evaluate_a_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
+    """Deprecated compatibility alias; this does not reproduce historical A-v1."""
+    warnings.warn(
+        "evaluate_a_v1_on is deprecated; use evaluate_a_v2 or evaluate_a_active",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return evaluate_a_active(connection, trade_date)
+
+
+def run_a_v1(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict[str, int]:
+    """Deprecated compatibility alias; this does not reproduce historical A-v1."""
+    warnings.warn(
+        "run_a_v1 is deprecated; use run_a_v2 or run_a_active",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return run_a_active(connection, trade_dates)
 
 
 def _dates_for_args(connection: sqlite3.Connection, args: argparse.Namespace) -> list[str]:
@@ -237,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     with connect(args.database) as connection:
         trade_dates = _dates_for_args(connection, args)
-        totals = run_a_v2(connection, trade_dates)
+        totals = run_a_active(connection, trade_dates)
     print(f"strategy_code: {STRATEGY_CODE}")
     print(f"strategy_version: {STRATEGY_VERSION}")
     print(f"trade_dates: {len(trade_dates)}")

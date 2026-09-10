@@ -7,6 +7,8 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
+from strategy_registry import active_strategy_codes, get_strategy
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "cb_history.db"
@@ -20,7 +22,6 @@ INSTITUTIONAL_COVERAGE_TABLE_NAME = "institutional_coverage"
 ETF_STATUS_TABLE_NAME = "active_etf_collection_status"
 STRATEGY_SIGNAL_TABLE_NAME = "strategy_signals"
 STRATEGY_EVALUATION_TABLE_NAME = "strategy_evaluations"
-STRATEGY_VERSIONS = {"A": "v2", "B": "v1", "C": "v1", "G": "v1"}
 DAILY_REQUIRED_COLUMNS = {
     "trade_date",
     "cb_code",
@@ -71,7 +72,7 @@ ANNOUNCEMENT_TABLE_NAME = "company_announcements"
 
 def load_strategy_rows(strategy_code: str) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Read complete signals and compact latest-evaluation summaries for one strategy."""
-    strategy_version = STRATEGY_VERSIONS[strategy_code]
+    strategy_version = get_strategy(strategy_code).active_version
     database_uri = f"{DB_PATH.resolve().as_uri()}?mode=ro"
     with sqlite3.connect(database_uri, uri=True) as connection:
         connection.row_factory = sqlite3.Row
@@ -447,10 +448,11 @@ def _invalid_is_secured(value: object) -> None:
 def build_dashboard_data() -> tuple[int, int]:
     rows = load_rows()
     institutional_rows = load_institutional_rows()
-    strategy_a_signals, strategy_a_evaluations = load_strategy_rows("A")
-    strategy_b_signals, strategy_b_evaluations = load_strategy_rows("B")
-    strategy_c_signals, strategy_c_evaluations = load_strategy_rows("C")
-    strategy_g_signals, strategy_g_evaluations = load_strategy_rows("G")
+    strategy_rows = {code: load_strategy_rows(code) for code in active_strategy_codes()}
+    strategy_a_signals, strategy_a_evaluations = strategy_rows["A"]
+    strategy_b_signals, strategy_b_evaluations = strategy_rows["B"]
+    strategy_c_signals, strategy_c_evaluations = strategy_rows["C"]
+    strategy_g_signals, strategy_g_evaluations = strategy_rows["G"]
     for signals in (strategy_a_signals, strategy_b_signals, strategy_c_signals, strategy_g_signals):
         add_display_averages_to_signals(signals, rows)
     announcements = load_announcements()

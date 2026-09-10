@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from db import connect, upsert_daily, upsert_stock_daily_market
-from strategy_engine import run_a_v1
+from strategy_engine import run_a_active
 from strategy_b import run_b_v1
 from strategy_c import run_c_v1
 from strategy_g import STRATEGY_CODE, STRATEGY_VERSION, evaluate_g_v1_on, parse_args, run_g_v1
@@ -153,7 +153,7 @@ def test_g_v1_marks_required_core_history_missing_without_using_future_balance(t
 def test_g_v1_persists_only_g_and_keeps_a_b_c_isolated(tmp_path):
     with connect(tmp_path / "g.db") as connection:
         _seed(connection)
-        run_a_v1(connection, [TRADE_DATE])
+        run_a_active(connection, [TRADE_DATE])
         run_b_v1(connection, [TRADE_DATE])
         run_c_v1(connection, [TRADE_DATE])
         totals = run_g_v1(connection, [TRADE_DATE])

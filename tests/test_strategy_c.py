@@ -4,7 +4,7 @@ import pytest
 
 from db import connect, upsert_daily, upsert_stock_daily_market
 from strategy_c import STRATEGY_CODE, STRATEGY_VERSION, evaluate_c_v1_on, parse_args, run_c_v1
-from strategy_engine import run_a_v1
+from strategy_engine import run_a_active
 
 
 TRADE_DATE = "2026-08-14"
@@ -76,7 +76,7 @@ def test_c_v1_uses_only_historical_balance_and_marks_missing_data(tmp_path):
 def test_c_v1_conditions_and_a_v1_history_are_independent(tmp_path):
     with connect(tmp_path / "c.db") as connection:
         _seed(connection, [("10001", 99.999, 6, 10), ("10002", 101, 5, 10), ("10003", 101, 6, 21)])
-        run_a_v1(connection, [TRADE_DATE])
+        run_a_active(connection, [TRADE_DATE])
         totals = run_c_v1(connection, [TRADE_DATE])
         conditions = _available(evaluate_c_v1_on(connection, TRADE_DATE))
         codes = {row["cb_code"] for row in connection.execute("SELECT cb_code FROM strategy_evaluations WHERE strategy_code = 'A'")}

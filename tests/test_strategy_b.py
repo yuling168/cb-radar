@@ -5,7 +5,7 @@ import pytest
 from db import connect, upsert_daily, upsert_stock_daily_market
 from strategy_b import STRATEGY_CODE, STRATEGY_VERSION, evaluate_b_v1_on, parse_args, run_b_v1
 from strategy_c import run_c_v1
-from strategy_engine import run_a_v1
+from strategy_engine import run_a_active
 
 
 START_DATE = date(2026, 6, 1)
@@ -130,7 +130,7 @@ def test_b_v1_uses_historical_balance_and_marks_absent_rows_or_prices_unavailabl
 def test_b_v1_persists_only_b_and_does_not_change_a_or_c_history(tmp_path):
     with connect(tmp_path / "b.db") as connection:
         _seed(connection)
-        run_a_v1(connection, [TRADE_DATE])
+        run_a_active(connection, [TRADE_DATE])
         run_c_v1(connection, [TRADE_DATE])
         totals = run_b_v1(connection, [TRADE_DATE])
         stored = connection.execute(
