@@ -97,8 +97,8 @@ def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard
     assert workflow.index("- name: Verify strict daily CB parent mapping completeness") < workflow.index("- name: Run parent stock market collector")
     refresh_section = workflow[workflow.index("- name: Refresh strict daily CB parent mapping"):workflow.index("- name: Verify strict daily CB parent mapping completeness")]
     assert "continue-on-error" not in refresh_section
-    assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v1")
-    assert workflow.index("- name: Run strategy A-v1") < workflow.index("- name: Run strategy B-v1")
+    assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v2")
+    assert workflow.index("- name: Run strategy A-v2") < workflow.index("- name: Run strategy B-v1")
     assert workflow.index("- name: Run strategy B-v1") < workflow.index("- name: Run strategy C-v1")
     assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Run strategy G-v1")
     assert workflow.index("- name: Run strategy G-v1") < workflow.index("- name: Build dashboard data")

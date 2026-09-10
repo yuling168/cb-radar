@@ -65,7 +65,7 @@ GitHub Pages
 
 ## 已保存策略訊號
 
-JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v1、B-v1、C-v1、G-v1 的
+JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v2、B-v1、C-v1、G-v1 的
 SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。
 策略 B／C／G 另有各自的 `strategy_b_signals`／`strategy_b_evaluations`、`strategy_c_signals`／`strategy_c_evaluations`、
 `strategy_g_signals`／`strategy_g_evaluations`。首頁會以 A／B／C／G 標籤區分；B 顯示收盤價、43 日均價、當日量、10 日均量、轉換價值、溢價率與已轉換比例；C 顯示

@@ -14,7 +14,7 @@ from db import connect
 
 
 STRATEGY_CODE = "A"
-STRATEGY_VERSION = "v1"
+STRATEGY_VERSION = "v2"
 STRATEGY_NAME = "CB 成交量創 10 日新高"
 
 
@@ -80,7 +80,7 @@ def _unavailable_result(cb_code: str, trade_date: str, reasons: list[str], value
     }
 
 
-def evaluate_a_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
+def evaluate_a_v2_on(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
     """Evaluate all CB rows on one date without filling any absent observations.
 
     A valid day is a day present in the official ``cb_daily`` calendar.  Every
@@ -150,14 +150,15 @@ def evaluate_a_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         conversion_value = float(stock[0]) / float(conversion[0]) * 100
         premium_rate_pct = (close_price / conversion_value - 1) * 100
         average_10_volume = sum(volumes) / 10
-        average_5_volume = sum(volumes[-5:]) / 5
+        # The five-day comparison deliberately excludes today's volume.
+        average_5_volume = sum(volumes[-6:-1]) / 5
         conditions = {
             "volume_above_10_day_average": volumes[-1] > average_10_volume,
             "close_price_in_115_to_150": 115 <= close_price <= 150,
             "close_price_above_conversion_value": close_price > conversion_value,
             "premium_rate_above_1_pct": premium_rate_pct > 1,
             "ten_day_volume_above_300_lots": sum(volumes) > 300,
-            "volume_above_5_day_average_times_3": volumes[-1] > average_5_volume * 3,
+            "volume_above_prior_5_average_times_3": volumes[-1] > average_5_volume * 3,
         }
         values = {
             "window_trade_dates": window_dates,
@@ -180,12 +181,12 @@ def evaluate_a_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
     return results
 
 
-def run_a_v1(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict[str, int]:
+def run_a_v2(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict[str, int]:
     """Append diagnostics; insert a signal once per strategy version and key."""
     totals = {"evaluations": 0, "unavailable": 0, "matched": 0, "signals_inserted": 0, "signals_existing": 0}
     with connection:
         for trade_date in trade_dates:
-            for result in evaluate_a_v1_on(connection, trade_date):
+            for result in evaluate_a_v2_on(connection, trade_date):
                 _record_evaluation(connection, result)
                 totals["evaluations"] += 1
                 if result["data_status"] == "UNAVAILABLE":
@@ -197,6 +198,11 @@ def run_a_v1(connection: sqlite3.Connection, trade_dates: Iterable[str]) -> dict
                     else:
                         totals["signals_existing"] += 1
     return totals
+
+
+# Kept for callers that imported the original helper; both execute A-v2 rules.
+evaluate_a_v1_on = evaluate_a_v2_on
+run_a_v1 = run_a_v2
 
 
 def _dates_for_args(connection: sqlite3.Connection, args: argparse.Namespace) -> list[str]:
@@ -211,7 +217,7 @@ def _dates_for_args(connection: sqlite3.Connection, args: argparse.Namespace) ->
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run strategy A-v1 from saved CB data")
+    parser = argparse.ArgumentParser(description="Run strategy A-v2 from saved CB data")
     dates = parser.add_mutually_exclusive_group(required=True)
     dates.add_argument("--date", type=date.fromisoformat, help="one trade date (YYYY-MM-DD)")
     dates.add_argument("--start-date", type=date.fromisoformat, help="inclusive range start (YYYY-MM-DD)")
@@ -231,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     with connect(args.database) as connection:
         trade_dates = _dates_for_args(connection, args)
-        totals = run_a_v1(connection, trade_dates)
+        totals = run_a_v2(connection, trade_dates)
     print(f"strategy_code: {STRATEGY_CODE}")
     print(f"strategy_version: {STRATEGY_VERSION}")
     print(f"trade_dates: {len(trade_dates)}")

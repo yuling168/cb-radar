@@ -59,7 +59,7 @@ def test_a_v1_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
         assert result["data_status"] == "AVAILABLE"
         assert all(result["conditions"].values())
         assert result["values"]["average_10_volume_lots"] == 33
-        assert result["values"]["average_5_volume_lots"] == 36
+        assert result["values"]["average_5_volume_lots"] == 24
         assert result["values"]["ten_day_total_volume_lots"] == 330
         assert result["values"]["conversion_value"] == pytest.approx(110)
         assert result["values"]["premium_rate_pct"] > 1
@@ -79,6 +79,25 @@ def test_a_v1_includes_zero_volume_days_and_saves_immutable_snapshot(tmp_path):
         ).fetchone()
         assert tuple(row) == (STRATEGY_CODE, STRATEGY_VERSION, "AVAILABLE")
         assert connection.execute("SELECT COUNT(*) FROM strategy_evaluations").fetchone()[0] == 2
+
+
+def test_a_v2_does_not_require_a_new_prior_9_day_volume_high(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+        volumes = [100, 20, 20, 20, 20, 20, 20, 20, 20, 70]
+        for index, volume in enumerate(volumes):
+            connection.execute(
+                "UPDATE cb_daily SET volume_lots=? WHERE cb_code='12345' AND trade_date=?",
+                (volume, (date(2026, 8, 3) + timedelta(days=index)).isoformat()),
+            )
+
+        result = evaluate_a_v1_on(connection, "2026-08-12")[0]
+
+        assert result["data_status"] == "AVAILABLE"
+        assert all(result["conditions"].values())
+        assert "volume_strictly_above_prior_9_max" not in result["conditions"]
+        assert result["values"]["average_10_volume_lots"] == 33
+        assert result["values"]["average_5_volume_lots"] == 20
 
 
 def test_a_v1_missing_daily_row_is_unavailable_not_zero_filled(tmp_path):

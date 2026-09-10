@@ -124,7 +124,7 @@ jobs:
           --date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
 
-      - name: Run strategy A-v1
+      - name: Run strategy A-v2
         if: steps.collector.outputs.trade_date != ''
         continue-on-error: true
         run: >

@@ -9,8 +9,8 @@
 </head>
 <body><main class="page">
   <nav><a href="index.html">首頁</a>　<a href="institutional.html">法人籌碼</a>　<a href="strategy-a.html">成交量10日新高</a>　<a href="strategy-b.html">CB突破轉換價</a>　<a href="strategy-c.html">CB資優生</a>　<a href="strategy-g.html">時間發動</a>　<a href="daily-market.html">每日行情</a></nav>
-  <header class="title-row"><h1>成交量10日新高</h1><p class="strategy-id">策略 A · v1</p></header>
-  <section class="panel conditions-panel"><h2>完整策略條件</h2><ol class="conditions"><li>當日成交量大於 10 日均量。</li><li>當日收盤價介於 115 至 150（含）。</li><li>當日收盤價高於轉換價值，且溢價率嚴格高於 1%。</li><li>含當日在內最近 10 個有效交易日累計成交量嚴格高於 300 張。</li><li>當日成交量大於 5 日均量的 3 倍。</li></ol></section><section class="panel"><label>交易日期　<select id="dateSelect"></select></label><p id="summary" class="state">載入中…</p><div id="signals"></div><h2>資料不足、無法評估</h2><div id="unavailable"></div></section>
+  <header class="title-row"><h1>成交量10日新高</h1><p class="strategy-id">策略 A · v2</p></header>
+  <section class="panel conditions-panel"><h2>完整策略條件</h2><ol class="conditions"><li>當日成交量大於 10 日均量。</li><li>當日收盤價介於 115 至 150（含）。</li><li>當日收盤價高於轉換價值，且溢價率嚴格高於 1%。</li><li>含當日在內最近 10 個有效交易日累計成交量嚴格高於 300 張。</li><li>當日成交量大於前 5 個有效交易日平均成交量的 3 倍。</li></ol></section><section class="panel"><label>交易日期　<select id="dateSelect"></select></label><p id="summary" class="state">載入中…</p><div id="signals"></div><h2>資料不足、無法評估</h2><div id="unavailable"></div></section>
 </main><script>
 const $=s=>document.querySelector(s), nf=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:2}), whole=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:0});
 let signals=[], evaluations=[], selected="";
