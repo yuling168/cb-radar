@@ -367,6 +367,69 @@ CREATE TABLE IF NOT EXISTS strategy_evaluations (
 
 CREATE INDEX IF NOT EXISTS idx_strategy_evaluations_lookup
     ON strategy_evaluations (cb_code, trade_date, strategy_code, strategy_version);
+
+CREATE TABLE IF NOT EXISTS strategy_definition (
+    definition_id INTEGER PRIMARY KEY,
+    strategy_code TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    strategy_name TEXT NOT NULL,
+    parameters_json TEXT NOT NULL,
+    rule_hash TEXT NOT NULL,
+    git_commit TEXT NOT NULL,
+    -- Registry-active snapshot metadata only; never used to select a strategy version.
+    is_active INTEGER NOT NULL CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL,
+    UNIQUE (strategy_code, strategy_version, rule_hash, git_commit)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_definition_active
+    ON strategy_definition (strategy_code, is_active);
+
+CREATE TABLE IF NOT EXISTS strategy_run (
+    run_id INTEGER PRIMARY KEY,
+    definition_id INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    run_type TEXT NOT NULL CHECK (run_type IN ('HISTORICAL_RECALCULATION')),
+    status TEXT NOT NULL CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED')),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_message TEXT,
+    FOREIGN KEY (definition_id) REFERENCES strategy_definition(definition_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_run_definition_date
+    ON strategy_run (definition_id, start_date, end_date);
+
+CREATE TABLE IF NOT EXISTS strategy_run_evaluations (
+    run_id INTEGER NOT NULL,
+    cb_code TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    condition_results_json TEXT NOT NULL,
+    condition_values_json TEXT NOT NULL,
+    data_status TEXT NOT NULL CHECK (data_status IN ('AVAILABLE', 'UNAVAILABLE')),
+    unavailable_reasons_json TEXT NOT NULL,
+    evaluated_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, cb_code, trade_date),
+    FOREIGN KEY (run_id) REFERENCES strategy_run(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_run_evaluations_date
+    ON strategy_run_evaluations (run_id, trade_date, data_status);
+
+CREATE TABLE IF NOT EXISTS strategy_run_signals (
+    run_id INTEGER NOT NULL,
+    cb_code TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    condition_results_json TEXT NOT NULL,
+    condition_values_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, cb_code, trade_date),
+    FOREIGN KEY (run_id) REFERENCES strategy_run(run_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_run_signals_date
+    ON strategy_run_signals (run_id, trade_date);
 """
 
 
