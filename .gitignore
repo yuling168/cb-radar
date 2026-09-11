@@ -5,4 +5,5 @@ __pycache__/
 .pytest-tmp*/
 .pytest-zero-volume/
 tmp/
+/data/cb_history.db
 *.py[cod]

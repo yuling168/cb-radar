@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "snapshot": {
+    "release_tag": "db-snapshot-2026-09-09-baseline-a-v2",
+    "asset_name": "cb_history-2026-09-09-baseline-a-v2.db.gz",
+    "trade_date": "2026-09-09",
+    "created_at": "2026-09-11T14:04:11Z",
+    "sha256_compressed": "E536D9C0AC87B4F27FA01B457593B039257AFACA039396037134A5626F25BC71",
+    "sha256_uncompressed": "4D9110592BE0E9455754943ADA3C70C8FF6E85B91326247D2A45AC18FE9571F0",
+    "compressed_size": 17376417,
+    "uncompressed_size": 130121728,
+    "asset_url": "https://github.com/yuling168/cb-radar/releases/download/db-snapshot-2026-09-09-baseline-a-v2/cb_history-2026-09-09-baseline-a-v2.db.gz",
+    "asset_api_url": "https://api.github.com/repos/yuling168/cb-radar/releases/assets/557361858"
+  },
+  "provenance": {
+    "generator_git_commit": "6077b60bd8fc75c82d9720f0dabdffb2e173dbb8"
+  },
+  "strategy_a": {
+    "strategy_code": "A",
+    "strategy_version": "v2",
+    "definition_id": 1,
+    "baseline_run_id": 1,
+    "evaluations": 110887,
+    "signals": 226,
+    "published_through_date": "2026-09-09"
+  }
+}
