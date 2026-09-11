@@ -17,6 +17,7 @@ from strategy_runs import (
     publish_a_baseline,
     publish_a_date,
     run_a_v2_recalculation,
+    run_published_a_date,
     validate_a_baseline,
 )
 
@@ -119,6 +120,7 @@ def test_a_v2_historical_run_caches_2026_09_09_without_touching_legacy_tables(tm
 
 def test_a_v2_repeated_runs_are_isolated_and_do_not_overwrite(tmp_path):
     with connect(_history_copy(tmp_path)) as connection:
+        definitions_before = connection.execute("SELECT COUNT(*) FROM strategy_definition").fetchone()[0]
         first_run = run_a_v2_recalculation(connection, "2026-09-09", git_commit="test-commit-a-v2")
         definition_id = connection.execute(
             "SELECT definition_id FROM strategy_run WHERE run_id=?", (first_run,)
@@ -130,7 +132,7 @@ def test_a_v2_repeated_runs_are_isolated_and_do_not_overwrite(tmp_path):
         assert connection.execute(
             "SELECT COUNT(*) FROM strategy_run WHERE run_id IN (?, ?)", (first_run, second_run)
         ).fetchone()[0] == 2
-        assert connection.execute("SELECT COUNT(*) FROM strategy_definition").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM strategy_definition").fetchone()[0] == definitions_before + 1
         assert connection.execute(
             "SELECT definition_id FROM strategy_run WHERE run_id=?", (second_run,)
         ).fetchone()[0] == definition_id
@@ -352,3 +354,33 @@ def test_validate_a_baseline_rejects_failed_and_non_active_runs(tmp_path):
 
 def test_current_git_commit_uses_the_repository_head():
     assert len(current_git_commit()) == 40
+
+
+def test_run_published_a_date_reuses_baseline_definition_and_publishes(tmp_path, monkeypatch):
+    with connect(tmp_path / "published.db") as connection:
+        definition_id, baseline = _publish_fixture(connection)
+        connection.execute("UPDATE strategy_definition SET rule_hash=? WHERE definition_id=?", (a_v2_rule_hash(), definition_id))
+        publish_a_baseline(connection, baseline)
+
+        def evaluator(_connection, trade_date):
+            return [{"cb_code": "12345", "trade_date": trade_date, "conditions": {"ok": True},
+                     "values": {}, "data_status": "AVAILABLE", "unavailable_reasons": [], "evaluated_at": "x"}]
+
+        monkeypatch.setattr("strategy_runs.current_git_commit", lambda: "new-checkout-commit")
+        published = run_published_a_date(connection, "2026-01-03", evaluator=evaluator)
+        assert published["definition_id"] == definition_id
+        assert connection.execute("SELECT COUNT(*) FROM strategy_definition").fetchone()[0] == 1
+        assert connection.execute("SELECT run_id FROM strategy_published_date WHERE definition_id=? AND trade_date='2026-01-03'", (definition_id,)).fetchone()[0] == published["run_id"]
+
+
+def test_run_published_a_date_rejects_rule_change_or_incomplete_cache_without_publishing(tmp_path):
+    with connect(tmp_path / "published-fail.db") as connection:
+        definition_id, baseline = _publish_fixture(connection)
+        publish_a_baseline(connection, baseline)
+        with pytest.raises(ValueError, match="rule hash"):
+            run_published_a_date(connection, "2026-01-03", evaluator=lambda *_: [])
+        assert connection.execute("SELECT COUNT(*) FROM strategy_published_date").fetchone()[0] == 0
+        connection.execute("UPDATE strategy_definition SET rule_hash=? WHERE definition_id=?", (a_v2_rule_hash(), definition_id))
+        with pytest.raises(ValueError, match="incomplete evaluation"):
+            run_published_a_date(connection, "2026-01-03", evaluator=lambda *_: [])
+        assert connection.execute("SELECT COUNT(*) FROM strategy_published_date").fetchone()[0] == 0

@@ -97,13 +97,21 @@ def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard
     assert workflow.index("- name: Verify strict daily CB parent mapping completeness") < workflow.index("- name: Run parent stock market collector")
     refresh_section = workflow[workflow.index("- name: Refresh strict daily CB parent mapping"):workflow.index("- name: Verify strict daily CB parent mapping completeness")]
     assert "continue-on-error" not in refresh_section
-    assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run strategy A-v2")
-    assert workflow.index("- name: Run strategy A-v2") < workflow.index("- name: Run strategy B-v1")
+    assert workflow.index("- name: Restore DB snapshot from manifest") < workflow.index("- name: Run TPEx CB collector")
+    assert workflow.index("- name: Run parent stock market collector") < workflow.index("- name: Run published Strategy A-v2 date")
+    assert workflow.index("- name: Run published Strategy A-v2 date") < workflow.index("- name: Run strategy B-v1")
     assert workflow.index("- name: Run strategy B-v1") < workflow.index("- name: Run strategy C-v1")
     assert workflow.index("- name: Run strategy C-v1") < workflow.index("- name: Run strategy G-v1")
     assert workflow.index("- name: Run strategy G-v1") < workflow.index("- name: Build dashboard data")
-    assert "python strategy_engine.py" in workflow
+    assert "python strategy_runs.py" in workflow
     assert "python strategy_b.py" in workflow
     assert "python strategy_c.py" in workflow
     assert "python strategy_g.py" in workflow
-    assert workflow.count("continue-on-error: true") >= 5
+    assert workflow.count("continue-on-error: true") == 3
+    master_section = workflow[workflow.index("- name: Run CB master collector"):workflow.index("- name: Refresh strict daily CB parent mapping")]
+    a_section = workflow[workflow.index("- name: Run published Strategy A-v2 date"):workflow.index("- name: Run strategy B-v1")]
+    assert "continue-on-error" not in master_section
+    assert "continue-on-error" not in a_section
+    assert "git add data/cb_history.db" not in workflow
+    assert "git add ." not in workflow and "git add -A" not in workflow
+    assert "gh release download latest" not in workflow

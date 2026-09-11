@@ -332,6 +332,10 @@ def test_dashboard_does_not_use_unpublished_a_run_cache(
     output_path = tmp_path / "data.json"
     shutil.copy2(SOURCE_DATABASE, database_path)
     with connect(database_path) as connection:
+        # The production fixture now has an official published baseline;
+        # this test specifically exercises the no-published-series path.
+        connection.execute("DELETE FROM strategy_published_date")
+        connection.execute("DELETE FROM strategy_published_series")
         first_run = run_a_v2_recalculation(
             connection, "2026-09-09", git_commit="dashboard-cache-test",
         )

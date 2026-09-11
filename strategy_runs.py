@@ -440,7 +440,7 @@ def publish_a_baseline(connection: sqlite3.Connection, run_id: int) -> dict[str,
     }
 
 
-def publish_a_date(connection: sqlite3.Connection, run_id: int, trade_date: str) -> dict[str, Any]:
+def publish_a_date(connection: sqlite3.Connection, run_id: int, trade_date: str, *, commit: bool = True) -> dict[str, Any]:
     """Publish one completed A incremental or correction run for one date."""
     series = connection.execute(
         "SELECT definition_id FROM strategy_published_series WHERE strategy_code='A'"
@@ -481,8 +481,68 @@ def publish_a_date(connection: sqlite3.Connection, run_id: int, trade_date: str)
              run_id=excluded.run_id, published_at=excluded.published_at""",
         (series["definition_id"], trade_date, run_id, _now()),
     )
-    connection.commit()
+    if commit:
+        connection.commit()
     return {"definition_id": series["definition_id"], "trade_date": trade_date, "run_id": run_id}
+
+
+def _published_a_definition(connection: sqlite3.Connection) -> sqlite3.Row:
+    row = connection.execute(
+        """SELECT definition.definition_id, definition.strategy_code, definition.strategy_version,
+                  definition.rule_hash, definition.git_commit
+           FROM strategy_published_series AS series
+           JOIN strategy_definition AS definition ON definition.definition_id=series.definition_id
+           WHERE series.strategy_code='A'"""
+    ).fetchone()
+    if row is None:
+        raise ValueError("Cannot run published A date: no published Strategy A baseline series")
+    strategy = get_strategy("A")
+    if row["strategy_code"] != "A" or row["strategy_version"] != strategy.active_version:
+        raise ValueError("Cannot run published A date: published definition is not the active A version")
+    if row["rule_hash"] != a_v2_rule_hash():
+        raise ValueError("Cannot run published A date: active rule hash differs from published baseline")
+    return row
+
+
+def _validate_run_date_completeness(connection: sqlite3.Connection, run_id: int, trade_date: str) -> None:
+    expected = {row[0] for row in connection.execute("SELECT cb_code FROM cb_daily WHERE trade_date=?", (trade_date,))}
+    if not expected:
+        raise ValueError(f"Cannot run published A date: no cb_daily rows for {trade_date}")
+    actual = [row[0] for row in connection.execute(
+        "SELECT cb_code FROM strategy_run_evaluations WHERE run_id=? AND trade_date=?", (run_id, trade_date)
+    )]
+    if len(actual) != len(set(actual)) or set(actual) != expected:
+        raise ValueError(f"Cannot run published A date: incomplete evaluation cache for {trade_date}")
+
+
+def run_published_a_date(
+    connection: sqlite3.Connection, trade_date: str,
+    *, evaluator: Callable[[sqlite3.Connection, str], list[dict[str, Any]]] = evaluate_a_v2,
+) -> dict[str, Any]:
+    """Atomically calculate and publish one date using the immutable published A definition.
+
+    The checkout commit is deliberately not used to create a definition here:
+    a code-only commit is not a strategy-rule version change.  A changed rule
+    hash is instead an explicit stop requiring a new baseline publication.
+    """
+    try:
+        with connection:
+            definition = _published_a_definition(connection)
+            run_id = _insert_run(connection, int(definition["definition_id"]), trade_date, trade_date)
+            for result in evaluator(connection, trade_date):
+                if result.get("trade_date") != trade_date:
+                    raise ValueError("Cannot run published A date: evaluator returned another date")
+                _cache_result(connection, run_id, result)
+            _validate_run_date_completeness(connection, run_id, trade_date)
+            connection.execute(
+                "UPDATE strategy_run SET status='COMPLETED', completed_at=? WHERE run_id=?",
+                (_now(), run_id),
+            )
+            published = publish_a_date(connection, run_id, trade_date, commit=False)
+        return published
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -494,6 +554,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     dates.add_argument("--validate-baseline", type=int, help="validate a completed A baseline without publishing")
     dates.add_argument("--publish-baseline", type=int, help="publish a completed, Dashboard-complete A-v2 baseline")
     dates.add_argument("--publish-date", type=int, help="publish one completed A-v2 run for --publish-trade-date")
+    dates.add_argument("--run-published-date", help="atomically calculate and publish one date using the published A baseline")
     parser.add_argument("--end-date", help="inclusive range end; required with --start-date")
     parser.add_argument("--publish-trade-date", help="date to override with --publish-date (YYYY-MM-DD)")
     parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
@@ -530,6 +591,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"published baseline_run_id: {published['run_id']}")
         elif args.publish_date is not None:
             published = publish_a_date(connection, args.publish_date, args.publish_trade_date)
+            print(f"published date: {published['trade_date']} run_id: {published['run_id']}")
+        elif args.run_published_date:
+            published = run_published_a_date(connection, args.run_published_date)
             print(f"published date: {published['trade_date']} run_id: {published['run_id']}")
         else:
             run_id = run_a_v2_recalculation(connection, start_date, args.end_date)

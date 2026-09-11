@@ -39,6 +39,26 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Restore DB snapshot from manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readarray -t snapshot < <(python - <<'PY'
+          import json
+          data = json.load(open('data/cb_history.manifest.json', encoding='utf-8'))['snapshot']
+          print(data['release_tag'])
+          print(data['asset_name'])
+          PY
+          )
+          mkdir -p .snapshot-download
+          gh release download "${snapshot[0]}" --pattern "${snapshot[1]}" --dir .snapshot-download
+          python scripts/restore_db_snapshot.py \
+            --manifest data/cb_history.manifest.json \
+            --asset ".snapshot-download/${snapshot[1]}" \
+            --destination data/cb_history.db
+
       - name: Run TPEx CB collector
         id: collector
         shell: bash
@@ -69,7 +89,6 @@ jobs:
 
       - name: Run CB master collector
         id: master
-        continue-on-error: true
         if: steps.collector.outputs.trade_date != ''
         shell: bash
         run: |
@@ -124,12 +143,11 @@ jobs:
           --date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
 
-      - name: Run strategy A-v2
+      - name: Run published Strategy A-v2 date
         if: steps.collector.outputs.trade_date != ''
-        continue-on-error: true
         run: >
-          python strategy_engine.py
-          --date "${{ steps.collector.outputs.trade_date }}"
+          python strategy_runs.py
+          --run-published-date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
 
       - name: Run strategy B-v1
@@ -157,60 +175,35 @@ jobs:
           --database data/cb_history.db
 
       - name: Validate CB history database
-        shell: bash
-        run: |
-          python - <<'PY'
-          import sqlite3
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-
-          run_date = datetime.now(ZoneInfo("Asia/Taipei")).date().isoformat()
-          connection = sqlite3.connect("data/cb_history.db")
-          try:
-              integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
-              if integrity != "ok":
-                  raise SystemExit(f"SQLite integrity_check failed: {integrity}")
-
-              foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
-              if foreign_keys:
-                  raise SystemExit(f"SQLite foreign_key_check failed: {foreign_keys}")
-
-              future_balances = connection.execute(
-                  "SELECT cb_code, balance_date FROM cb_master "
-                  "WHERE balance_date > ? ORDER BY cb_code",
-                  (run_date,),
-              ).fetchall()
-              if future_balances:
-                  raise SystemExit(
-                      "Future balance_date rows: "
-                      + ", ".join(f"{code}={balance_date}" for code, balance_date in future_balances)
-                  )
-
-              unfinished_months = connection.execute(
-                  "SELECT cb_code, year_month FROM cb_monthly_balance "
-                  "WHERE year_month >= ? ORDER BY cb_code",
-                  (run_date[:7],),
-              ).fetchall()
-              if unfinished_months:
-                  raise SystemExit(
-                      "Unfinished monthly balance rows: "
-                      + ", ".join(f"{code}={year_month}" for code, year_month in unfinished_months)
-                  )
-          finally:
-              connection.close()
-
-          print(f"SQLite validation passed for Asia/Taipei run date {run_date}")
-          PY
+        run: python scripts/validate_db.py --database data/cb_history.db
 
       - name: Build dashboard data
         run: python scripts/build_dashboard.py
 
+      - name: Publish verified DB snapshot candidate
+        if: steps.collector.outputs.trade_date != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          python scripts/publish_db_snapshot.py
+          --candidate-db data/cb_history.db
+          --trade-date "${{ steps.collector.outputs.trade_date }}"
+          --manifest data/cb_history.manifest.json
+          --manifest-output .snapshot-candidate-manifest.json
+          --run-id "${{ github.run_id }}"
+          --attempt "${{ github.run_attempt }}"
+
+      - name: Install verified snapshot manifest
+        if: steps.collector.outputs.trade_date != ''
+        run: mv .snapshot-candidate-manifest.json data/cb_history.manifest.json
+
       - name: Commit and push updated data
+        if: steps.collector.outputs.trade_date != ''
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- data/cb_history.db docs/data.json docs/index.html; then
-            echo "Database and dashboard have no changes; nothing to commit."
+          if git diff --quiet -- data/cb_history.manifest.json docs/data.json docs/index.html; then
+            echo "Snapshot manifest and dashboard have no changes; nothing to commit."
             exit 0
           fi
 
@@ -222,7 +215,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/cb_history.db docs/data.json docs/index.html
+          git add data/cb_history.manifest.json docs/data.json docs/index.html
           git commit -m "Update CB history $trade_date"
           git push origin HEAD:main
 
