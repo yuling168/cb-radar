@@ -10,6 +10,7 @@ import pytest
 from db import connect, upsert_daily
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import publish_db_snapshot
 from publish_db_snapshot import deterministic_gzip, snapshot_names
 from restore_db_snapshot import SnapshotVerificationError, restore_snapshot, sha256_and_size
 from validate_db import validate_database
@@ -83,6 +84,14 @@ def test_deterministic_gzip_and_unique_names(tmp_path):
     assert snapshot_names("2026-09-09", "1", "2") == (
         "db-snapshot-2026-09-09-run-1-attempt-2", "cb_history-2026-09-09-run-1-attempt-2.db.gz"
     )
+
+
+def test_published_asset_metadata_requires_exact_urls(monkeypatch):
+    monkeypatch.setattr(publish_db_snapshot, "run_gh", lambda *_: json.dumps({"publishedAt": "2026-09-11T00:00:00Z", "assets": [{"name": "asset.gz", "url": "https://browser", "apiUrl": "https://api"}]}))
+    assert publish_db_snapshot.published_asset_metadata("tag", "asset.gz") == ("2026-09-11T00:00:00Z", "https://browser", "https://api")
+    monkeypatch.setattr(publish_db_snapshot, "run_gh", lambda *_: json.dumps({"publishedAt": "x", "assets": [{"name": "asset.gz", "url": "https://browser"}]}))
+    with pytest.raises(RuntimeError, match="browser or API URL"):
+        publish_db_snapshot.published_asset_metadata("tag", "asset.gz")
 
 
 def test_validation_requires_schema_and_detects_future_balance(tmp_path):

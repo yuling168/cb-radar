@@ -67,6 +67,19 @@ def release_exists(tag: str) -> bool:
     return subprocess.run(["gh", "release", "view", tag], capture_output=True, text=True).returncode == 0
 
 
+def published_asset_metadata(tag: str, asset_name: str) -> tuple[str, str, str]:
+    """Return publishedAt, browser URL, and API URL for the exact uploaded asset."""
+    release = json.loads(run_gh("release", "view", tag, "--json", "publishedAt,assets"))
+    published_at = release.get("publishedAt")
+    asset = next((item for item in release.get("assets", []) if item.get("name") == asset_name), None)
+    if not published_at or asset is None:
+        raise RuntimeError("published Release is missing publishedAt or uploaded asset metadata")
+    asset_url, asset_api_url = asset.get("url"), asset.get("apiUrl")
+    if not asset_url or not asset_api_url:
+        raise RuntimeError("published Release asset metadata is missing browser or API URL")
+    return published_at, asset_url, asset_api_url
+
+
 def publish_snapshot(candidate_db: Path, trade_date: str, manifest_path: Path, manifest_output: Path,
                      run_id: str, attempt: str) -> dict:
     previous = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -100,10 +113,10 @@ def publish_snapshot(candidate_db: Path, trade_date: str, manifest_path: Path, m
         verifier_manifest.write_text(json.dumps(candidate_manifest), encoding="utf-8")
         restore_snapshot(verifier_manifest, downloaded / asset_name, temp / "verified.db")
         run_gh("release", "edit", tag, "--draft=false")
-        release = json.loads(run_gh("release", "view", tag, "--json", "publishedAt"))
-        if not release.get("publishedAt"):
-            raise RuntimeError("published Release did not return publishedAt")
-        candidate_manifest["snapshot"]["created_at"] = release["publishedAt"]
+        published_at, asset_url, asset_api_url = published_asset_metadata(tag, asset_name)
+        candidate_manifest["snapshot"].update({
+            "created_at": published_at, "asset_url": asset_url, "asset_api_url": asset_api_url,
+        })
         manifest_output.parent.mkdir(parents=True, exist_ok=True)
         temporary_output = manifest_output.with_suffix(manifest_output.suffix + ".tmp")
         temporary_output.write_text(json.dumps(candidate_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
