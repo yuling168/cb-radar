@@ -12,7 +12,6 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 from restore_db_snapshot import sha256_and_size, restore_snapshot
@@ -102,7 +101,9 @@ def publish_snapshot(candidate_db: Path, trade_date: str, manifest_path: Path, m
         restore_snapshot(verifier_manifest, downloaded / asset_name, temp / "verified.db")
         run_gh("release", "edit", tag, "--draft=false")
         release = json.loads(run_gh("release", "view", tag, "--json", "publishedAt"))
-        candidate_manifest["snapshot"]["created_at"] = release["publishedAt"] or datetime.now(timezone.utc).isoformat()
+        if not release.get("publishedAt"):
+            raise RuntimeError("published Release did not return publishedAt")
+        candidate_manifest["snapshot"]["created_at"] = release["publishedAt"]
         manifest_output.parent.mkdir(parents=True, exist_ok=True)
         temporary_output = manifest_output.with_suffix(manifest_output.suffix + ".tmp")
         temporary_output.write_text(json.dumps(candidate_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
