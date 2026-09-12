@@ -290,3 +290,70 @@ jobs:
           finally:
               session.close()
           PY
+
+      - name: Verify production TPEx full-body GET helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import time
+
+          from config import (
+              HTTP_TIMEOUT_SECONDS,
+              TPEX_CB_DELISTED_URL,
+              TPEX_CB_ISSUE_URL,
+              TPEX_CB_LISTED_URL,
+              TPEX_DAILY_MARKET_URL,
+              TPEX_REPORT_CODE,
+              TPEX_REPORT_INDEX_URL,
+          )
+          from tpex_tls import build_tpex_session, get_tpex_full_response
+
+          endpoints = {
+              "bond_ISSBD5_data": (TPEX_CB_ISSUE_URL, None),
+              "convSearch": (TPEX_CB_LISTED_URL, None),
+              "convDelist": (TPEX_CB_DELISTED_URL, None),
+              "announcement": ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O", None),
+              "cbDaily_20260911": (
+                  TPEX_REPORT_INDEX_URL,
+                  {"date": "2026/09/11", "fileCode": TPEX_REPORT_CODE},
+              ),
+          }
+
+          session = build_tpex_session()
+          try:
+              for label, (url, params) in endpoints.items():
+                  started = time.monotonic()
+                  response = get_tpex_full_response(
+                      session, url, params=params, timeout=HTTP_TIMEOUT_SECONDS
+                  )
+                  body = response.content
+                  json.loads(body.decode("utf-8-sig"))
+                  print(json.dumps({
+                      "endpoint": label,
+                      "logical_attempts": "see production helper retry logs",
+                      "status": response.status_code,
+                      "body_bytes": len(body),
+                      "json": "PASS",
+                      "elapsed_seconds": round(time.monotonic() - started, 3),
+                  }, sort_keys=True))
+
+              # This endpoint remains POST: verify only normal TPEx TLS routing,
+              # without applying the GET full-body retry helper to it.
+              post = session.post(
+                  TPEX_DAILY_MARKET_URL,
+                  data={"date": "2026/09/11", "type": "EW", "response": "json"},
+                  timeout=HTTP_TIMEOUT_SECONDS,
+              )
+              post.raise_for_status()
+              json.loads(post.content.decode("utf-8-sig"))
+              print(json.dumps({
+                  "endpoint": "parent_stock_POST_tls_routing",
+                  "status": post.status_code,
+                  "body_bytes": len(post.content),
+                  "json": "PASS",
+              }, sort_keys=True))
+          finally:
+              session.close()
+          PY
