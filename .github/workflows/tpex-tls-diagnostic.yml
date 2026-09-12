@@ -129,3 +129,69 @@ jobs:
           probe("requests_default", requests_default)
           probe("requests_explicit_certifi", requests_certifi)
           PY
+
+      - name: Prove verified TWCA intermediate remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          intermediate_url="https://sslserver.twca.com.tw/cacert/Cyber_SSL_2023.crt"
+          expected_fingerprint="01AF2324D098098F5E0CDF6FAABADA430B21CCE777F47EACB26248B2FDA3E531"
+          target_url="https://www.tpex.org.tw/www/zh-tw/bond/cbDaily?date=2026%2F09%2F11&fileCode=rsta0113"
+
+          curl --fail --location --silent --show-error --output "$work/intermediate.der" "$intermediate_url"
+          openssl x509 -inform DER -in "$work/intermediate.der" -out "$work/intermediate.pem"
+          actual_fingerprint="$(openssl x509 -in "$work/intermediate.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')"
+          test "$actual_fingerprint" = "$expected_fingerprint"
+          openssl x509 -in "$work/intermediate.pem" -noout -subject -issuer -serial -startdate -enddate
+
+          certifi_bundle="$(python -c 'import certifi; print(certifi.where())')"
+          cat "$certifi_bundle" "$work/intermediate.pem" > "$work/trusted-plus-twca.pem"
+          openssl verify -show_chain -CAfile "$certifi_bundle" "$work/intermediate.pem"
+
+          set +e
+          printf '' | openssl s_client -connect www.tpex.org.tw:443 -servername www.tpex.org.tw \
+            -showcerts -verify_return_error > "$work/s_client.txt" 2>&1
+          set -e
+          awk '
+            /-----BEGIN CERTIFICATE-----/ { capture = 1 }
+            capture { print }
+            /-----END CERTIFICATE-----/ && capture { exit }
+          ' "$work/s_client.txt" > "$work/tpex-leaf.pem"
+          test -s "$work/tpex-leaf.pem"
+          openssl verify -show_chain -CAfile "$work/trusted-plus-twca.pem" \
+            -untrusted "$work/intermediate.pem" "$work/tpex-leaf.pem"
+
+          curl --fail --location --silent --show-error --head \
+            --cacert "$work/trusted-plus-twca.pem" "$target_url" | head -n 1
+          BUNDLE="$work/trusted-plus-twca.pem" TARGET_URL="$target_url" python - <<'PY'
+          import os
+          import requests
+
+          response = requests.get(
+              os.environ["TARGET_URL"], timeout=30, verify=os.environ["BUNDLE"]
+          )
+          print(f"requests_temp_bundle=PASS status={response.status_code}")
+          PY
+
+          set +e
+          printf '' | openssl s_client -connect www.tpex.org.tw:443 -servername www.tpex.org.tw \
+            -verify_hostname wrong.example.invalid -CAfile "$work/trusted-plus-twca.pem" \
+            -verify_return_error > "$work/wrong-host.txt" 2>&1
+          wrong_host_status=$?
+          openssl verify -attime 1805932800 -CAfile "$work/trusted-plus-twca.pem" \
+            -untrusted "$work/intermediate.pem" "$work/tpex-leaf.pem" > "$work/expired.txt" 2>&1
+          expired_status=$?
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$work/self-signed.key" -out "$work/self-signed.pem" \
+            -subj "/CN=untrusted.example.invalid" > /dev/null 2>&1
+          openssl verify -CAfile "$work/trusted-plus-twca.pem" "$work/self-signed.pem" > "$work/self-signed.txt" 2>&1
+          self_signed_status=$?
+          set -e
+          test "$wrong_host_status" -ne 0
+          test "$expired_status" -ne 0
+          test "$self_signed_status" -ne 0
+          grep -E 'hostname mismatch|Verify return code:' "$work/wrong-host.txt"
+          grep -E 'certificate has expired' "$work/expired.txt"
+          grep -E 'self-signed certificate' "$work/self-signed.txt"
