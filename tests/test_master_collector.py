@@ -21,6 +21,7 @@ from master_collector import (
     TPEX_DELISTED_FIELDS,
     TPEX_ISSUE_SOURCE,
     TPEX_LIST_FIELDS,
+    TPEX_VERIFIED_INTERVAL_SOURCE,
     _history_for_cb,
     _merge_conversion_events,
     _validate_ambiguous_monthly_prices,
@@ -41,6 +42,7 @@ from master_collector import (
     parse_tdcc_book_entries,
     parse_tpex_issues,
     parse_tpex_delistings,
+    parse_tpex_listed_identities,
     parse_tpex_mops_links,
     refresh_daily_exact_parent_stock_mappings,
     secured_for_display,
@@ -1070,27 +1072,51 @@ class NewCbBootstrapSession:
 
 
 class DailyExactMappingSession:
-    def __init__(self, issue_rows):
+    def __init__(self, issue_rows, *, listed_rows=None, delisting_rows=None):
         self.headers = {}
         self.issue_rows = issue_rows
+        self.listed_rows = [] if listed_rows is None else listed_rows
+        self.delisting_rows = [] if delisting_rows is None else delisting_rows
         self.get_urls = []
 
     def get(self, url, **_kwargs):
         self.get_urls.append(url)
-        assert url.endswith("bond_ISSBD5_data")
-        return FakeResponse(json_payload=self.issue_rows)
+        if url.endswith("bond_ISSBD5_data"):
+            return FakeResponse(json_payload=self.issue_rows)
+        if url.endswith("bond/convSearch"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{"fields": TPEX_LIST_FIELDS, "data": self.listed_rows}],
+            })
+        if url.endswith("bond/convDelist"):
+            return FakeResponse(json_payload={
+                "stat": "ok",
+                "tables": [{"fields": TPEX_DELISTED_FIELDS, "data": self.delisting_rows}],
+            })
+        raise AssertionError(f"unexpected URL: {url}")
 
 
-def _seed_daily_mapping_universe(db_path, codes=("30882",)):
+def _seed_daily_mapping_universe(db_path, codes=("30882",), trade_date="2026-09-08"):
     with connect(db_path) as connection:
         upsert_daily(connection, [
             {
-                "trade_date": "2026-09-08", "cb_code": code,
+                "trade_date": trade_date, "cb_code": code,
                 "cb_name": f"測試{code}", "close_price": 100.0,
                 "volume_lots": 1, "source": "test", "collected_at": "x",
             }
             for code in codes
         ])
+
+
+INTERVAL_MOPS_URL = (
+    "https://mopsov.twse.com.tw/mops/web/t120sg01?TYPEK=&bond_id=24361"
+    "&issuer_stock_code=2436&monyr_reg=202608"
+)
+INTERVAL_LISTED_ROW = [
+    "2436", "偉詮電子股份有限公司", "偉詮電子股份有限公司國內第一次無擔保轉換公司債",
+    "112/09/11", INTERVAL_MOPS_URL,
+]
+INTERVAL_DELIST_ROW = ["24361", "偉詮電一", "115/09/14"]
 
 
 def test_daily_exact_mapping_refresh_uses_one_batch_and_writes_verified_universe(tmp_path):
@@ -1120,6 +1146,101 @@ def test_daily_exact_mapping_refresh_uses_one_batch_and_writes_verified_universe
     assert all(row["source"] == TPEX_ISSUE_SOURCE for row in rows)
     assert all(row["source_url"].endswith("bond_ISSBD5_data") for row in rows)
     assert all(row["verified_at"].endswith("+00:00") for row in rows)
+
+
+def test_tpex_listed_identities_preserve_row_and_mops_issuer_evidence():
+    payload = {
+        "stat": "ok",
+        "tables": [{"fields": TPEX_LIST_FIELDS, "data": [INTERVAL_LISTED_ROW]}],
+    }
+    assert parse_tpex_listed_identities(payload) == {
+        "24361": [{
+            "listed_issuer_code": "2436",
+            "listed_issuer_name": "偉詮電子股份有限公司",
+            "listing_date": "2023-09-11",
+            "mops_url": INTERVAL_MOPS_URL,
+            "mops_issuer_stock_code": "2436",
+        }]
+    }
+
+
+def test_daily_exact_mapping_uses_verified_interval_only_when_issue_row_is_absent(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("24361",), "2026-09-11")
+    session = DailyExactMappingSession(
+        [ISSUE_ROW], listed_rows=[INTERVAL_LISTED_ROW], delisting_rows=[INTERVAL_DELIST_ROW]
+    )
+
+    result = refresh_daily_exact_parent_stock_mappings(
+        date(2026, 9, 11), db_path, session=session
+    )
+
+    assert result["issue_source_mappings"] == 0
+    assert result["verified_interval_mappings"] == 1
+    assert result["verified_interval_diagnostics"] == [{
+        "cb_code": "24361",
+        "verification_level": "VERIFIED_INTERVAL",
+        "source": TPEX_VERIFIED_INTERVAL_SOURCE,
+        "source_url": INTERVAL_MOPS_URL,
+        "source_as_of_date": "2026-09-11",
+        "verified_at": result["verified_interval_diagnostics"][0]["verified_at"],
+        "valid_from": "2023-09-11",
+        "valid_to": "2026-09-13",
+        "evidence": {
+            "listed_url": "https://www.tpex.org.tw/www/zh-tw/bond/convSearch",
+            "listed_issuer_code": "2436",
+            "mops_issuer_stock_code": "2436",
+            "mops_detail_url": INTERVAL_MOPS_URL,
+            "official_delisting_url": "https://www.tpex.org.tw/www/zh-tw/bond/convDelist",
+            "official_delisting_date": "2026-09-14",
+        },
+    }]
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT stock_code, source, source_url FROM cb_parent_stock_mapping"
+        ).fetchone()
+    assert tuple(row) == ("2436", TPEX_VERIFIED_INTERVAL_SOURCE, INTERVAL_MOPS_URL)
+
+
+@pytest.mark.parametrize("trade_day, error", [
+    (date(2026, 9, 14), "outside_verified_interval"),
+    (date(2026, 9, 15), "outside_verified_interval"),
+])
+def test_daily_exact_mapping_verified_interval_respects_exclusive_termination_day(
+    tmp_path, trade_day, error
+):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("24361",), trade_day.isoformat())
+    with pytest.raises(MasterFormatError, match=error):
+        refresh_daily_exact_parent_stock_mappings(
+            trade_day,
+            db_path,
+            session=DailyExactMappingSession(
+                [ISSUE_ROW], listed_rows=[INTERVAL_LISTED_ROW],
+                delisting_rows=[INTERVAL_DELIST_ROW],
+            ),
+        )
+
+
+def test_daily_exact_mapping_verified_interval_requires_end_evidence_and_rejects_conflicts(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("24361",), "2026-09-11")
+    with pytest.raises(MasterFormatError, match="insufficient_verified_interval_evidence"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 11), db_path,
+            session=DailyExactMappingSession([ISSUE_ROW], listed_rows=[INTERVAL_LISTED_ROW]),
+        )
+    conflicting_url = INTERVAL_MOPS_URL.replace("issuer_stock_code=2436", "issuer_stock_code=9999")
+    conflicting_row = [*INTERVAL_LISTED_ROW[:4], conflicting_url]
+    with pytest.raises(MasterFormatError, match="parent_mapping_conflict"):
+        refresh_daily_exact_parent_stock_mappings(
+            date(2026, 9, 11), db_path,
+            session=DailyExactMappingSession(
+                [ISSUE_ROW], listed_rows=[conflicting_row], delisting_rows=[INTERVAL_DELIST_ROW],
+            ),
+        )
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cb_parent_stock_mapping").fetchone()[0] == 0
 
 
 def test_daily_exact_mapping_refresh_is_atomic_and_does_not_fallback_to_master(tmp_path):

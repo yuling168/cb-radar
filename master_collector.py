@@ -14,7 +14,7 @@ import re
 import sqlite3
 import sys
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 from zoneinfo import ZoneInfo
@@ -62,6 +62,7 @@ BOOTSTRAP_SOURCE = "TPEx:bond_ISSBD5_data+MOPS:t120sg01"
 MOPS_SOURCE = "MOPS:t120sg01"
 MOPS_ANNOUNCEMENT_SOURCE = "MOPS:t108sb08_1"
 TPEX_ISSUE_SOURCE = "TPEx:bond_ISSBD5_data"
+TPEX_VERIFIED_INTERVAL_SOURCE = "TPEx:convSearch+TPEx:convDelist:VERIFIED_INTERVAL"
 MOPS_RULES_SOURCE = "MOPS:official_conversion_terms"
 
 
@@ -233,14 +234,14 @@ def refresh_daily_exact_parent_stock_mappings(
     *,
     write: bool = True,
 ) -> dict[str, object]:
-    """Verify every CB observed on ``trade_date`` from one TPEx issue batch.
+    """Verify every CB observed on ``trade_date`` from official TPEx evidence.
 
     This is deliberately separate from the incremental master collector. Its
     universe comes only from ``cb_daily`` for the requested date; it never
-    resolves a missing CB through a current ``cb_master`` row or a monthly
-    mapping. Validation completes for the entire universe before the single
-    exact-date mapping upsert, so a failed refresh cannot leave a partial
-    daily mapping behind.
+    resolves a missing CB through a current ``cb_master`` row, a prior daily
+    mapping, or a monthly mapping. Validation completes for the entire
+    universe before the single exact-date mapping upsert, so a failed refresh
+    cannot leave a partial daily mapping behind.
     """
     trade_date_text = trade_date.isoformat()
     with connect(db_path) as connection:
@@ -278,13 +279,16 @@ def refresh_daily_exact_parent_stock_mappings(
         ) from exc
 
     missing: list[str] = []
+    conflicts: list[str] = []
     mappings: list[dict[str, str]] = []
+    interval_diagnostics: list[dict[str, object]] = []
+    missing_issue_rows: list[sqlite3.Row] = []
     verified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for daily in daily_rows:
         cb_code = str(daily["cb_code"])
         issue = issues.get(cb_code)
         if issue is None:
-            missing.append(f"{cb_code}({daily['cb_name']}):missing_from_tpex_issue_batch")
+            missing_issue_rows.append(daily)
             continue
         # parse_tpex_issues already validates these fields, but keep the
         # exact-mapping boundary explicit and future-proof.
@@ -306,9 +310,80 @@ def refresh_daily_exact_parent_stock_mappings(
             }
         )
 
-    if missing:
+    # The issue batch remains primary. Secondary evidence is intentionally
+    # fetched only for CBs omitted from that batch.
+    if missing_issue_rows:
+        listed = parse_tpex_listed_identities(_get_json(http, TPEX_CB_LISTED_URL))
+        delistings = parse_tpex_delistings(_get_json(http, TPEX_CB_DELISTED_URL))
+        for daily in missing_issue_rows:
+            cb_code = str(daily["cb_code"])
+            evidence = listed.get(cb_code, [])
+            if not evidence:
+                missing.append(
+                    f"{cb_code}({daily['cb_name']}):missing_from_tpex_issue_batch"
+                    ":missing_from_tpex_listed_source"
+                )
+                continue
+            row_parent_codes = {str(item["listed_issuer_code"]) for item in evidence}
+            detail_parent_codes = {str(item["mops_issuer_stock_code"]) for item in evidence}
+            parent_codes = row_parent_codes | detail_parent_codes
+            if len(row_parent_codes) != 1 or len(detail_parent_codes) != 1 or len(parent_codes) != 1:
+                conflicts.append(f"{cb_code}({daily['cb_name']}):parent_mapping_conflict")
+                continue
+            identity = evidence[0]
+            valid_from = str(identity["listing_date"])
+            delisting = delistings.get(cb_code)
+            if delisting is None:
+                missing.append(
+                    f"{cb_code}({daily['cb_name']}):insufficient_verified_interval_evidence"
+                )
+                continue
+            # Existing lifecycle semantics make termination day itself inactive.
+            valid_to = (
+                date.fromisoformat(str(delisting["delisting_date"])) - timedelta(days=1)
+            ).isoformat()
+            if valid_from > trade_date_text or trade_date_text > valid_to:
+                missing.append(f"{cb_code}({daily['cb_name']}):outside_verified_interval")
+                continue
+            source_url = str(identity["mops_url"])
+            mappings.append(
+                {
+                    "cb_code": cb_code,
+                    "mapping_date": trade_date_text,
+                    "stock_code": str(identity["listed_issuer_code"]),
+                    "stock_name": str(identity["listed_issuer_name"]),
+                    "market": "UNKNOWN",
+                    "source": TPEX_VERIFIED_INTERVAL_SOURCE,
+                    "source_url": source_url,
+                    "verified_at": verified_at,
+                }
+            )
+            interval_diagnostics.append(
+                {
+                    "cb_code": cb_code,
+                    "verification_level": "VERIFIED_INTERVAL",
+                    "source": TPEX_VERIFIED_INTERVAL_SOURCE,
+                    "source_url": source_url,
+                    # TPEx current-state endpoints have no batch date. The
+                    # explicit target date is the date tested against evidence.
+                    "source_as_of_date": trade_date_text,
+                    "verified_at": verified_at,
+                    "valid_from": valid_from,
+                    "valid_to": valid_to,
+                    "evidence": {
+                        "listed_url": TPEX_CB_LISTED_URL,
+                        "listed_issuer_code": identity["listed_issuer_code"],
+                        "mops_issuer_stock_code": identity["mops_issuer_stock_code"],
+                        "mops_detail_url": source_url,
+                        "official_delisting_url": TPEX_CB_DELISTED_URL,
+                        "official_delisting_date": delisting["delisting_date"],
+                    },
+                }
+            )
+
+    if missing or conflicts:
         raise MasterFormatError(
-            "daily exact parent mapping unavailable: " + "; ".join(missing)
+            "daily exact parent mapping unavailable: " + "; ".join(conflicts + missing)
         )
     if len(mappings) != len(daily_rows):
         raise MasterFormatError("daily exact parent mapping preflight count mismatch")
@@ -320,10 +395,14 @@ def refresh_daily_exact_parent_stock_mappings(
         "trade_date": trade_date_text,
         "universe_cbs": len(daily_rows),
         "verified_mappings": len(mappings),
+        "issue_source_mappings": len(daily_rows) - len(missing_issue_rows),
+        "verified_interval_mappings": len(interval_diagnostics),
         "missing_mappings": 0,
+        "conflicting_mappings": 0,
         "records_written": len(mappings) if write else 0,
         "dry_run": not write,
         "source_url": TPEX_CB_ISSUE_URL,
+        "verified_interval_diagnostics": interval_diagnostics,
     }
 
 
@@ -348,6 +427,44 @@ def parse_tpex_mops_links(payload: object) -> dict[str, str]:
     if not links:
         raise MasterFormatError("TPEx listed-CB response contained no MOPS links")
     return links
+
+
+def parse_tpex_listed_identities(payload: object) -> dict[str, list[dict[str, str]]]:
+    """Return explicit TPEx listed-CB identities keyed by official bond_id.
+
+    ``convSearch`` provides issuer identity in both its displayed row and the
+    linked official MOPS detail URL. Both are retained so disagreement is a
+    strict conflict, never an inferred parent mapping.
+    """
+    try:
+        table = payload["tables"][0]  # type: ignore[index]
+        fields = table["fields"]
+        rows = table["data"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise MasterFormatError("TPEx listed-CB response structure changed") from exc
+    if not isinstance(payload, dict) or payload.get("stat") != "ok" or fields != TPEX_LIST_FIELDS:
+        raise MasterFormatError("TPEx listed-CB required fields changed")
+    parsed: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 5:
+            raise MasterFormatError("TPEx listed-CB response contains a malformed row")
+        url = str(row[4]).strip()
+        query = parse_qs(urlparse(url).query)
+        cb_code = query.get("bond_id", [""])[0].strip()
+        if not cb_code:
+            continue
+        parsed.setdefault(cb_code, []).append(
+            {
+                "listed_issuer_code": str(row[0]).strip(),
+                "listed_issuer_name": str(row[1]).strip(),
+                "listing_date": _parse_roc_date(
+                    str(row[3]), "TPEx listed-CB listing date"
+                ),
+                "mops_url": url,
+                "mops_issuer_stock_code": query.get("issuer_stock_code", [""])[0].strip(),
+            }
+        )
+    return parsed
 
 
 def parse_tpex_delistings(payload: object) -> dict[str, dict[str, str]]:
