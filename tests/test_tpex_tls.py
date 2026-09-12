@@ -18,6 +18,7 @@ from tpex_tls import (
     TpexCABundle,
     TpexHTTPSession,
     create_tpex_ca_bundle,
+    get_tpex_full_response,
     validate_twca_intermediate,
 )
 
@@ -194,3 +195,118 @@ def test_production_helper_contains_no_insecure_tls_bypass():
     assert "verify=False" not in source
     assert "CERT_NONE" not in source
     assert "check_hostname = False" not in source
+
+
+class _FullBodyResponse:
+    def __init__(self, content: bytes | Exception = b"ok", *, status_code: int = 200):
+        self._content = content
+        self.status_code = status_code
+        self.closed = False
+
+    @property
+    def content(self):
+        if isinstance(self._content, Exception):
+            raise self._content
+        return self._content
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def close(self):
+        self.closed = True
+
+
+class _FullBodySession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.responses.pop(0)
+
+
+def _tpex_url() -> str:
+    return "https://www.tpex.org.tw/openapi/v1/bond_ISSBD5_data"
+
+
+def test_full_body_retry_reissues_get_after_chunked_body_failure():
+    first = _FullBodyResponse(requests.exceptions.ChunkedEncodingError("truncated"))
+    session = _FullBodySession([first, _FullBodyResponse(b"complete")])
+    sleeps = []
+
+    result = get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append)
+
+    assert result.content == b"complete"
+    assert first.closed
+    assert len(session.calls) == 2
+    assert all(call[1]["stream"] is True for call in session.calls)
+    assert sleeps == [1]
+
+
+def test_full_body_retry_succeeds_on_third_transport_attempt():
+    session = _FullBodySession([
+        _FullBodyResponse(requests.exceptions.ChunkedEncodingError("one")),
+        _FullBodyResponse(requests.exceptions.ChunkedEncodingError("two")),
+        _FullBodyResponse(b"complete"),
+    ])
+    sleeps = []
+
+    assert get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append).content == b"complete"
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+
+
+@pytest.mark.parametrize("error", [
+    requests.exceptions.ChunkedEncodingError("truncated"),
+    requests.exceptions.ConnectionError("connection"),
+    requests.exceptions.Timeout("timeout"),
+])
+def test_full_body_retry_hard_fails_only_after_three_transport_attempts(error):
+    session = _FullBodySession([_FullBodyResponse(error) for _ in range(3)])
+    sleeps = []
+
+    with pytest.raises(type(error)):
+        get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append)
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+
+
+def test_full_body_retry_never_retries_http_or_json_application_failures():
+    session = _FullBodySession([_FullBodyResponse(b"not json")])
+    response = get_tpex_full_response(session, _tpex_url(), sleep=lambda _: pytest.fail("sleep"))
+    with pytest.raises(ValueError):
+        __import__("json").loads(response.content)
+    assert len(session.calls) == 1
+
+    status_session = _FullBodySession([_FullBodyResponse(b"error", status_code=503)])
+    with pytest.raises(requests.HTTPError):
+        get_tpex_full_response(status_session, _tpex_url())
+    assert len(status_session.calls) == 1
+
+
+def test_full_body_retry_rejects_non_tpex_without_requesting_it():
+    session = _FullBodySession([_FullBodyResponse(b"unexpected")])
+    with pytest.raises(ValueError, match="only www.tpex.org.tw"):
+        get_tpex_full_response(session, "https://openapi.twse.com.tw/v1/test")
+    assert session.calls == []
+
+
+def test_full_body_retry_preserves_tpex_bundle_on_every_attempt(monkeypatch, tmp_path):
+    bundle = TpexCABundle(tmp_path, tmp_path / "bundle.pem", tmp_path / "intermediate.pem")
+    bundle.bundle_path.write_text("bundle", encoding="ascii")
+    responses = [
+        _FullBodyResponse(requests.exceptions.ChunkedEncodingError("truncated")),
+        _FullBodyResponse(b"complete"),
+    ]
+    verifies = []
+
+    def fake_request(self, method, url, *args, **kwargs):
+        verifies.append(kwargs["verify"])
+        return responses.pop(0)
+
+    monkeypatch.setattr(requests.Session, "request", fake_request)
+    session = TpexHTTPSession(bundle)
+    assert get_tpex_full_response(session, _tpex_url(), sleep=lambda _: None).content == b"complete"
+    assert verifies == [str(bundle.bundle_path), str(bundle.bundle_path)]

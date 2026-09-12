@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +21,12 @@ import requests
 
 from config import DEFAULT_DB_PATH, HTTP_TIMEOUT_SECONDS
 from db import connect
-from tpex_tls import build_tpex_session
+from tpex_tls import (
+    TPEx_GET_MAX_ATTEMPTS,
+    TPEx_GET_TRANSIENT_EXCEPTIONS,
+    build_tpex_session,
+    get_tpex_full_response,
+)
 
 
 SOURCES = {
@@ -217,13 +223,22 @@ def collect_market(source_market: str, db_path: Path | str = DEFAULT_DB_PATH, se
         raise ValueError("max_attempts must be positive")
     session = session or (build_tpex_session() if source_market == "TPEX" else build_session())
     last_error: Exception | None = None
+    attempt_limit = min(max_attempts, TPEx_GET_MAX_ATTEMPTS) if source_market == "TPEX" else max_attempts
     with connect(db_path) as connection:
-        for _ in range(max_attempts):
+        for attempt in range(1, attempt_limit + 1):
             fetch_id = start_fetch(connection, source_market, utc_now())
             response = None
             try:
-                response = session.get(SOURCES[source_market]["url"], timeout=HTTP_TIMEOUT_SECONDS)
-                response.raise_for_status()
+                if source_market == "TPEX":
+                    # announcement_fetch records each complete transport
+                    # attempt, so its existing loop is the only retry layer.
+                    response = get_tpex_full_response(
+                        session, SOURCES[source_market]["url"],
+                        timeout=HTTP_TIMEOUT_SECONDS, max_attempts=1,
+                    )
+                else:
+                    response = session.get(SOURCES[source_market]["url"], timeout=HTTP_TIMEOUT_SECONDS)
+                    response.raise_for_status()
                 raw_json = response.text
                 payload = response.json()
                 result = persist_success(connection, fetch_id, source_market, raw_json, payload, int(response.status_code))
@@ -231,8 +246,15 @@ def collect_market(source_market: str, db_path: Path | str = DEFAULT_DB_PATH, se
                 return result
             except (requests.RequestException, ValueError, json.JSONDecodeError, AnnouncementSourceError) as exc:
                 last_error = exc
-                fail_fetch(connection, fetch_id, exc, getattr(response, "status_code", None))
-    raise AnnouncementSourceError(f"{source_market} failed after {max_attempts} attempts: {last_error}")
+                status_response = response or getattr(exc, "response", None)
+                fail_fetch(connection, fetch_id, exc, getattr(status_response, "status_code", None))
+                if (
+                    source_market == "TPEX"
+                    and isinstance(exc, TPEx_GET_TRANSIENT_EXCEPTIONS)
+                    and attempt < attempt_limit
+                ):
+                    time.sleep(attempt)
+    raise AnnouncementSourceError(f"{source_market} failed after {attempt_limit} attempts: {last_error}")
 
 
 def main() -> int:

@@ -24,6 +24,7 @@ class Response:
         self.status_code = status_code
         self.json_error = json_error
         self.text = json.dumps(payload, ensure_ascii=False) if payload is not None else "<html>error</html>"
+        self.content = self.text.encode("utf-8")
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -112,6 +113,36 @@ def test_invalid_json_is_failed_then_a_later_retry_can_succeed(tmp_path):
     with connect(db_path) as connection:
         statuses = connection.execute("SELECT status FROM announcement_fetch ORDER BY fetch_id").fetchall()
     assert [row[0] for row in statuses] == ["failed", "succeeded"]
+
+
+class TruncatedResponse(Response):
+    @property
+    def content(self):
+        raise requests.exceptions.ChunkedEncodingError("truncated body")
+
+    @content.setter
+    def content(self, _value):
+        pass
+
+    def close(self):
+        return None
+
+
+def test_tpex_transport_retry_reads_a_fresh_full_body_each_attempt(monkeypatch, tmp_path):
+    db_path = tmp_path / "announcements.db"
+    session = Session([TruncatedResponse(), Response([{
+        "Date": "1150903", "SecuritiesCompanyCode": "1560", "CompanyName": "中砂",
+        "主旨": "公告", "發言日期": "1150902", "發言時間": "70003",
+        "符合條款": "第51款", "事實發生日": "1150902", "說明": "內容",
+    }])])
+    sleeps = []
+    monkeypatch.setattr("announcement_collector.time.sleep", sleeps.append)
+
+    result = collect_market("TPEX", db_path, session, max_attempts=3)
+
+    assert result["rows"] == 1
+    assert session.calls == 2
+    assert sleeps == [1]
 
 
 def test_empty_array_without_an_official_batch_date_is_not_recorded_as_zero_announcements(tmp_path):

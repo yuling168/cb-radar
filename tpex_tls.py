@@ -13,6 +13,7 @@ import atexit
 import hashlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from urllib.parse import urlparse
 
 import certifi
 import requests
+from requests.adapters import HTTPAdapter
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
@@ -33,6 +35,12 @@ TWCA_INTERMEDIATE_SHA256 = "01AF2324D098098F5E0CDF6FAABADA430B21CCE777F47EACB262
 TPEX_HOST = "www.tpex.org.tw"
 BOOTSTRAP_MAX_ATTEMPTS = 3
 BOOTSTRAP_TIMEOUT_SECONDS = 30
+TPEx_GET_MAX_ATTEMPTS = 3
+TPEx_GET_TRANSIENT_EXCEPTIONS = (
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
 
 _EXPECTED_SUBJECT = {
     NameOID.COMMON_NAME: "TWCA SSL Certification Authority",
@@ -220,3 +228,73 @@ class TpexHTTPSession(requests.Session):
 def build_tpex_session() -> TpexHTTPSession:
     """Return a session whose TPEx requests use the verified temporary bundle."""
     return TpexHTTPSession(create_tpex_ca_bundle())
+
+
+def disable_tpex_adapter_retries(session: requests.Session) -> None:
+    """Keep TPEx GET retry ownership at the full-response boundary.
+
+    Some callers retain a generic urllib3 adapter for non-TPEx sources.  The
+    exact TPEx-host mount prevents it from nesting below the application retry
+    below, so one logical GET has at most three network attempts.
+    """
+    session.mount(f"https://{TPEX_HOST}/", HTTPAdapter(max_retries=0))
+
+
+def get_tpex_full_response(
+    session: requests.Session,
+    url: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    max_attempts: int = TPEx_GET_MAX_ATTEMPTS,
+    retry_exceptions: tuple[type[BaseException], ...] = TPEx_GET_TRANSIENT_EXCEPTIONS,
+    **kwargs: object,
+) -> requests.Response:
+    """Fetch one TPEx HTTPS GET, retrying only failed *full-body* reads.
+
+    ``stream=True`` deliberately makes complete body consumption explicit.
+    Each retry issues a new GET; no partial bytes are retained or combined.
+    HTTP status and JSON/schema failures remain caller-owned semantics.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != TPEX_HOST:
+        raise ValueError("TPEx full-response retry accepts only www.tpex.org.tw HTTPS URLs")
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be positive")
+
+    for attempt in range(1, max_attempts + 1):
+        response: requests.Response | None = None
+        try:
+            response = session.get(url, stream=True, **kwargs)
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                # Real requests errors already carry this. Keep that useful
+                # status context for callers using lightweight test/session
+                # adapters too, without making HTTP errors retryable.
+                if getattr(exc, "response", None) is None:
+                    exc.response = response
+                raise
+            # Do not return until requests has fully consumed and cached this
+            # one response body. ChunkedEncodingError belongs to this attempt.
+            _ = response.content
+        except retry_exceptions as exc:
+            if response is not None:
+                response.close()
+            if attempt == max_attempts:
+                raise
+            print(
+                "TPEx full-body transport retry: "
+                f"host={parsed.hostname} exception={type(exc).__name__} "
+                f"attempt={attempt}/{max_attempts}",
+                file=sys.stderr,
+            )
+            sleep(attempt)
+            continue
+        if attempt > 1:
+            print(
+                "TPEx full-body request recovered after retry: "
+                f"host={parsed.hostname} attempt={attempt}/{max_attempts}",
+                file=sys.stderr,
+            )
+        return response
+    raise AssertionError("unreachable TPEx full-response retry state")

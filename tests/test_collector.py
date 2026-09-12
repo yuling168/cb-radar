@@ -103,6 +103,8 @@ def test_same_date_and_code_is_idempotent(tmp_path):
 
 
 class EmptyIndexResponse:
+    content = b'{"stat":"ok","tables":[{"fields":["\xe8\xb3\x87\xe6\x96\x99\xe6\x97\xa5\xe6\x9c\x9f","\xe6\xaa\x94\xe6\xa1\x88\xe4\xb8\x8b\xe8\xbc\x89"],"data":[]}]}'
+
     def raise_for_status(self):
         return None
 
@@ -126,7 +128,10 @@ def test_non_trading_day_does_not_write_fake_data(tmp_path):
 
 
 class SuccessfulResponse:
-    pass
+    content = b""
+
+    def raise_for_status(self):
+        return None
 
 
 class TransientSequenceSession:
@@ -204,4 +209,4 @@ def test_normal_request_is_not_retried_or_given_an_ssl_override(monkeypatch):
 
     assert get_with_transient_retry(session, "https://www.tpex.org.tw/test", timeout=12) is response
     assert len(session.calls) == 1
-    assert session.calls[0][1] == {"timeout": 12}
+    assert session.calls[0][1] == {"timeout": 12, "stream": True}

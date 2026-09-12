@@ -35,7 +35,11 @@ from config import (
     TDCC_BOOK_ENTRY_URL,
 )
 from db import connect, upsert_master_data, upsert_parent_stock_mappings
-from tpex_tls import build_tpex_session
+from tpex_tls import (
+    build_tpex_session,
+    disable_tpex_adapter_retries,
+    get_tpex_full_response,
+)
 
 
 TPEX_REQUIRED_FIELDS = {
@@ -268,6 +272,7 @@ def refresh_daily_exact_parent_stock_mappings(
             allowed_methods=frozenset({"GET"}),
         )
         http.mount("https://", HTTPAdapter(max_retries=retry))
+        disable_tpex_adapter_retries(http)
     http.headers.update(
         {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
     )
@@ -891,8 +896,7 @@ def _get_json(
 ) -> object:
     if request_counts is not None:
         request_counts.tpex += 1
-    response = session.get(url, timeout=HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    response = get_tpex_full_response(session, url, timeout=HTTP_TIMEOUT_SECONDS)
     try:
         return json.loads(response.content.decode("utf-8-sig"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -1676,6 +1680,7 @@ def collect_master(
             allowed_methods=frozenset({"GET", "POST"}),
         )
         http.mount("https://", HTTPAdapter(max_retries=retry))
+        disable_tpex_adapter_retries(http)
     http.headers.update(
         {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
     )
@@ -2005,6 +2010,7 @@ def collect_phase2_modules(
             allowed_methods=frozenset({"GET", "POST"}),
         )
         http.mount("https://", HTTPAdapter(max_retries=retry))
+        disable_tpex_adapter_retries(http)
     http.headers.update({"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"})
     as_of = as_of_date or datetime.now(ZoneInfo("Asia/Taipei")).date()
     collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")

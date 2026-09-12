@@ -21,7 +21,7 @@ from config import (
     TPEX_SOURCE,
 )
 from db import connect, upsert_daily
-from tpex_tls import build_tpex_session
+from tpex_tls import build_tpex_session, get_tpex_full_response
 
 
 EXPECTED_HEADER = [
@@ -67,29 +67,16 @@ def get_with_transient_retry(
     ``requests.Session.get``. HTTP responses, including 4xx/5xx, are returned
     exactly once for the caller's existing status and data semantics.
     """
-    host = urlparse(url).netloc
-    for attempt in range(1, HTTP_TRANSIENT_MAX_ATTEMPTS + 1):
-        try:
-            response = session.get(url, **kwargs)
-        except TRANSIENT_HTTP_EXCEPTIONS as exc:
-            if attempt == HTTP_TRANSIENT_MAX_ATTEMPTS:
-                raise
-            print(
-                "TPEx transient request failure: "
-                f"host={host} exception={type(exc).__name__} "
-                f"attempt={attempt}/{HTTP_TRANSIENT_MAX_ATTEMPTS}",
-                file=sys.stderr,
-            )
-            time.sleep(attempt)
-            continue
-        if attempt > 1:
-            print(
-                f"TPEx request recovered after retry: host={host} "
-                f"attempt={attempt}/{HTTP_TRANSIENT_MAX_ATTEMPTS}",
-                file=sys.stderr,
-            )
-        return response
-    raise AssertionError("unreachable transient retry state")
+    return get_tpex_full_response(
+        session,
+        url,
+        sleep=time.sleep,
+        max_attempts=HTTP_TRANSIENT_MAX_ATTEMPTS,
+        # Preserve the existing cbDaily SSLError policy.  The helper still
+        # keeps certificate verification enabled on every new GET.
+        retry_exceptions=TRANSIENT_HTTP_EXCEPTIONS + (requests.exceptions.ChunkedEncodingError,),
+        **kwargs,
+    )
 
 
 def _parse_number(value: Any, *, integer: bool = False) -> float | int | None:
