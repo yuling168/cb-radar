@@ -23,6 +23,7 @@ from db import (
     upsert_stock_daily_coverage,
     upsert_stock_daily_market,
 )
+from tpex_tls import build_tpex_session
 
 
 TWSE_REQUIRED_FIELDS = {
@@ -46,7 +47,7 @@ class ParentStockMappingError(RuntimeError):
 
 
 def build_session() -> requests.Session:
-    session = requests.Session()
+    session = build_tpex_session()
     retries = Retry(
         total=3,
         backoff_factor=1,

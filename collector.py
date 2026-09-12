@@ -21,6 +21,7 @@ from config import (
     TPEX_SOURCE,
 )
 from db import connect, upsert_daily
+from tpex_tls import build_tpex_session
 
 
 EXPECTED_HEADER = [
@@ -275,7 +276,7 @@ def collect(
     session: requests.Session | None = None,
     write: bool = True,
 ) -> dict[str, object]:
-    http = session or requests.Session()
+    http = session or build_tpex_session()
     http.headers.update({"User-Agent": "cb-radar/0.1 (TPEx daily collector)"})
     trade_date, report_path = resolve_report(http, requested_date, latest_available)
     response = get_with_transient_retry(

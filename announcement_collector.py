@@ -20,6 +20,7 @@ import requests
 
 from config import DEFAULT_DB_PATH, HTTP_TIMEOUT_SECONDS
 from db import connect
+from tpex_tls import build_tpex_session
 
 
 SOURCES = {
@@ -214,7 +215,7 @@ def collect_market(source_market: str, db_path: Path | str = DEFAULT_DB_PATH, se
         raise ValueError(f"Unsupported source market: {source_market}")
     if max_attempts < 1:
         raise ValueError("max_attempts must be positive")
-    session = session or build_session()
+    session = session or (build_tpex_session() if source_market == "TPEX" else build_session())
     last_error: Exception | None = None
     with connect(db_path) as connection:
         for _ in range(max_attempts):

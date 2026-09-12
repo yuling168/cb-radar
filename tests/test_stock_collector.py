@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+import requests
 
 from db import (
     connect, upsert_daily, upsert_parent_stock_mappings,
@@ -323,7 +324,8 @@ def test_database_rejects_fractional_share_volume(tmp_path):
             )
 
 
-def test_market_retry_does_not_honor_an_unbounded_server_retry_after():
+def test_market_retry_does_not_honor_an_unbounded_server_retry_after(monkeypatch):
+    monkeypatch.setattr("stock_collector.build_tpex_session", requests.Session)
     session = build_session()
     retry = session.get_adapter("https://").max_retries
 

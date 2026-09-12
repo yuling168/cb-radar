@@ -35,6 +35,7 @@ from config import (
     TDCC_BOOK_ENTRY_URL,
 )
 from db import connect, upsert_master_data, upsert_parent_stock_mappings
+from tpex_tls import build_tpex_session
 
 
 TPEX_REQUIRED_FIELDS = {
@@ -259,7 +260,7 @@ def refresh_daily_exact_parent_stock_mappings(
             f"daily exact parent mapping has no cb_daily universe for {trade_date_text}"
         )
 
-    http = session or requests.Session()
+    http = session or build_tpex_session()
     if session is None:
         retry = Retry(
             total=4, connect=4, read=4, backoff_factor=1,
@@ -1664,7 +1665,7 @@ def collect_master(
         dict[str, dict[str, object]],
     ] | None = None,
 ) -> dict[str, object]:
-    http = session or requests.Session()
+    http = session or build_tpex_session()
     if session is None:
         retry = Retry(
             total=4,
@@ -1996,7 +1997,7 @@ def collect_phase2_modules(
     module: str = "all",
 ) -> dict[str, dict[str, object]]:
     """Run Phase 2 modules independently and report every module outcome."""
-    http = session or requests.Session()
+    http = session or build_tpex_session()
     if session is None:
         retry = Retry(
             total=4, connect=4, read=4, backoff_factor=1,
