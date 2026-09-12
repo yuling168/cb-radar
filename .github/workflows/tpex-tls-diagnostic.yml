@@ -1,0 +1,131 @@
+name: TPEx TLS Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install diagnostic dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Report runner environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner_os=$(uname -a)"
+          grep '^PRETTY_NAME=' /etc/os-release || true
+          python - <<'PY'
+          import os
+          import platform
+          import ssl
+          import sys
+          import certifi
+          import requests
+          import urllib3
+
+          print(f"python={sys.version.replace(chr(10), ' ')}")
+          print(f"platform={platform.platform()}")
+          print(f"openssl={ssl.OPENSSL_VERSION}")
+          print(f"requests={requests.__version__}")
+          print(f"urllib3={urllib3.__version__}")
+          print(f"certifi={certifi.__version__}")
+          print(f"certifi_where={certifi.where()}")
+          for name in (
+              "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+              "CURL_CA_BUNDLE", "HTTPS_PROXY", "HTTP_PROXY",
+          ):
+              print(f"{name}={'SET' if os.environ.get(name) else 'NOT_SET'}")
+          PY
+
+      - name: Run curl TLS diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe() {
+            local label="$1"
+            local url="$2"
+            local raw
+            raw="$(mktemp)"
+            set +e
+            curl --verbose --head --max-time 30 "$url" > /dev/null 2> "$raw"
+            local status=$?
+            set -e
+            echo "curl_label=$label exit_code=$status"
+            sed -E \
+              -e '/proxy env variable (HTTPS_PROXY|HTTP_PROXY)/c\* proxy_env=SET' \
+              -e 's#(https?://)[^/@[:space:]]+@#\1***@#g' \
+              "$raw"
+            rm -f "$raw"
+          }
+          probe root "https://www.tpex.org.tw/"
+          probe cbdaily_20260911 "https://www.tpex.org.tw/www/zh-tw/bond/cbDaily?date=2026%2F09%2F11&fileCode=rsta0113"
+
+      - name: Run OpenSSL chain diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="$(mktemp)"
+          set +e
+          openssl s_client -connect www.tpex.org.tw:443 -servername www.tpex.org.tw \
+            -showcerts -verify_return_error < /dev/null > "$raw" 2>&1
+          status=$?
+          set -e
+          echo "openssl_exit_code=$status"
+          grep -E '^(depth=|verify error:|Verify return code:|subject=|issuer=|Certificate chain|[[:space:]]*[0-9]+ s:|[[:space:]]*i:)' "$raw" || true
+          rm -f "$raw"
+
+      - name: Compare Python TLS trust paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import certifi
+          import requests
+          import ssl
+          import urllib.request
+
+          url = "https://www.tpex.org.tw/www/zh-tw/bond/cbDaily?date=2026%2F09%2F11&fileCode=rsta0113"
+
+          def probe(label, action):
+              try:
+                  result = action()
+              except Exception as exc:
+                  print(f"{label}=FAIL type={type(exc).__name__} message={exc}")
+              else:
+                  print(f"{label}=PASS {result}")
+
+          def stdlib_system():
+              context = ssl.create_default_context()
+              with urllib.request.urlopen(url, context=context, timeout=30) as response:
+                  return f"status={response.status}"
+
+          def requests_default():
+              with requests.Session() as session:
+                  response = session.get(url, timeout=30)
+                  return f"status={response.status_code}"
+
+          def requests_certifi():
+              with requests.Session() as session:
+                  response = session.get(url, timeout=30, verify=certifi.where())
+                  return f"status={response.status_code}"
+
+          probe("python_system_ssl", stdlib_system)
+          probe("requests_default", requests_default)
+          probe("requests_explicit_certifi", requests_certifi)
+          PY
