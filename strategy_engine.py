@@ -83,6 +83,21 @@ def _unavailable_result(cb_code: str, trade_date: str, reasons: list[str], value
     }
 
 
+def _verified_parent_suspension(
+    connection: sqlite3.Connection, trade_date: str, stock_code: str,
+) -> sqlite3.Row | None:
+    """Read additive coverage metadata while remaining compatible with old snapshots."""
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(stock_daily_coverage)")}
+    if "availability_status" not in columns:
+        return None
+    return connection.execute(
+        """SELECT availability_status, availability_evidence_json
+           FROM stock_daily_coverage WHERE trade_date = ? AND stock_code = ?
+             AND availability_status = 'VERIFIED_SUSPENDED'""",
+        (trade_date, stock_code),
+    ).fetchone()
+
+
 def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
     """Pure read-only A-v2 evaluator for one trade date.
 
@@ -139,6 +154,15 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
         ).fetchone()
         if conversion is None or conversion[0] is None or float(conversion[0]) <= 0:
             results.append(_unavailable_result(cb_code, trade_date, ["missing_conversion_price_event"], {}))
+            continue
+        coverage = _verified_parent_suspension(connection, trade_date, master["stock_code"])
+        if coverage is not None:
+            evidence = coverage["availability_evidence_json"]
+            results.append(_unavailable_result(
+                cb_code, trade_date, ["parent_stock_suspended"],
+                {"stock_code": master["stock_code"], "parent_stock_availability": "VERIFIED_SUSPENDED",
+                 "parent_stock_evidence": json.loads(evidence) if evidence else None},
+            ))
             continue
         stock = connection.execute(
             "SELECT p_close_price FROM stock_daily_market WHERE trade_date = ? AND p_stock_code = ?",

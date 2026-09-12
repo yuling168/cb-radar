@@ -14,6 +14,7 @@ from stock_collector import (
     collect_stock_daily_market,
     parse_tpex_market,
     parse_twse_market,
+    verify_twse_suspensions,
 )
 
 
@@ -60,6 +61,22 @@ class Session:
 
     def post(self, *args, **kwargs):
         return Response(self.tpex)
+
+
+def no_suspensions(*_args, **_kwargs):
+    return {}
+
+
+def suspended_3591(*_args, **_kwargs):
+    return {
+        "3591": {
+            "source_url": "https://www.twse.com.tw/exchangeReport/TWTAUU",
+            "last_trade_date": "2026-09-09",
+            "recovery_date": "2026-09-21",
+            "pre_suspension_close": "23.65",
+            "corporate_action_reason": "退還股款",
+        }
+    }
 
 
 def seed_phase1_and_master(db_path):
@@ -275,13 +292,122 @@ def test_missing_parent_stock_fails_before_any_market_row_is_written(tmp_path):
     )
 
     with pytest.raises(StockMarketFormatError, match="missing from official daily markets"):
-        collect_stock_daily_market(TRADE_DATE, db_path, session)
+        collect_stock_daily_market(TRADE_DATE, db_path, session, suspension_verifier=no_suspensions)
     with connect(db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM stock_daily_market").fetchone()[0] == 0
         row = connection.execute(
-            "SELECT status, reason FROM stock_daily_coverage WHERE stock_code='3131'"
+            "SELECT status, reason, availability_status FROM stock_daily_coverage WHERE stock_code='3131'"
         ).fetchone()
-        assert tuple(row) == ("MISSING_OFFICIAL_ROW", "missing_from_official_daily_market")
+        assert tuple(row) == ("MISSING_OFFICIAL_ROW", "missing_from_official_daily_market", "UNVERIFIED_MISSING")
+
+
+def test_twse_recovery_evidence_strictly_verifies_only_the_suspension_interval():
+    payload = {
+        "fields": ["恢復買賣日期", "股票代號", "停止買賣前收盤價格", "減資原因", "詳細資料"],
+        "data": [["115/09/21", "3591", "23.65", "退還股款", "3591  ,20260909"]],
+    }
+
+    class RecoverySession:
+        def get(self, *_args, **_kwargs):
+            return Response(payload)
+
+    verified = verify_twse_suspensions(RecoverySession(), {"3591"}, date(2026, 9, 11))
+    assert verified["3591"]["last_trade_date"] == "2026-09-09"
+    assert verified["3591"]["recovery_date"] == "2026-09-21"
+    assert verify_twse_suspensions(RecoverySession(), {"3591"}, date(2026, 9, 9)) == {}
+    assert "3591" in verify_twse_suspensions(RecoverySession(), {"3591"}, date(2026, 9, 10))
+    assert verify_twse_suspensions(RecoverySession(), {"3591"}, date(2026, 9, 21)) == {}
+
+
+def test_twse_recovery_evidence_rejects_malformed_or_another_stock():
+    class RecoverySession:
+        def __init__(self, row):
+            self.row = row
+
+        def get(self, *_args, **_kwargs):
+            return Response({
+                "fields": ["恢復買賣日期", "股票代號", "停止買賣前收盤價格", "減資原因", "詳細資料"],
+                "data": [self.row],
+            })
+
+    with pytest.raises(StockMarketFormatError, match="detail is malformed"):
+        verify_twse_suspensions(
+            RecoverySession(["115/09/21", "3591", "23.65", "退還股款", "bad-detail"]),
+            {"3591"}, date(2026, 9, 11),
+        )
+    assert verify_twse_suspensions(
+        RecoverySession(["115/09/21", "3356", "59.40", "退還股款", "3356,20260909"]),
+        {"3591"}, date(2026, 9, 11),
+    ) == {}
+
+
+def test_verified_suspended_parent_passes_coverage_without_a_synthetic_market_row(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        upsert_daily(connection, [{
+            "trade_date": "2026-08-28", "cb_code": "35914", "cb_name": "艾笛森四",
+            "close_price": 100, "volume_lots": 0, "source": "test", "collected_at": "x",
+        }])
+        upsert_parent_stock_mappings(connection, [{
+            "cb_code": "35914", "mapping_date": "2026-08-28", "stock_code": "3591",
+            "stock_name": "艾笛森", "market": "TWSE", "source": "official",
+            "source_url": "https://example.test/issue", "verified_at": "2026-08-28T00:00:00+00:00",
+        }])
+    collect_stock_daily_market(
+        TRADE_DATE, db_path, Session(twse_payload(), tpex_payload()),
+        suspension_verifier=suspended_3591,
+    )
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM stock_daily_market").fetchone()[0] == 0
+        row = connection.execute(
+            """SELECT status, reason, availability_status, availability_evidence_json
+               FROM stock_daily_coverage WHERE stock_code='3591'"""
+        ).fetchone()
+    assert tuple(row[:3]) == ("MISSING_OFFICIAL_ROW", "parent_stock_suspended", "VERIFIED_SUSPENDED")
+    assert '"recovery_date":"2026-09-21"' in row[3]
+
+
+def test_present_daily_row_does_not_call_suspension_fallback(tmp_path):
+    db_path = tmp_path / "history.db"
+    seed_phase1_and_master(db_path)
+    calls = []
+
+    def verifier(*_args, **_kwargs):
+        calls.append(True)
+        return {}
+
+    collect_stock_daily_market(
+        TRADE_DATE, db_path,
+        Session(
+            twse_payload(["1101", "台泥", "1", "1", "1", "20", "20", "20", "20"]),
+            tpex_payload(["3131", "弘塑", "120", "+1", "119", "121", "118", "1"]),
+        ),
+        suspension_verifier=verifier,
+    )
+    assert calls == []
+
+
+def test_suspension_verifier_error_remains_a_hard_failure(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        upsert_daily(connection, [{
+            "trade_date": "2026-08-28", "cb_code": "35914", "cb_name": "艾笛森四",
+            "close_price": 100, "volume_lots": 0, "source": "test", "collected_at": "x",
+        }])
+        upsert_parent_stock_mappings(connection, [{
+            "cb_code": "35914", "mapping_date": "2026-08-28", "stock_code": "3591",
+            "stock_name": "艾笛森", "market": "TWSE", "source": "official",
+            "source_url": "https://example.test/issue", "verified_at": "2026-08-28T00:00:00+00:00",
+        }])
+
+    def broken_verifier(*_args, **_kwargs):
+        raise StockMarketFormatError("TWSE recovery evidence response structure changed")
+
+    with pytest.raises(StockMarketFormatError, match="recovery evidence"):
+        collect_stock_daily_market(
+            TRADE_DATE, db_path, Session(twse_payload(), tpex_payload()),
+            suspension_verifier=broken_verifier,
+        )
 
 
 def test_wrong_official_response_date_fails_before_writing(tmp_path):

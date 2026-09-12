@@ -143,6 +143,12 @@ CREATE TABLE IF NOT EXISTS stock_daily_coverage (
     mapping_source_url TEXT,
     mapping_year_month TEXT,
     mapping_verified_at TEXT,
+    availability_status TEXT NOT NULL DEFAULT 'AVAILABLE' CHECK (
+        availability_status IN (
+            'AVAILABLE', 'VERIFIED_SUSPENDED', 'UNVERIFIED_MISSING', 'SOURCE_ERROR'
+        )
+    ),
+    availability_evidence_json TEXT,
     checked_at TEXT NOT NULL,
     PRIMARY KEY (trade_date, stock_code)
 );
@@ -542,6 +548,14 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
         connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN mapping_year_month TEXT")
     if coverage_columns and "mapping_verified_at" not in coverage_columns:
         connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN mapping_verified_at TEXT")
+    if coverage_columns and "availability_status" not in coverage_columns:
+        connection.execute(
+            "ALTER TABLE stock_daily_coverage ADD COLUMN availability_status TEXT "
+            "NOT NULL DEFAULT 'AVAILABLE' CHECK (availability_status IN "
+            "('AVAILABLE', 'VERIFIED_SUSPENDED', 'UNVERIFIED_MISSING', 'SOURCE_ERROR'))"
+        )
+    if coverage_columns and "availability_evidence_json" not in coverage_columns:
+        connection.execute("ALTER TABLE stock_daily_coverage ADD COLUMN availability_evidence_json TEXT")
     connection.commit()
     return connection
 
@@ -1059,15 +1073,22 @@ def upsert_stock_daily_coverage(
         "COMPLETE", "OFFICIAL_ZERO", "MISSING_CLOSE", "MISSING_OFFICIAL_ROW",
         "SOURCE_ERROR",
     }
+    valid_availability_statuses = {
+        "AVAILABLE", "VERIFIED_SUSPENDED", "UNVERIFIED_MISSING", "SOURCE_ERROR",
+    }
     for row in rows:
         row.setdefault("mapping_level", "EXACT")
         row.setdefault("mapping_source_url", None)
         row.setdefault("mapping_year_month", None)
         row.setdefault("mapping_verified_at", None)
+        row.setdefault("availability_status", "AVAILABLE")
+        row.setdefault("availability_evidence_json", None)
         if row.get("market") not in valid_markets or row.get("status") not in valid_statuses:
             raise ValueError("stock daily coverage market or status is invalid")
         if row["mapping_level"] not in {"EXACT", "MONTHLY_VERIFIED"}:
             raise ValueError("stock daily coverage mapping_level is invalid")
+        if row["availability_status"] not in valid_availability_statuses:
+            raise ValueError("stock daily coverage availability_status is invalid")
         for key in ("trade_date", "stock_code", "checked_at"):
             if not str(row.get(key, "")).strip():
                 raise ValueError(f"stock daily coverage {key} is required")
@@ -1078,11 +1099,11 @@ def upsert_stock_daily_coverage(
             INSERT INTO stock_daily_coverage (
                 trade_date, stock_code, market, status, reason, source_url,
                 response_date, mapping_level, mapping_source_url, mapping_year_month,
-                mapping_verified_at, checked_at
+                mapping_verified_at, availability_status, availability_evidence_json, checked_at
             ) VALUES (
                 :trade_date, :stock_code, :market, :status, :reason, :source_url,
                 :response_date, :mapping_level, :mapping_source_url, :mapping_year_month,
-                :mapping_verified_at, :checked_at
+                :mapping_verified_at, :availability_status, :availability_evidence_json, :checked_at
             )
             ON CONFLICT(trade_date, stock_code) DO UPDATE SET
                 market = excluded.market,
@@ -1094,6 +1115,8 @@ def upsert_stock_daily_coverage(
                 mapping_source_url = excluded.mapping_source_url,
                 mapping_year_month = excluded.mapping_year_month,
                 mapping_verified_at = excluded.mapping_verified_at,
+                availability_status = excluded.availability_status,
+                availability_evidence_json = excluded.availability_evidence_json,
                 checked_at = excluded.checked_at
             """,
             rows,

@@ -1,6 +1,7 @@
 """Collect official parent-stock daily quotes for the Phase 1 CB trade date."""
 
 import argparse
+import json
 import re
 import sys
 from datetime import date, datetime, timezone
@@ -36,6 +37,10 @@ TWSE_REQUIRED_FIELDS = {
     "收盤價",
 }
 TPEX_REQUIRED_FIELDS = {"代號", "名稱", "收盤", "開盤", "最高", "最低", "成交股數"}
+TWSE_RECOVERY_REFERENCE_URL = "https://www.twse.com.tw/exchangeReport/TWTAUU"
+TWSE_RECOVERY_REQUIRED_FIELDS = {
+    "恢復買賣日期", "股票代號", "停止買賣前收盤價格", "減資原因", "詳細資料",
+}
 
 
 class StockMarketFormatError(RuntimeError):
@@ -44,6 +49,65 @@ class StockMarketFormatError(RuntimeError):
 
 class ParentStockMappingError(RuntimeError):
     """The requested date has no exact-date official CB parent mapping."""
+
+
+def _roc_date(value: Any) -> date:
+    """Parse TWSE ROC ``YYY/MM/DD`` dates without accepting guessed formats."""
+    match = re.fullmatch(r"\s*(\d{3})/(\d{2})/(\d{2})\s*", str(value))
+    if not match:
+        raise StockMarketFormatError(f"Invalid TWSE ROC date: {value!r}")
+    return date(int(match.group(1)) + 1911, int(match.group(2)), int(match.group(3)))
+
+
+def _twse_last_trade_date(detail: Any, stock_code: str) -> date:
+    """Read the official TWTAUU detail key containing the last tradable date."""
+    parts = [part.strip() for part in str(detail).split(",")]
+    if len(parts) != 2 or parts[0] != stock_code or not re.fullmatch(r"\d{8}", parts[1]):
+        raise StockMarketFormatError("TWSE recovery evidence detail is malformed")
+    return date(int(parts[1][:4]), int(parts[1][4:6]), int(parts[1][6:]))
+
+
+def verify_twse_suspensions(
+    session: requests.Session, stock_codes: set[str], trade_date: date,
+) -> dict[str, dict[str, object]]:
+    """Return only TWSE-confirmed suspension intervals covering ``trade_date``.
+
+    TWTAUU explicitly labels its quoted price as the price *before trading was
+    stopped* and gives the recovery trading date.  A target strictly between
+    those two official dates is therefore unavailable, not a zero-volume row.
+    """
+    response = session.get(TWSE_RECOVERY_REFERENCE_URL, params={"response": "json"}, timeout=HTTP_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    try:
+        payload = response.json()
+        fields = payload["fields"]
+        rows = payload["data"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise StockMarketFormatError("TWSE recovery evidence response structure changed") from exc
+    positions = _field_positions(fields, TWSE_RECOVERY_REQUIRED_FIELDS, "TWSE recovery evidence")
+    result: dict[str, dict[str, object]] = {}
+    for row in rows:
+        if not isinstance(row, list):
+            raise StockMarketFormatError("TWSE recovery evidence contains a malformed row")
+        try:
+            stock_code = str(row[positions["股票代號"]]).strip()
+        except IndexError as exc:
+            raise StockMarketFormatError("TWSE recovery evidence row has too few columns") from exc
+        if stock_code not in stock_codes:
+            continue
+        recovery_date = _roc_date(row[positions["恢復買賣日期"]])
+        last_trade_date = _twse_last_trade_date(row[positions["詳細資料"]], stock_code)
+        if last_trade_date >= recovery_date:
+            raise StockMarketFormatError("TWSE recovery evidence has an invalid suspension interval")
+        if last_trade_date < trade_date < recovery_date:
+            result[stock_code] = {
+                "source_url": TWSE_RECOVERY_REFERENCE_URL,
+                "last_trade_date": last_trade_date.isoformat(),
+                "recovery_date": recovery_date.isoformat(),
+                "pre_suspension_close": row[positions["停止買賣前收盤價格"]],
+                "corporate_action_reason": row[positions["減資原因"]],
+            }
+    return result
 
 
 def build_session() -> requests.Session:
@@ -210,6 +274,7 @@ def collect_stock_daily_market(
     *,
     allow_monthly_verified: bool = False,
     verified_mappings: Mapping[str, Mapping[str, str]] | None = None,
+    suspension_verifier=verify_twse_suspensions,
 ) -> dict[str, object]:
     if verified_mappings is None:
         with connect(db_path) as connection:
@@ -251,6 +316,8 @@ def collect_stock_daily_market(
                     "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
                     "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
                     "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                    "availability_status": "SOURCE_ERROR",
+                    "availability_evidence_json": None,
                     "checked_at": checked_at,
                 }
                 for stock_code in sorted(target_codes)
@@ -262,6 +329,8 @@ def collect_stock_daily_market(
         raise StockMarketFormatError(f"Parent stocks appear in both markets: {sorted(duplicate_codes)}")
     missing_codes = target_codes - records.keys()
     if missing_codes:
+        suspended = suspension_verifier(http, missing_codes, trade_date)
+        unverified_missing_codes = missing_codes - suspended.keys()
         with connect(db_path) as connection:
             upsert_stock_daily_coverage(connection, [
                 {
@@ -269,20 +338,25 @@ def collect_stock_daily_market(
                     "stock_code": stock_code,
                     "market": mapping_by_stock[stock_code]["market"],
                     "status": "MISSING_OFFICIAL_ROW",
-                    "reason": "missing_from_official_daily_market",
-                    "source_url": None,
-                    "response_date": trade_date.isoformat(),
+                    "reason": "parent_stock_suspended" if stock_code in suspended else "missing_from_official_daily_market",
+                    "source_url": suspended.get(stock_code, {}).get("source_url"),
+                    "response_date": suspended.get(stock_code, {}).get("recovery_date"),
                     "mapping_level": mapping_by_stock[stock_code]["mapping_level"],
                     "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
                     "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
                     "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                    "availability_status": "VERIFIED_SUSPENDED" if stock_code in suspended else "UNVERIFIED_MISSING",
+                    "availability_evidence_json": json.dumps(
+                        suspended[stock_code], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                    ) if stock_code in suspended else None,
                     "checked_at": checked_at,
                 }
                 for stock_code in sorted(missing_codes)
             ])
-        raise StockMarketFormatError(
-            f"Parent stocks missing from official daily markets: {sorted(missing_codes)}"
-        )
+        if unverified_missing_codes:
+            raise StockMarketFormatError(
+                f"Parent stocks missing from official daily markets: {sorted(unverified_missing_codes)}"
+            )
 
     with connect(db_path) as connection:
         inserted, updated = upsert_stock_daily_market(connection, records.values())
@@ -312,6 +386,8 @@ def collect_stock_daily_market(
                 "mapping_source_url": mapping_by_stock[stock_code]["source_url"],
                 "mapping_year_month": mapping_by_stock[stock_code]["mapping_year_month"],
                 "mapping_verified_at": mapping_by_stock[stock_code]["verified_at"],
+                "availability_status": "AVAILABLE",
+                "availability_evidence_json": None,
                 "checked_at": checked_at,
             })
         upsert_stock_daily_coverage(connection, coverage)

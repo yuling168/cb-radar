@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from db import connect, upsert_daily, upsert_stock_daily_market
+from db import connect, upsert_daily, upsert_stock_daily_coverage, upsert_stock_daily_market
 from strategy_engine import (
     STRATEGY_CODE,
     STRATEGY_VERSION,
@@ -206,6 +206,42 @@ def test_a_v1_missing_conversion_or_parent_close_is_diagnostic(tmp_path):
         assert evaluate_a_v2(connection, "2026-08-12")[0]["unavailable_reasons"] == [
             "missing_parent_stock_close"
         ]
+
+
+def test_a_v2_verified_suspended_parent_is_unavailable_without_a_synthetic_price(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+        connection.execute("UPDATE cb_daily SET cb_code='35914', cb_name='艾笛森四' WHERE cb_code='12345'")
+        connection.execute(
+            """INSERT INTO cb_master (
+                cb_code, cb_name, stock_code, stock_name, issue_date, maturity_date,
+                issue_amount, source, source_url, collected_at
+            ) VALUES ('35914', '艾笛森四', '3591', '艾笛森', '2024-11-22', '2027-11-22',
+                      300000000, 'test', 'https://example.test', '2026-08-20T00:00:00+00:00')"""
+        )
+        connection.execute(
+            """INSERT INTO conversion_price_events
+                (cb_code, effective_date, conversion_price, source, source_url, collected_at)
+                VALUES ('35914', '2024-11-22', 25.5, 'test', 'https://example.test', 'x')"""
+        )
+        connection.execute("DELETE FROM stock_daily_market")
+        upsert_stock_daily_coverage(connection, [{
+            "trade_date": "2026-08-12", "stock_code": "3591", "market": "TWSE",
+            "status": "MISSING_OFFICIAL_ROW", "reason": "parent_stock_suspended",
+            "source_url": "https://www.twse.com.tw/exchangeReport/TWTAUU",
+            "response_date": "2026-08-21", "availability_status": "VERIFIED_SUSPENDED",
+            "availability_evidence_json": json.dumps({"last_trade_date": "2026-08-09", "recovery_date": "2026-08-21"}),
+            "checked_at": "2026-08-12T00:00:00+00:00",
+        }])
+        result = evaluate_a_v2(connection, "2026-08-12")[0]
+        assert result["cb_code"] == "35914"
+        assert result["data_status"] == "UNAVAILABLE"
+        assert result["unavailable_reasons"] == ["parent_stock_suspended"]
+        assert result["conditions"] == {}
+        assert result["values"]["stock_code"] == "3591"
+        assert result["values"]["parent_stock_availability"] == "VERIFIED_SUSPENDED"
+        assert "conversion_value" not in result["values"]
+        assert run_a_v2(connection, ["2026-08-12"])["signals_inserted"] == 0
 
 
 def test_cli_accepts_a_single_date_or_an_inclusive_history_range():
