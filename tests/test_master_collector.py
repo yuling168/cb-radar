@@ -58,6 +58,7 @@ ISSUE_ROW = {
     "BondType": "5",
     "SeriesNumber": "2",
     "IssueDate": "20230828",
+    "ListingDate": "20230828",
     "MaturityDate": "20260828",
     "IssueAmount": "800000000",
     "OutstandingAmount": "168300000",
@@ -68,6 +69,21 @@ ISSUE_ROW = {
     "Guaranteed": "2",
     "GuaranteeDescription": "",
     "Conversion/ExchangePriceAtIssuance": "109.5000",
+}
+FUTURE_SCHEDULED_ISSUE_ROW = {
+    **ISSUE_ROW,
+    "Date": "20260911",
+    "IssuerCode": "2646",
+    "IssuerName": "星宇航空",
+    "BondCode": "",
+    "ShortName": "",
+    "SeriesNumber": "2",
+    "IssueDate": "20260930",
+    "ListingDate": "20260930",
+    "MaturityDate": "20310930",
+    "IssueAmount": "1500000000",
+    "OutstandingAmount": "1500000000",
+    "Conversion/ExchangePriceAtIssuance": "21.2000",
 }
 TDCC_CSV = """資料日期,證券代號,證券名稱,市場別,證券種類,登錄數額
 20260827,30882,艾訊二,上櫃,可轉債(千股),1683
@@ -140,7 +156,7 @@ NEW_MOPS_HTML = """
 
 
 def test_tpex_master_fields_are_normalized():
-    row = parse_tpex_issues([ISSUE_ROW])["30882"]
+    row = parse_tpex_issues([ISSUE_ROW], date(2026, 9, 11))["30882"]
     assert row["issue_date"] == "2023-08-28"
     assert row["maturity_date"] == "2026-08-28"
     assert row["put_date"] is None
@@ -148,6 +164,57 @@ def test_tpex_master_fields_are_normalized():
     assert row["is_secured"] == 0
     assert row["issue_conversion_price"] == 109.5
     assert row["series_number"] == 2
+
+
+def test_tpex_future_scheduled_row_is_excluded_before_bond_code_validation():
+    diagnostics: list[dict[str, str]] = []
+
+    rows = parse_tpex_issues(
+        [FUTURE_SCHEDULED_ISSUE_ROW], date(2026, 9, 11), diagnostics
+    )
+
+    assert rows == {}
+    assert diagnostics == [{
+        "issuer_code": "2646",
+        "issuer_name": "星宇航空",
+        "issue_date": "2026-09-30",
+        "listing_date": "2026-09-30",
+    }]
+
+
+def test_tpex_effective_blank_bond_code_still_fails_loudly():
+    with pytest.raises(MasterFormatError, match="missing BondCode"):
+        parse_tpex_issues([FUTURE_SCHEDULED_ISSUE_ROW], date(2026, 9, 30))
+
+
+@pytest.mark.parametrize(
+    ("issue_date", "listing_date"),
+    [("20260901", "20260930"), ("20260930", "20260901")],
+)
+def test_tpex_any_future_effective_date_excludes_row(issue_date, listing_date):
+    row = dict(
+        FUTURE_SCHEDULED_ISSUE_ROW,
+        BondCode="26462",
+        ShortName="星宇二",
+        IssueDate=issue_date,
+        ListingDate=listing_date,
+    )
+
+    assert parse_tpex_issues([row], date(2026, 9, 11)) == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("IssueDate", "", "Invalid IssueDate"),
+        ("ListingDate", "", "Invalid ListingDate"),
+    ],
+)
+def test_tpex_effective_date_fields_are_strict(field, value, message):
+    row = dict(ISSUE_ROW)
+    row[field] = value
+    with pytest.raises(MasterFormatError, match=message):
+        parse_tpex_issues([row], date(2026, 9, 11))
 
 
 def test_mops_latest_price_and_monthly_balance_are_parsed():
@@ -280,7 +347,7 @@ def test_tpex_secured_and_unsecured_are_parsed():
                    GuaranteeDescription="第一銀行")
     unsecured = dict(ISSUE_ROW, BondCode="30882", Guaranteed="2",
                      GuaranteeDescription="")
-    rows = parse_tpex_issues([secured, unsecured])
+    rows = parse_tpex_issues([secured, unsecured], date(2026, 9, 11))
     assert rows["30881"]["is_secured"] == 1
     assert rows["30882"]["is_secured"] == 0
 
@@ -490,7 +557,7 @@ def test_required_official_field_missing_fails_loudly():
     malformed = dict(ISSUE_ROW)
     malformed.pop("IssueAmount")
     with pytest.raises(MasterFormatError, match="required fields changed"):
-        parse_tpex_issues([malformed])
+        parse_tpex_issues([malformed], date(2026, 9, 11))
     with pytest.raises(MasterFormatError, match="MOPS required field missing"):
         parse_mops_snapshot(MOPS_HTML.replace("本月底發行餘額", "餘額"), MOPS_URL)
 
@@ -1060,7 +1127,7 @@ def test_daily_exact_mapping_refresh_is_atomic_and_does_not_fallback_to_master(t
     _seed_daily_mapping_universe(db_path, ("30882", "140201", "140202"))
     with connect(db_path) as connection:
         upsert_master_data(connection, [{
-            **parse_tpex_issues([ISSUE_ROW])["30882"],
+            **parse_tpex_issues([ISSUE_ROW], date(2026, 9, 11))["30882"],
             "issue_units": 1, "balance_amount": None, "balance_date": None,
             "current_conversion_price": 100.0,
             "current_conversion_price_effective_date": "2026-08-28",
@@ -1161,6 +1228,7 @@ def test_phase2_modules_bootstrap_new_31494_for_same_day_parent_stock_collection
         "bootstrap": 1,
         "events": 1,
         "monthly": 1,
+        "not_yet_effective": 0,
     }
     with connect(db_path) as connection:
         row = connection.execute(

@@ -44,6 +44,7 @@ TPEX_REQUIRED_FIELDS = {
     "BondType",
     "SeriesNumber",
     "IssueDate",
+    "ListingDate",
     "MaturityDate",
     "IssueAmount",
     "ShortName",
@@ -143,16 +144,39 @@ def _positive_float(value: str, label: str) -> float:
     return number
 
 
-def parse_tpex_issues(payload: object) -> dict[str, dict[str, object]]:
+def parse_tpex_issues(
+    payload: object,
+    as_of: date,
+    not_yet_effective: list[dict[str, str]] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Parse active TPEx TWD CBs as of an explicit collector date.
+
+    The TPEx issue feed can include scheduled future listings with the ordinary
+    CB status fields but without a BondCode yet.  They are diagnostics, not
+    members of the active master universe.
+    """
     if not isinstance(payload, list) or not payload:
         raise MasterFormatError("TPEx issue endpoint returned no rows")
     parsed: dict[str, dict[str, object]] = {}
+    future_row_count = 0
     for raw in payload:
         if not isinstance(raw, dict) or not TPEX_REQUIRED_FIELDS.issubset(raw):
             raise MasterFormatError("TPEx issue endpoint required fields changed")
         if raw["BondType"] != "5" or raw["ListingStatus"] != "2":
             continue
         if raw["Currency"] != "1":
+            continue
+        issue_date = _parse_yyyymmdd(str(raw["IssueDate"]), "IssueDate")
+        listing_date = _parse_yyyymmdd(str(raw["ListingDate"]), "ListingDate")
+        if issue_date > as_of.isoformat() or listing_date > as_of.isoformat():
+            future_row_count += 1
+            if not_yet_effective is not None:
+                not_yet_effective.append({
+                    "issuer_code": str(raw["IssuerCode"]).strip(),
+                    "issuer_name": str(raw["IssuerName"]).strip(),
+                    "issue_date": issue_date,
+                    "listing_date": listing_date,
+                })
             continue
         cb_code = str(raw["BondCode"]).strip()
         if not cb_code:
@@ -179,7 +203,7 @@ def parse_tpex_issues(payload: object) -> dict[str, dict[str, object]]:
             "cb_name": str(raw["ShortName"]).strip(),
             "stock_code": str(raw["IssuerCode"]).strip(),
             "stock_name": str(raw["IssuerName"]).strip(),
-            "issue_date": _parse_yyyymmdd(str(raw["IssueDate"]), "IssueDate"),
+            "issue_date": issue_date,
             "maturity_date": _parse_yyyymmdd(str(raw["MaturityDate"]), "MaturityDate"),
             "put_date": _parse_yyyymmdd(put_raw, "PutOptionDate") if put_raw else None,
             "issue_amount": _positive_int(str(raw["IssueAmount"]), "IssueAmount"),
@@ -197,7 +221,7 @@ def parse_tpex_issues(payload: object) -> dict[str, dict[str, object]]:
         }
         if not parsed[cb_code]["cb_name"] or not parsed[cb_code]["stock_code"] or not parsed[cb_code]["stock_name"]:
             raise MasterFormatError(f"TPEx listed CB {cb_code} has blank identity fields")
-    if not parsed:
+    if not parsed and not future_row_count:
         raise MasterFormatError("TPEx issue endpoint contained no active TWD CBs")
     return parsed
 
@@ -246,7 +270,7 @@ def refresh_daily_exact_parent_stock_mappings(
         {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
     )
     try:
-        issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
+        issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL), trade_date)
     except MasterFormatError as exc:
         requested_codes = ",".join(str(row["cb_code"]) for row in daily_rows)
         raise MasterFormatError(
@@ -1537,10 +1561,14 @@ def collect_master(
     http.headers.update(
         {"User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2 official collector)"}
     )
+    as_of = as_of_date or datetime.now(ZoneInfo("Asia/Taipei")).date()
     existing_state = _load_existing_master_state(db_path)
     request_counts = RequestCounts()
+    future_issues: list[dict[str, str]] = []
     if source_data is None:
-        issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL, request_counts))
+        issues = parse_tpex_issues(
+            _get_json(http, TPEX_CB_ISSUE_URL, request_counts), as_of, future_issues
+        )
         links = parse_tpex_mops_links(
             _get_json(http, TPEX_CB_LISTED_URL, request_counts)
         )
@@ -1556,7 +1584,6 @@ def collect_master(
         raise MasterFormatError(f"Requested CBs are not active in TPEx issue data: {missing}")
 
     collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    as_of = as_of_date or datetime.now(ZoneInfo("Asia/Taipei")).date()
     latest_completed_month = _latest_completed_year_month(as_of)
     not_yet_effective = [
         {
@@ -1809,6 +1836,8 @@ def collect_master(
         "exchangeable_bonds": len(excluded_exchangeables),
         "delisted_bonds": len(delisted),
         "other_excluded_types": len(not_yet_effective),
+        "tpex_not_yet_effective_count": len(future_issues),
+        "tpex_not_yet_effective": future_issues,
         "excluded_exchangeables": excluded_exchangeables,
         "excluded_delisted": delisted,
         "other_exclusions": not_yet_effective,
@@ -1865,7 +1894,10 @@ def collect_phase2_modules(
 
     if module in {"all", "tpex"}:
         try:
-            issues = parse_tpex_issues(_get_json(http, TPEX_CB_ISSUE_URL))
+            future_issues: list[dict[str, str]] = []
+            issues = parse_tpex_issues(
+                _get_json(http, TPEX_CB_ISSUE_URL), as_of, future_issues
+            )
             links = parse_tpex_mops_links(
                 _get_json(http, TPEX_CB_LISTED_URL)
             )
@@ -1884,6 +1916,7 @@ def collect_phase2_modules(
                 "bootstrap": created,
                 "events": events,
                 "monthly": monthly,
+                "not_yet_effective": len(future_issues),
             }
         except (requests.RequestException, MasterFormatError, ValueError) as exc:
             results["tpex"] = {"status": "failed", "error": str(exc)}
@@ -1946,6 +1979,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"phase2_module_{name}_updated: {result['updated']}")
             if "bootstrap" in result:
                 print(f"phase2_module_{name}_bootstrap: {result['bootstrap']}")
+            if "not_yet_effective" in result:
+                print(
+                    f"phase2_module_{name}_not_yet_effective: "
+                    f"{result['not_yet_effective']}"
+                )
             if "error" in result:
                 print(f"phase2_module_{name}_error: {result['error']}")
             for warning in result.get("warnings", []):
