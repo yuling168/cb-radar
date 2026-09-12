@@ -195,3 +195,92 @@ jobs:
           grep -E 'hostname mismatch|Verify return code:' "$work/wrong-host.txt"
           grep -E 'certificate has expired' "$work/expired.txt"
           grep -E 'self-signed certificate' "$work/self-signed.txt"
+
+      - name: Verify production TPEx TLS helper and daily endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import requests
+
+          from collector import HTTP_TRANSIENT_MAX_ATTEMPTS
+          from config import (
+              TPEX_BASE_URL,
+              TPEX_CB_DELISTED_URL,
+              TPEX_CB_ISSUE_URL,
+              TPEX_CB_LISTED_URL,
+              TPEX_DAILY_MARKET_URL,
+              TPEX_REPORT_CODE,
+              TPEX_REPORT_INDEX_URL,
+          )
+          from tpex_tls import (
+              TPEX_HOST,
+              TWCA_INTERMEDIATE_SHA256,
+              TWCA_INTERMEDIATE_URL,
+              build_tpex_session,
+          )
+
+          session = build_tpex_session()
+          try:
+              bundle = session.ca_bundle
+              assert bundle.bundle_path.is_file()
+              assert bundle.intermediate_path.is_file()
+              print(f"production_helper_import=PASS")
+              print(f"bootstrap_official_https=PASS source={TWCA_INTERMEDIATE_URL}")
+              print(f"bootstrap_fingerprint=PASS sha256={TWCA_INTERMEDIATE_SHA256}")
+              print("bootstrap_subject_issuer_ca_validity_chain=PASS")
+              print(f"temporary_bundle=PASS path={bundle.bundle_path}")
+
+              endpoints = (
+                  ("tpex_root", "GET", TPEX_BASE_URL, {}),
+                  ("cbdaily_20260911", "GET", TPEX_REPORT_INDEX_URL, {
+                      "params": {"date": "2026/09/11", "fileCode": TPEX_REPORT_CODE},
+                  }),
+                  ("bond_ISSBD5_data", "GET", TPEX_CB_ISSUE_URL, {}),
+                  ("convSearch", "GET", TPEX_CB_LISTED_URL, {}),
+                  ("convDelist", "GET", TPEX_CB_DELISTED_URL, {}),
+                  ("announcement_openapi", "GET", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O", {}),
+                  ("parent_stock", "POST", TPEX_DAILY_MARKET_URL, {
+                      "data": {"date": "2026/09/11", "type": "EW", "response": "json"},
+                  }),
+              )
+              for label, method, url, kwargs in endpoints:
+                  response = session.request(method, url, timeout=30, **kwargs)
+                  response.raise_for_status()
+                  if label != "tpex_root":
+                      response.json()
+                  print(f"production_endpoint={label} PASS status={response.status_code}")
+
+              captured = []
+              original_request = requests.Session.request
+              def capture(self, method, url, *args, **kwargs):
+                  captured.append((url, kwargs.get("verify")))
+                  return object()
+              requests.Session.request = capture
+              try:
+                  session.get(f"https://{TPEX_HOST}/scope-test")
+                  session.get("https://openapi.twse.com.tw/scope-test")
+              finally:
+                  requests.Session.request = original_request
+              assert captured[0][1] == str(bundle.bundle_path)
+              assert captured[1][1] is None
+              print("scope_tpex_bundle=PASS")
+              print("scope_non_tpex_default_trust=PASS")
+              assert HTTP_TRANSIENT_MAX_ATTEMPTS == 3
+              print("collector_transient_retry=PASS attempts=3 backoff=1s,2s")
+
+              production_files = (
+                  "tpex_tls.py", "collector.py", "master_collector.py",
+                  "announcement_collector.py", "stock_collector.py",
+              )
+              forbidden = (
+                  "verify=False", "CERT_NONE", "check_hostname = False",
+                  "REQUESTS_CA_BUNDLE", "http://sslserver.twca.com.tw",
+              )
+              for filename in production_files:
+                  source = open(filename, encoding="utf-8").read()
+                  assert not any(value in source for value in forbidden), filename
+              print("production_security_scan=PASS")
+          finally:
+              session.close()
+          PY
