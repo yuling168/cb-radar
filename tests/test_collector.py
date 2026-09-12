@@ -3,7 +3,14 @@ from datetime import date
 import pytest
 import requests
 
-from collector import DataNotPublished, TpexFormatError, collect, parse_tpex_csv, volume_to_lots
+from collector import (
+    DataNotPublished,
+    TpexFormatError,
+    collect,
+    get_with_transient_retry,
+    parse_tpex_csv,
+    volume_to_lots,
+)
 from db import connect, upsert_daily
 
 
@@ -116,3 +123,85 @@ def test_non_trading_day_does_not_write_fake_data(tmp_path):
     with pytest.raises(DataNotPublished):
         collect(date(2026, 8, 29), db_path=db_path, session=EmptyIndexSession())
     assert not db_path.exists()
+
+
+class SuccessfulResponse:
+    pass
+
+
+class TransientSequenceSession:
+    def __init__(self, outcomes):
+        self.headers = {}
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def test_transient_ssl_error_retries_once_then_succeeds(monkeypatch, capsys):
+    response = SuccessfulResponse()
+    session = TransientSequenceSession([requests.exceptions.SSLError("tls"), response])
+    sleeps = []
+    monkeypatch.setattr("collector.time.sleep", sleeps.append)
+
+    assert get_with_transient_retry(session, "https://www.tpex.org.tw/test") is response
+    assert len(session.calls) == 2
+    assert sleeps == [1]
+    assert "SSLError attempt=1/3" in capsys.readouterr().err
+
+
+def test_transient_ssl_errors_retry_until_third_attempt_success(monkeypatch, capsys):
+    response = SuccessfulResponse()
+    session = TransientSequenceSession([
+        requests.exceptions.SSLError("first"),
+        requests.exceptions.SSLError("second"),
+        response,
+    ])
+    sleeps = []
+    monkeypatch.setattr("collector.time.sleep", sleeps.append)
+
+    assert get_with_transient_retry(session, "https://www.tpex.org.tw/test") is response
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+    assert "recovered after retry: host=www.tpex.org.tw attempt=3/3" in capsys.readouterr().err
+
+
+def test_transient_ssl_error_hard_fails_after_three_attempts(monkeypatch):
+    session = TransientSequenceSession([requests.exceptions.SSLError("tls")] * 3)
+    sleeps = []
+    monkeypatch.setattr("collector.time.sleep", sleeps.append)
+
+    with pytest.raises(requests.exceptions.SSLError, match="tls"):
+        get_with_transient_retry(session, "https://www.tpex.org.tw/test")
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+
+
+@pytest.mark.parametrize("error", [
+    requests.exceptions.ConnectionError("connection"),
+    requests.exceptions.Timeout("timeout"),
+])
+def test_transient_connection_and_timeout_errors_retry(monkeypatch, error):
+    response = SuccessfulResponse()
+    session = TransientSequenceSession([error, response])
+    sleeps = []
+    monkeypatch.setattr("collector.time.sleep", sleeps.append)
+
+    assert get_with_transient_retry(session, "https://www.tpex.org.tw/test") is response
+    assert len(session.calls) == 2
+    assert sleeps == [1]
+
+
+def test_normal_request_is_not_retried_or_given_an_ssl_override(monkeypatch):
+    response = SuccessfulResponse()
+    session = TransientSequenceSession([response])
+    monkeypatch.setattr("collector.time.sleep", lambda _seconds: pytest.fail("unexpected sleep"))
+
+    assert get_with_transient_retry(session, "https://www.tpex.org.tw/test", timeout=12) is response
+    assert len(session.calls) == 1
+    assert session.calls[0][1] == {"timeout": 12}

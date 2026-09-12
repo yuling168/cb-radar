@@ -2,9 +2,11 @@ import argparse
 import csv
 import io
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -39,6 +41,12 @@ EXPECTED_HEADER = [
     "明日跌停",
 ]
 EXCLUDED_VERIFICATION_CODES = {"16095", "17172", "62236"}
+TRANSIENT_HTTP_EXCEPTIONS = (
+    requests.exceptions.SSLError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
+HTTP_TRANSIENT_MAX_ATTEMPTS = 3
 
 
 class DataNotPublished(Exception):
@@ -47,6 +55,40 @@ class DataNotPublished(Exception):
 
 class TpexFormatError(RuntimeError):
     """TPEx returned a response whose required structure has changed."""
+
+
+def get_with_transient_retry(
+    session: requests.Session, url: str, **kwargs: Any
+) -> requests.Response:
+    """GET with bounded retry for transport failures only.
+
+    TLS verification remains enabled because this delegates unchanged to
+    ``requests.Session.get``. HTTP responses, including 4xx/5xx, are returned
+    exactly once for the caller's existing status and data semantics.
+    """
+    host = urlparse(url).netloc
+    for attempt in range(1, HTTP_TRANSIENT_MAX_ATTEMPTS + 1):
+        try:
+            response = session.get(url, **kwargs)
+        except TRANSIENT_HTTP_EXCEPTIONS as exc:
+            if attempt == HTTP_TRANSIENT_MAX_ATTEMPTS:
+                raise
+            print(
+                "TPEx transient request failure: "
+                f"host={host} exception={type(exc).__name__} "
+                f"attempt={attempt}/{HTTP_TRANSIENT_MAX_ATTEMPTS}",
+                file=sys.stderr,
+            )
+            time.sleep(attempt)
+            continue
+        if attempt > 1:
+            print(
+                f"TPEx request recovered after retry: host={host} "
+                f"attempt={attempt}/{HTTP_TRANSIENT_MAX_ATTEMPTS}",
+                file=sys.stderr,
+            )
+        return response
+    raise AssertionError("unreachable transient retry state")
 
 
 def _parse_number(value: Any, *, integer: bool = False) -> float | int | None:
@@ -185,7 +227,8 @@ def _roc_date_to_date(value: str) -> date:
 
 
 def fetch_report_listing(session: requests.Session, query_date: date) -> dict[date, str]:
-    response = session.get(
+    response = get_with_transient_retry(
+        session,
         TPEX_REPORT_INDEX_URL,
         params={"date": query_date.strftime("%Y/%m/%d"), "fileCode": TPEX_REPORT_CODE},
         timeout=HTTP_TIMEOUT_SECONDS,
@@ -235,7 +278,9 @@ def collect(
     http = session or requests.Session()
     http.headers.update({"User-Agent": "cb-radar/0.1 (TPEx daily collector)"})
     trade_date, report_path = resolve_report(http, requested_date, latest_available)
-    response = http.get(f"{TPEX_BASE_URL}{report_path}", timeout=HTTP_TIMEOUT_SECONDS)
+    response = get_with_transient_retry(
+        http, f"{TPEX_BASE_URL}{report_path}", timeout=HTTP_TIMEOUT_SECONDS
+    )
     response.raise_for_status()
     frame = _read_validated_csv(response.content, trade_date)
     body = frame[frame[0] == "BODY"]
