@@ -178,7 +178,7 @@ jobs:
         run: python scripts/validate_db.py --database data/cb_history.db
 
       - name: Build dashboard data
-        run: python scripts/build_dashboard.py
+        run: python -m scripts.build_dashboard
 
       - name: Publish verified DB snapshot candidate
         if: steps.collector.outputs.trade_date != ''

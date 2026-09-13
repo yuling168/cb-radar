@@ -1,6 +1,9 @@
 import json
+import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
@@ -142,6 +145,35 @@ def create_dashboard_database(path, *, include_master=True):
                            [(code,) for code in ('00980A','00985A','00999A','00982A','00992A')])
     connection.commit()
     connection.close()
+
+
+def test_dashboard_module_command_runs_from_a_clean_repo_root(tmp_path):
+    """The workflow command must resolve the root strategy registry without PYTHONPATH."""
+    repo_root = tmp_path / "clean-repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "data").mkdir()
+    (repo_root / "docs").mkdir()
+    source_root = Path(__file__).resolve().parents[1]
+    shutil.copy2(source_root / "scripts" / "build_dashboard.py", repo_root / "scripts" / "build_dashboard.py")
+    shutil.copy2(source_root / "strategy_registry.py", repo_root / "strategy_registry.py")
+    create_dashboard_database(repo_root / "data" / "cb_history.db")
+
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    environment.pop("PYTHONHOME", None)
+    completed = subprocess.run(
+        [sys.executable, "-m", "scripts.build_dashboard"],
+        cwd=repo_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "records: 2" in completed.stdout
+    payload = json.loads((repo_root / "docs" / "data.json").read_text(encoding="utf-8"))
+    assert len(payload["records"]) == 2
 
 
 def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
