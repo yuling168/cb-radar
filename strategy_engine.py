@@ -136,13 +136,28 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
         if missing_dates:
             results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_daily_rows"], {"missing_trade_dates": missing_dates}))
             continue
-        if today["close_price"] is None:
-            results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_close_price"], {}))
-            continue
-
         master = connection.execute(
             "SELECT stock_code FROM cb_master WHERE cb_code = ?", (cb_code,)
         ).fetchone()
+        # A verified parent suspension is an official market-state explanation.
+        # Resolve it before the otherwise higher-level CB-close diagnostic, but
+        # retain the existing close-price reason when there is no master or no
+        # verified suspension evidence.
+        coverage = (
+            _verified_parent_suspension(connection, trade_date, master["stock_code"])
+            if master is not None else None
+        )
+        if today["close_price"] is None:
+            if coverage is not None:
+                evidence = coverage["availability_evidence_json"]
+                results.append(_unavailable_result(
+                    cb_code, trade_date, ["parent_stock_suspended"],
+                    {"stock_code": master["stock_code"], "parent_stock_availability": "VERIFIED_SUSPENDED",
+                     "parent_stock_evidence": json.loads(evidence) if evidence else None},
+                ))
+            else:
+                results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_close_price"], {}))
+            continue
         if master is None:
             results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_master"], {}))
             continue
@@ -155,7 +170,6 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
         if conversion is None or conversion[0] is None or float(conversion[0]) <= 0:
             results.append(_unavailable_result(cb_code, trade_date, ["missing_conversion_price_event"], {}))
             continue
-        coverage = _verified_parent_suspension(connection, trade_date, master["stock_code"])
         if coverage is not None:
             evidence = coverage["availability_evidence_json"]
             results.append(_unavailable_result(

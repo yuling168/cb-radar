@@ -307,6 +307,7 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
         connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "A", "v2", "CB 成交量創 10 日新高", '{"premium_rate_above_1_pct":true}', values, "AVAILABLE", "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (1, "99999", "2026-08-29", "A", "v2", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["old"]', "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (2, "99999", "2026-08-29", "A", "v2", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["missing_cb_close_price"]', "y"))
+        connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (10, "35914", "2026-08-29", "A", "v2", "CB 成交量創 10 日新高", "{}", "{}", "UNAVAILABLE", '["parent_stock_suspended"]', "z"))
         b_values = json.dumps({"close_price": 101.5, "average_43_close_price": 98.5, "today_volume_lots": 120, "average_10_volume_lots": 80, "average_5_volume_lots": 70, "prior_19_high_close_price": 100, "conversion_value": 96, "premium_rate_pct": 5.73, "converted_ratio_pct": 10, "balance_date": "2026-07-31", "window_43_trade_dates": ["2026-07-01"]})
         connection.execute("INSERT INTO strategy_signals VALUES (?,?,?,?,?,?,?,?,?)", ("12345", "2026-08-29", "B", "v1", "CB 突破轉換價", '{"close_price_above_43_day_average":true}', b_values, "AVAILABLE", "x"))
         connection.execute("INSERT INTO strategy_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?)", (4, "77777", "2026-08-29", "B", "v1", "CB 突破轉換價", "{}", "{}", "UNAVAILABLE", '["missing_cb_daily_rows"]', "z"))
@@ -323,10 +324,16 @@ def test_dashboard_exports_saved_strategy_a_signal_and_latest_unavailable_diagno
     assert get_strategy("A").active_version == "v2"
     assert payload["strategy_a_signals"][0]["cb_name"] == "測試 CB"
     assert payload["strategy_a_signals"][0]["condition_values"]["conversion_value"] == 60.75
-    assert payload["strategy_a_evaluations"] == [{
-        "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
-        "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_close_price", "evaluation_count": 1,
-    }]
+    assert payload["strategy_a_evaluations"] == [
+        {
+            "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
+            "data_status": "UNAVAILABLE", "unavailable_reason": "missing_cb_close_price", "evaluation_count": 1,
+        },
+        {
+            "trade_date": "2026-08-29", "strategy_code": "A", "strategy_version": "v2",
+            "data_status": "UNAVAILABLE", "unavailable_reason": "parent_stock_suspended", "evaluation_count": 1,
+        },
+    ]
     assert payload["metadata"]["strategy_sources"]["A"] == {
         "source": "LEGACY", "definition_id": None, "baseline_run_id": None,
     }
