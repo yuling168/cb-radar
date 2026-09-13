@@ -18,6 +18,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -41,6 +42,8 @@ TPEx_GET_TRANSIENT_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
 )
+TPEx_GET_TRANSIENT_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 520})
+TPEx_RETRY_AFTER_MAX_SECONDS = 10
 
 _EXPECTED_SUBJECT = {
     NameOID.COMMON_NAME: "TWCA SSL Certification Authority",
@@ -240,6 +243,27 @@ def disable_tpex_adapter_retries(session: requests.Session) -> None:
     session.mount(f"https://{TPEX_HOST}/", HTTPAdapter(max_retries=0))
 
 
+def _retry_delay_seconds(response: requests.Response, attempt: int) -> float:
+    """Return bounded backoff, honoring a valid 429 Retry-After when possible."""
+    default_delay = float(attempt)
+    if response.status_code != 429:
+        return default_delay
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is None:
+        return default_delay
+    try:
+        delay = float(retry_after)
+    except ValueError:
+        try:
+            retry_at = _validity_boundary(parsedate_to_datetime(retry_after))
+            delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return default_delay
+    if delay < 0:
+        return default_delay
+    return min(delay, float(TPEx_RETRY_AFTER_MAX_SECONDS))
+
+
 def get_tpex_full_response(
     session: requests.Session,
     url: str,
@@ -249,11 +273,12 @@ def get_tpex_full_response(
     retry_exceptions: tuple[type[BaseException], ...] = TPEx_GET_TRANSIENT_EXCEPTIONS,
     **kwargs: object,
 ) -> requests.Response:
-    """Fetch one TPEx HTTPS GET, retrying only failed *full-body* reads.
+    """Fetch one TPEx HTTPS GET with bounded full-response retry.
 
     ``stream=True`` deliberately makes complete body consumption explicit.
     Each retry issues a new GET; no partial bytes are retained or combined.
-    HTTP status and JSON/schema failures remain caller-owned semantics.
+    Only transport failures and explicitly allowlisted transient HTTP statuses
+    retry. JSON/schema/application failures remain caller-owned semantics.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname != TPEX_HOST:
@@ -270,10 +295,26 @@ def get_tpex_full_response(
             except requests.HTTPError as exc:
                 # Real requests errors already carry this. Keep that useful
                 # status context for callers using lightweight test/session
-                # adapters too, without making HTTP errors retryable.
+                # adapters too, while retrying only the explicit status list.
                 if getattr(exc, "response", None) is None:
                     exc.response = response
-                raise
+                if response.status_code not in TPEx_GET_TRANSIENT_STATUSES:
+                    raise
+                # Consume then discard this status response. A retry is always
+                # a wholly new GET; no partial or error bytes are reused.
+                _ = response.content
+                response.close()
+                if attempt == max_attempts:
+                    raise
+                delay = _retry_delay_seconds(response, attempt)
+                print(
+                    "TPEx transient HTTP retry: "
+                    f"host={parsed.hostname} status={response.status_code} "
+                    f"attempt={attempt}/{max_attempts}",
+                    file=sys.stderr,
+                )
+                sleep(delay)
+                continue
             # Do not return until requests has fully consumed and cached this
             # one response body. ChunkedEncodingError belongs to this attempt.
             _ = response.content

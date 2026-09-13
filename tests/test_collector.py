@@ -7,8 +7,10 @@ from collector import (
     DataNotPublished,
     TpexFormatError,
     collect,
+    fetch_report_listing,
     get_with_transient_retry,
     parse_tpex_csv,
+    resolve_report,
     volume_to_lots,
 )
 from db import connect, upsert_daily
@@ -134,6 +136,20 @@ class SuccessfulResponse:
         return None
 
 
+class StatusResponse(SuccessfulResponse):
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        self.headers = {}
+        self.closed = False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def close(self):
+        self.closed = True
+
+
 class TransientSequenceSession:
     def __init__(self, outcomes):
         self.headers = {}
@@ -210,3 +226,45 @@ def test_normal_request_is_not_retried_or_given_an_ssl_override(monkeypatch):
     assert get_with_transient_retry(session, "https://www.tpex.org.tw/test", timeout=12) is response
     assert len(session.calls) == 1
     assert session.calls[0][1] == {"timeout": 12, "stream": True}
+
+
+def test_cb_daily_http_520_exhaustion_does_not_fallback_to_previous_date(monkeypatch):
+    session = TransientSequenceSession([StatusResponse(520) for _ in range(3)])
+    sleeps = []
+    monkeypatch.setattr("collector.time.sleep", sleeps.append)
+
+    with pytest.raises(requests.HTTPError, match="HTTP 520"):
+        resolve_report(session, date(2026, 9, 11), latest_available=True)
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+
+
+def test_cb_daily_successful_no_report_listing_retains_previous_date_fallback():
+    class PreviousDateListingResponse(SuccessfulResponse):
+        def json(self):
+            return {
+                "stat": "ok",
+                "tables": [{
+                    "fields": ["資料日期", "檔案下載"],
+                    "data": [["115/09/10", "/reports/20260910.csv"]],
+                }],
+            }
+
+    trade_date, report_path = resolve_report(
+        TransientSequenceSession([PreviousDateListingResponse()]),
+        date(2026, 9, 11),
+        latest_available=True,
+    )
+    assert trade_date == date(2026, 9, 10)
+    assert report_path == "/reports/20260910.csv"
+
+
+def test_cb_daily_http_200_schema_error_is_not_retried():
+    class BadListingResponse(SuccessfulResponse):
+        def json(self):
+            return {"stat": "ok", "tables": []}
+
+    session = TransientSequenceSession([BadListingResponse()])
+    with pytest.raises(TpexFormatError, match="structure changed"):
+        fetch_report_listing(session, date(2026, 9, 11))
+    assert len(session.calls) == 1

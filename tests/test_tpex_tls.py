@@ -198,9 +198,10 @@ def test_production_helper_contains_no_insecure_tls_bypass():
 
 
 class _FullBodyResponse:
-    def __init__(self, content: bytes | Exception = b"ok", *, status_code: int = 200):
+    def __init__(self, content: bytes | Exception = b"ok", *, status_code: int = 200, headers=None):
         self._content = content
         self.status_code = status_code
+        self.headers = headers or {}
         self.closed = False
 
     @property
@@ -273,17 +274,86 @@ def test_full_body_retry_hard_fails_only_after_three_transport_attempts(error):
     assert sleeps == [1, 2]
 
 
-def test_full_body_retry_never_retries_http_or_json_application_failures():
+def test_full_body_retry_never_retries_json_or_non_transient_http_failures():
     session = _FullBodySession([_FullBodyResponse(b"not json")])
     response = get_tpex_full_response(session, _tpex_url(), sleep=lambda _: pytest.fail("sleep"))
     with pytest.raises(ValueError):
         __import__("json").loads(response.content)
     assert len(session.calls) == 1
 
-    status_session = _FullBodySession([_FullBodyResponse(b"error", status_code=503)])
+    status_session = _FullBodySession([_FullBodyResponse(b"error", status_code=404)])
     with pytest.raises(requests.HTTPError):
         get_tpex_full_response(status_session, _tpex_url())
     assert len(status_session.calls) == 1
+
+
+@pytest.mark.parametrize("status_code", [408, 429, 500, 502, 503, 504, 520])
+def test_full_body_retry_retries_allowlisted_http_statuses(status_code):
+    first = _FullBodyResponse(b"temporary", status_code=status_code)
+    session = _FullBodySession([first, _FullBodyResponse(b"complete")])
+    sleeps = []
+
+    assert get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append).content == b"complete"
+    assert first.closed
+    assert len(session.calls) == 2
+    assert sleeps == [1]
+
+
+def test_full_body_retry_recovers_after_two_http_520_responses():
+    session = _FullBodySession([
+        _FullBodyResponse(b"temporary", status_code=520),
+        _FullBodyResponse(b"temporary", status_code=520),
+        _FullBodyResponse(b"complete"),
+    ])
+    sleeps = []
+
+    assert get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append).content == b"complete"
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+
+
+def test_full_body_retry_hard_fails_after_three_http_520_responses():
+    responses = [_FullBodyResponse(b"temporary", status_code=520) for _ in range(3)]
+    session = _FullBodySession(responses)
+    sleeps = []
+
+    with pytest.raises(requests.HTTPError, match="HTTP 520"):
+        get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append)
+    assert len(session.calls) == 3
+    assert sleeps == [1, 2]
+    assert all(response.closed for response in responses)
+
+
+def test_full_body_retry_does_not_retry_non_allowlisted_5xx():
+    session = _FullBodySession([_FullBodyResponse(b"error", status_code=501)])
+
+    with pytest.raises(requests.HTTPError):
+        get_tpex_full_response(session, _tpex_url(), sleep=lambda _: pytest.fail("unexpected sleep"))
+    assert len(session.calls) == 1
+
+
+def test_full_body_retry_honors_bounded_retry_after_for_429():
+    session = _FullBodySession([
+        _FullBodyResponse(b"slow down", status_code=429, headers={"Retry-After": "2"}),
+        _FullBodyResponse(b"complete"),
+    ])
+    sleeps = []
+
+    assert get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append).content == b"complete"
+    assert sleeps == [2]
+
+
+@pytest.mark.parametrize("retry_after", ["invalid", "999999"])
+def test_full_body_retry_bounds_or_rejects_invalid_retry_after(retry_after):
+    session = _FullBodySession([
+        _FullBodyResponse(b"slow down", status_code=429, headers={"Retry-After": retry_after}),
+        _FullBodyResponse(b"complete"),
+    ])
+    sleeps = []
+
+    assert get_tpex_full_response(session, _tpex_url(), sleep=sleeps.append).content == b"complete"
+    expected = [1] if retry_after == "invalid" else [tpex_tls.TPEx_RETRY_AFTER_MAX_SECONDS]
+    assert sleeps == expected
 
 
 def test_full_body_retry_rejects_non_tpex_without_requesting_it():

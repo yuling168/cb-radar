@@ -23,12 +23,17 @@ class Response:
         self.payload = payload
         self.status_code = status_code
         self.json_error = json_error
+        self.headers = {}
+        self.closed = False
         self.text = json.dumps(payload, ensure_ascii=False) if payload is not None else "<html>error</html>"
         self.content = self.text.encode("utf-8")
 
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def close(self):
+        self.closed = True
 
     def json(self):
         if self.json_error:
@@ -98,6 +103,17 @@ def test_failed_api_response_is_recorded_not_treated_as_zero_rows(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM announcement_snapshot").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM company_announcements").fetchone()[0] == 0
     assert [tuple(row) for row in fetches] == [("failed", 503, None), ("failed", 503, None)]
+
+
+def test_tpex_announcement_http_520_uses_only_the_three_audited_attempts(tmp_path):
+    db_path = tmp_path / "announcements.db"
+    session = Session([Response(status_code=520) for _ in range(3)])
+
+    with pytest.raises(AnnouncementSourceError, match="failed after 3 attempts"):
+        collect_market("TPEX", db_path, session, max_attempts=3)
+    assert session.calls == 3
+    with connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM announcement_fetch").fetchone()[0] == 3
 
 
 def test_invalid_json_is_failed_then_a_later_retry_can_succeed(tmp_path):
