@@ -100,7 +100,8 @@ def create_dashboard_database(path, *, include_master=True):
             p_high_price REAL,
             p_low_price REAL,
             p_close_price REAL,
-            p_volume_shares INTEGER NOT NULL
+            p_volume_shares INTEGER NOT NULL,
+            p_market_volume_shares INTEGER
         )
         """
     )
@@ -124,7 +125,7 @@ def create_dashboard_database(path, *, include_master=True):
     connection.execute(
         """
         INSERT INTO stock_daily_market VALUES
-            ('2026-08-29', '1101', 24.1, 24.4, 24.0, 24.3, 16839498)
+            ('2026-08-29', '1101', 24.1, 24.4, 24.0, 24.3, 16839498, 17000000)
         """
     )
     connection.execute("""CREATE TABLE parent_flow_metrics (
@@ -172,7 +173,8 @@ def test_dashboard_module_command_runs_from_a_clean_repo_root(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     assert "records: 2" in completed.stdout
-    payload = json.loads((repo_root / "docs" / "data.json").read_text(encoding="utf-8"))
+    manifest = json.loads((repo_root / "docs" / "data" / "v2" / "manifest.json").read_text(encoding="utf-8"))
+    payload = json.loads((repo_root / "docs" / "data" / "v2" / manifest["market_months"]["2026-08"]["path"]).read_text(encoding="utf-8"))
     assert len(payload["records"]) == 2
 
 
@@ -199,7 +201,7 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "volume_lots": 12,
         "remaining_days": 125,
         "p_close_price": 24.3,
-        "p_volume_lots": 16839,
+        "p_volume_lots": 17000,
         "conversion_value": 60.75,
         "premium_rate": 67.0781893,
         "issue_date": "2024-01-01",
@@ -765,7 +767,8 @@ def test_dashboard_keeps_official_zero_parent_volume_and_blank_parent_close(
         connection.execute(
             """
             UPDATE stock_daily_market
-            SET p_close_price = NULL, p_volume_shares = 0
+                SET p_close_price = NULL, p_volume_shares = 0,
+                    p_market_volume_shares = 0
             WHERE trade_date = '2026-08-29' AND p_stock_code = '1101'
             """
         )
@@ -913,3 +916,33 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'sortType === "number"' in source
     assert 'sortType === "date"' in source
     assert 'state.sortDirection = state.sortDirection === "asc" ? "desc" : "asc";' in source
+
+
+def test_dashboard_shards_are_manifested_bounded_and_semantically_complete(tmp_path, monkeypatch):
+    database_path = tmp_path / "history.db"
+    shard_root = tmp_path / "data" / "v2"
+    create_dashboard_database(database_path)
+    monkeypatch.setattr(build_dashboard, "DB_PATH", database_path)
+    monkeypatch.setattr(build_dashboard, "SHARD_ROOT", shard_root)
+    monkeypatch.setattr(build_dashboard, "OUTPUT_PATH", tmp_path / "compatibility.json")
+
+    records, changed = build_dashboard.build_dashboard_shards()
+
+    assert records == 2
+    assert changed > 0
+    manifest = json.loads((shard_root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["latest_trade_date"] == "2026-08-29"
+    assert manifest["market_dates"] == ["2026-08-29"]
+    market = manifest["market_months"]["2026-08"]
+    market_path = shard_root / market["path"]
+    assert market_path.is_file()
+    assert market["records"] == 2
+    assert market["bytes"] == market_path.stat().st_size
+    assert market["bytes"] < build_dashboard.MAX_SHARD_BYTES
+    assert len(market["sha256"]) == 64
+    latest = json.loads((shard_root / "latest.json").read_text(encoding="utf-8"))
+    assert latest["records"] == json.loads(market_path.read_text(encoding="utf-8"))["records"]
+
+    _, changed_again = build_dashboard.build_dashboard_shards()
+    assert changed_again == 0

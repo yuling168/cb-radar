@@ -36,6 +36,8 @@ TWCA_INTERMEDIATE_SHA256 = "01AF2324D098098F5E0CDF6FAABADA430B21CCE777F47EACB262
 TPEX_HOST = "www.tpex.org.tw"
 BOOTSTRAP_MAX_ATTEMPTS = 3
 BOOTSTRAP_TIMEOUT_SECONDS = 30
+BOOTSTRAP_CONNECT_TIMEOUT_SECONDS = 10
+BOOTSTRAP_REQUEST_TIMEOUT = (BOOTSTRAP_CONNECT_TIMEOUT_SECONDS, BOOTSTRAP_TIMEOUT_SECONDS)
 TPEx_GET_MAX_ATTEMPTS = 3
 TPEx_GET_TRANSIENT_EXCEPTIONS = (
     requests.exceptions.ChunkedEncodingError,
@@ -125,7 +127,7 @@ def _download_intermediate(
     for attempt in range(1, BOOTSTRAP_MAX_ATTEMPTS + 1):
         try:
             # Deliberately use requests' normal, verified HTTPS trust path here.
-            response = downloader(TWCA_INTERMEDIATE_URL, timeout=BOOTSTRAP_TIMEOUT_SECONDS)
+            response = downloader(TWCA_INTERMEDIATE_URL, timeout=BOOTSTRAP_REQUEST_TIMEOUT)
             response.raise_for_status()
             if not response.content:
                 raise TpexCABootstrapError("Official TWCA intermediate download was empty")

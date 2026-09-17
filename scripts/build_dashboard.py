@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+import shutil
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -13,6 +16,10 @@ from strategy_registry import active_strategy_codes, get_strategy
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "cb_history.db"
 OUTPUT_PATH = ROOT / "docs" / "data.json"
+SHARD_ROOT = ROOT / "docs" / "data" / "v2"
+SHARD_SCHEMA_VERSION = 2
+# A deliberate operational ceiling, far below GitHub's 100 MiB blob limit.
+MAX_SHARD_BYTES = 20 * 1024 * 1024
 TABLE_NAME = "cb_daily"
 MASTER_TABLE_NAME = "cb_master"
 STOCK_DAILY_TABLE_NAME = "stock_daily_market"
@@ -466,7 +473,7 @@ def load_rows() -> list[dict[str, object]]:
                 daily.reference_price,
                 daily.volume_lots,
                 stock.p_close_price,
-                stock.p_volume_shares,
+                COALESCE(stock.p_market_volume_shares, stock.p_volume_shares) AS p_volume_shares,
                 (
                     SELECT event.conversion_price
                     FROM conversion_price_events AS event
@@ -602,7 +609,8 @@ def _invalid_is_secured(value: object) -> None:
     raise RuntimeError(f"Invalid cb_master.is_secured value: {value!r}")
 
 
-def build_dashboard_data() -> tuple[int, int]:
+def dashboard_payload() -> dict[str, object]:
+    """Read and derive the complete legacy payload without writing an artifact."""
     rows = load_rows()
     institutional_rows = load_institutional_rows()
     strategy_a_signals, strategy_a_evaluations, strategy_a_source = load_strategy_a_rows_with_source()
@@ -613,7 +621,7 @@ def build_dashboard_data() -> tuple[int, int]:
     for signals in (strategy_a_signals, strategy_b_signals, strategy_c_signals, strategy_g_signals):
         add_display_averages_to_signals(signals, rows)
     announcements = load_announcements()
-    payload = {
+    return {
         # Additive provenance; existing strategy collections retain their established schema.
         "metadata": {"strategy_sources": {"A": strategy_a_source}},
         "records": rows,
@@ -632,20 +640,155 @@ def build_dashboard_data() -> tuple[int, int]:
         "strategy_g_signals": strategy_g_signals,
         "strategy_g_evaluations": strategy_g_evaluations,
     }
+
+
+def _json_bytes(value: object) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def _write_json(path: Path, value: object) -> int:
+    encoded = _json_bytes(value)
+    if len(encoded) > MAX_SHARD_BYTES:
+        raise RuntimeError(f"Dashboard shard exceeds {MAX_SHARD_BYTES} bytes: {path} ({len(encoded)} bytes)")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(encoded)
+    return len(encoded)
+
+
+def _month_groups(rows: list[dict[str, object]]) -> dict[str, list[dict[str, object]]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        trade_date = row.get("trade_date")
+        if not isinstance(trade_date, str) or len(trade_date) < 7:
+            raise RuntimeError("Dashboard row has no ISO trade_date for shard routing")
+        groups.setdefault(trade_date[:7], []).append(row)
+    return groups
+
+
+def _file_metadata(path: Path, root: Path, rows: list[dict[str, object]]) -> dict[str, object]:
+    encoded = path.read_bytes()
+    return {
+        "path": path.relative_to(root).as_posix(),
+        "bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "records": len(rows),
+        "dates": sorted({str(row["trade_date"]) for row in rows}, reverse=True),
+    }
+
+
+def _copy_if_changed(source: Path, destination: Path) -> bool:
+    if destination.is_file() and source.read_bytes() == destination.read_bytes():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return True
+
+
+def build_dashboard_shards() -> tuple[int, int]:
+    """Build validated static data shards; published files change only when bytes differ.
+
+    A failed build never reaches Git publication: every artifact is first written and
+    cross-checked in an isolated staging directory.  The workflow commits the full
+    manifest/artifact set atomically after this function succeeds.
+    """
+    payload = dashboard_payload()
+    records = payload["records"]
+    institutional = payload["institutional_records"]
+    assert isinstance(records, list) and isinstance(institutional, list)
+    record_groups = _month_groups(records)
+    institutional_groups = _month_groups(institutional)
+    latest_date = max(str(row["trade_date"]) for row in records)
+    with tempfile.TemporaryDirectory(prefix="cb-radar-dashboard-") as directory:
+        staging = Path(directory) / "v2"
+        market_manifest = {}
+        institutional_manifest = {}
+        for month, rows in sorted(record_groups.items()):
+            path = staging / "market" / f"{month}.json"
+            _write_json(path, {"schema_version": SHARD_SCHEMA_VERSION, "month": month, "records": rows})
+            market_manifest[month] = _file_metadata(path, staging, rows)
+        for month, rows in sorted(institutional_groups.items()):
+            path = staging / "institutional" / f"{month}.json"
+            _write_json(path, {"schema_version": SHARD_SCHEMA_VERSION, "month": month, "institutional_records": rows})
+            institutional_manifest[month] = _file_metadata(path, staging, rows)
+        strategy_manifest = {}
+        for code in active_strategy_codes():
+            lower = code.lower()
+            signals = payload[f"strategy_{lower}_signals"]
+            evaluations = payload[f"strategy_{lower}_evaluations"]
+            assert isinstance(signals, list) and isinstance(evaluations, list)
+            strategy_payload = {"schema_version": SHARD_SCHEMA_VERSION, "strategy_code": code,
+                                "signals": signals, "evaluations": evaluations}
+            if code == "A":
+                strategy_payload["source"] = payload["metadata"]["strategy_sources"]["A"]
+            path = staging / "strategies" / f"{code}.json"
+            _write_json(path, strategy_payload)
+            strategy_manifest[code] = _file_metadata(path, staging, [*signals, *evaluations])
+        latest_payload = {
+            "schema_version": SHARD_SCHEMA_VERSION,
+            "trade_date": latest_date,
+            "records": [row for row in records if row["trade_date"] == latest_date],
+            "institutional_records": [row for row in institutional if row["trade_date"] == latest_date],
+            "strategy_signals": [row for row in payload["strategy_signals"] if row["trade_date"] == latest_date],
+            "announcements": payload["announcements"],
+        }
+        _write_json(staging / "latest.json", latest_payload)
+        manifest = {
+            "schema_version": SHARD_SCHEMA_VERSION,
+            "latest_trade_date": latest_date,
+            "market_dates": sorted({str(row["trade_date"]) for row in records}, reverse=True),
+            "institutional_dates": sorted({str(row["trade_date"]) for row in institutional}, reverse=True),
+            "market_months": market_manifest,
+            "institutional_months": institutional_manifest,
+            "strategies": strategy_manifest,
+        }
+        _write_json(staging / "manifest.json", manifest)
+        for metadata in [*market_manifest.values(), *institutional_manifest.values(), *strategy_manifest.values()]:
+            candidate = staging / str(metadata["path"])
+            if hashlib.sha256(candidate.read_bytes()).hexdigest() != metadata["sha256"]:
+                raise RuntimeError(f"Dashboard shard checksum validation failed: {candidate}")
+        changed = 0
+        for source in staging.rglob("*.json"):
+            if source.name == "manifest.json":
+                continue
+            changed += _copy_if_changed(source, SHARD_ROOT / source.relative_to(staging))
+        # Publish the index only after every referenced artifact has been installed.
+        changed += _copy_if_changed(staging / "manifest.json", SHARD_ROOT / "manifest.json")
+    # Compatibility is deliberately small: legacy strategy pages retain their exact
+    # payload contract while historical market/flow rows are loaded from shards.
+    g_keys = {(row["trade_date"], row["cb_code"]) for row in payload["strategy_g_signals"]}
+    latest_institutional = [row for row in institutional if row["trade_date"] == latest_date]
+    legacy_payload = {
+        "strategy_a_signals": payload["strategy_a_signals"], "strategy_a_evaluations": payload["strategy_a_evaluations"],
+        "strategy_b_signals": payload["strategy_b_signals"], "strategy_b_evaluations": payload["strategy_b_evaluations"],
+        "strategy_c_signals": payload["strategy_c_signals"], "strategy_c_evaluations": payload["strategy_c_evaluations"],
+        "strategy_g_signals": payload["strategy_g_signals"], "strategy_g_evaluations": payload["strategy_g_evaluations"],
+        "records": [row for row in records if (row["trade_date"], row["cb_code"]) in g_keys],
+        "institutional_records": [*latest_institutional,
+                                  *[{"trade_date": value} for value in sorted({str(row["trade_date"]) for row in institutional if row["trade_date"] != latest_date})]],
+    }
+    _write_json(OUTPUT_PATH, legacy_payload)
+    return len(records), changed
+
+
+def build_dashboard_data() -> tuple[int, int]:
+    """Compatibility writer retained for direct legacy-payload tests only."""
+    payload = dashboard_payload()
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
         encoding="utf-8",
     )
-    return len(rows), OUTPUT_PATH.stat().st_size
+    records = payload["records"]
+    assert isinstance(records, list)
+    return len(records), OUTPUT_PATH.stat().st_size
 
 
 def main() -> None:
-    records, size = build_dashboard_data()
+    records, changed = build_dashboard_shards()
     print(f"database: {DB_PATH.relative_to(ROOT).as_posix()}")
-    print(f"output: {OUTPUT_PATH.relative_to(ROOT).as_posix()}")
+    print(f"output: {SHARD_ROOT.relative_to(ROOT).as_posix()}")
     print(f"records: {records}")
-    print(f"bytes: {size}")
+    print(f"changed shards: {changed}")
 
 
 if __name__ == "__main__":

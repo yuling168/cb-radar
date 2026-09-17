@@ -1,7 +1,11 @@
 """Backfill parent-stock market data for verified historical CB trading days."""
 
 import argparse
+from calendar import monthrange
+import json
+import sqlite3
 import sys
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -171,6 +175,212 @@ def backfill_stock_daily_market(
             "unresolved_cb_mappings": unresolved_total,
         })
     return result_summary
+
+
+def existing_stock_trade_dates_for_range(
+    db_path: Path | str, start_date: date, end_date: date,
+) -> list[date]:
+    """Return only dates that already have parent-stock observations.
+
+    This deliberately does not consult cb_daily or any parent mapping: V2
+    enrichment must never create a historical parent-stock universe.
+    """
+    if start_date > end_date:
+        raise ValueError("start_date must not be after end_date")
+    with connect(db_path) as connection:
+        rows = connection.execute(
+            """SELECT DISTINCT trade_date FROM stock_daily_market
+               WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date""",
+            (start_date.isoformat(), end_date.isoformat()),
+        ).fetchall()
+    return [date.fromisoformat(str(row[0])) for row in rows]
+
+
+def _readonly_connection(db_path: Path | str) -> sqlite3.Connection:
+    """Open the historical DB without letting checkpoint reads mutate it."""
+    return sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
+
+
+def pending_stock_trade_dates_v2_for_range(
+    db_path: Path | str, start_date: date, end_date: date,
+) -> list[date]:
+    """Return dates with existing rows that are not all V2 COMPLETE.
+
+    A mixed date is rejected rather than re-fetching rows that are already
+    COMPLETE.  The collector's per-day write is atomic, so mixed dates signal
+    an unexpected state that needs investigation.
+    """
+    if start_date > end_date:
+        raise ValueError("start_date must not be after end_date")
+    with _readonly_connection(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT trade_date,
+                   SUM(p_volume_definition='REGULAR_ODD_FIXED_V2'
+                       AND p_volume_component_status='COMPLETE') AS complete_rows,
+                   COUNT(*) AS target_rows
+            FROM stock_daily_market
+            WHERE trade_date BETWEEN ? AND ?
+            GROUP BY trade_date
+            HAVING complete_rows < target_rows
+            ORDER BY trade_date
+            """,
+            (start_date.isoformat(), end_date.isoformat()),
+        ).fetchall()
+    mixed = [str(row[0]) for row in rows if int(row[1]) != 0]
+    if mixed:
+        raise BackfillPreconditionError(
+            f"Refusing to re-fetch partially COMPLETE V2 dates: {mixed}"
+        )
+    return [date.fromisoformat(str(row[0])) for row in rows]
+
+
+def volume_v2_month_checkpoint(
+    db_path: Path | str, start_date: date, end_date: date,
+) -> dict[str, object]:
+    """Read-only monthly V2 gate, explicitly treating an empty month as skip."""
+    with _readonly_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT trade_date), COUNT(*),
+                   COALESCE(SUM(p_volume_definition='REGULAR_ODD_FIXED_V2'), 0),
+                   COALESCE(SUM(p_volume_component_status='COMPLETE'), 0),
+                   COALESCE(SUM(p_volume_component_status='RECONCILIATION_FAILURE'), 0),
+                   COALESCE(SUM(p_volume_component_status='SOURCE_ERROR'), 0),
+                   COALESCE(SUM(p_volume_definition='REGULAR_ONLY_V1'), 0)
+            FROM stock_daily_market
+            WHERE trade_date BETWEEN ? AND ?
+            """,
+            (start_date.isoformat(), end_date.isoformat()),
+        ).fetchone()
+    days, target, v2, complete, reconciliation, source_error, legacy = map(int, row)
+    status = "SKIPPED_NO_TARGET_ROWS" if target == 0 else (
+        "PASS" if v2 == target and complete == target
+        and reconciliation == 0 and source_error == 0 and legacy == 0 else "FAIL"
+    )
+    return {
+        "event": "month_checkpoint", "status": status,
+        "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+        "trading_days": days, "target_rows": target, "v2_rows": v2,
+        "complete": complete, "reconciliation_failure": reconciliation,
+        "source_error": source_error, "regular_only_v1": legacy,
+    }
+
+
+def backfill_pending_stock_daily_market_v2_by_month(
+    db_path: Path | str, start_date: date, end_date: date | None = None,
+    *, collector: Callable[..., dict[str, object]] = collect_stock_daily_market,
+    enricher: Callable[..., dict[str, object]] = None,
+    day_timeout_seconds: float = 300,
+) -> list[dict[str, object]]:
+    """Enrich only fully-pending existing dates, with strict monthly gates.
+
+    Empty calendar months are read-only checkpoints and are recorded as
+    ``SKIPPED_NO_TARGET_ROWS``.  They never invoke an official endpoint or
+    create a historical row.
+    """
+    if end_date is None:
+        with _readonly_connection(db_path) as connection:
+            value = connection.execute(
+                "SELECT MAX(trade_date) FROM stock_daily_market"
+            ).fetchone()[0]
+        if value is None:
+            raise BackfillPreconditionError("No stock_daily_market rows exist")
+        end_date = date.fromisoformat(str(value))
+    if start_date > end_date:
+        raise ValueError("start_date must not be after end_date")
+    if day_timeout_seconds <= 0:
+        raise ValueError("day_timeout_seconds must be positive")
+    if enricher is None:
+        enricher = enrich_existing_stock_daily_market_v2
+
+    cursor = date(start_date.year, start_date.month, 1)
+    checkpoints: list[dict[str, object]] = []
+    while cursor <= end_date:
+        month_end = date(cursor.year, cursor.month, monthrange(cursor.year, cursor.month)[1])
+        effective_start = max(cursor, start_date)
+        effective_end = min(month_end, end_date)
+        pending_dates = pending_stock_trade_dates_v2_for_range(
+            db_path, effective_start, effective_end
+        )
+        print(json.dumps({
+            "event": "month_start", "start_date": effective_start.isoformat(),
+            "end_date": effective_end.isoformat(),
+            "pending_trade_dates": [item.isoformat() for item in pending_dates],
+        }, ensure_ascii=False), flush=True)
+        for trade_date in pending_dates:
+            enricher(
+                db_path, trade_date, trade_date, collector=collector,
+                day_timeout_seconds=day_timeout_seconds,
+            )
+        checkpoint = volume_v2_month_checkpoint(db_path, cursor, effective_end)
+        print(json.dumps(checkpoint, ensure_ascii=False), flush=True)
+        if checkpoint["status"] == "FAIL":
+            raise RuntimeError("monthly V2 checkpoint failed: " + json.dumps(checkpoint, ensure_ascii=False))
+        checkpoints.append(checkpoint)
+        cursor = date(cursor.year + (cursor.month == 12), 1 if cursor.month == 12 else cursor.month + 1, 1)
+    return checkpoints
+
+
+def enrich_existing_stock_daily_market_v2(
+    db_path: Path | str, start_date: date, end_date: date,
+    collector: Callable[..., dict[str, object]] = collect_stock_daily_market,
+    day_timeout_seconds: float = 300,
+) -> dict[str, object]:
+    """Enrich exactly the existing stock rows with V2 volumes.
+
+    The target codes are read directly from each existing date's
+    stock_daily_market rows.  No mapping is resolved, no missing parent row is
+    inserted, and coverage provenance is left untouched.
+    """
+    trade_dates = existing_stock_trade_dates_for_range(db_path, start_date, end_date)
+    if not trade_dates:
+        raise BackfillPreconditionError("No existing stock_daily_market rows in requested range")
+    if day_timeout_seconds <= 0:
+        raise ValueError("day_timeout_seconds must be positive")
+    inserted = updated = target_rows = complete = reconciliation_failures = 0
+    for trade_date in trade_dates:
+        with connect(db_path) as connection:
+            codes = [str(row[0]) for row in connection.execute(
+                "SELECT p_stock_code FROM stock_daily_market WHERE trade_date = ? ORDER BY p_stock_code",
+                (trade_date.isoformat(),),
+            )]
+        # These entries carry no mapping assertion.  The collector obtains both
+        # official markets and identifies the market from the official row.
+        existing_rows = {
+            f"existing:{code}": {
+                "stock_code": code, "stock_name": code, "market": "UNKNOWN",
+                "source_url": "existing_stock_daily_market", "verified_at": "",
+                "mapping_level": "EXACT", "mapping_year_month": trade_date.strftime("%Y-%m"),
+            }
+            for code in codes
+        }
+        started = time.monotonic()
+        print(json.dumps({"event": "trade_day_start", "trade_date": trade_date.isoformat(), "target_rows": len(codes)}, ensure_ascii=False), flush=True)
+        def progress(event):
+            print(json.dumps({"event": "endpoint", **event}, ensure_ascii=False), flush=True)
+        result = collector(
+            trade_date, db_path, verified_mappings=existing_rows, write_coverage=False,
+            progress=progress, deadline_monotonic=started + day_timeout_seconds,
+        )
+        target_rows += len(codes)
+        inserted += int(result["records_inserted"])
+        updated += int(result["records_updated"])
+        complete += int(result.get("complete_records", 0))
+        reconciliation_failures += int(result.get("reconciliation_failures", 0))
+        print(json.dumps({
+            "event": "trade_day_complete", "trade_date": trade_date.isoformat(),
+            "twse_rows": result.get("twse_records"), "tpex_rows": result.get("tpex_records"),
+            "complete": result.get("complete_records"),
+            "reconciliation_failure": result.get("reconciliation_failures"),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+        }, ensure_ascii=False), flush=True)
+    return {
+        "start_date": trade_dates[0].isoformat(), "end_date": trade_dates[-1].isoformat(),
+        "trade_days": len(trade_dates), "target_stock_observations": target_rows,
+        "records_inserted": inserted, "records_updated": updated,
+        "complete_records": complete, "reconciliation_failures": reconciliation_failures,
+    }
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

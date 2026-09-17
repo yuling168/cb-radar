@@ -1,22 +1,33 @@
 """Collect official parent-stock daily quotes for the Phase 1 CB trade date."""
 
 import argparse
+from http.client import IncompleteRead
 import json
 import re
 import sys
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import ProtocolError
 from urllib3.util.retry import Retry
 
 from config import (
     DEFAULT_DB_PATH,
-    HTTP_TIMEOUT_SECONDS,
+    HTTP_REQUEST_TIMEOUT,
+    TPEX_BLOCK_TRADE_URL,
+    TPEX_DAILY_QUOTES_URL,
     TPEX_DAILY_MARKET_URL,
+    TPEX_FIXED_PRICE_URL,
+    TPEX_INTRADAY_ODD_LOT_URL,
+    TPEX_POST_ODD_LOT_URL,
     TWSE_DAILY_MARKET_URL,
+    TWSE_FIXED_PRICE_URL,
+    TWSE_INTRADAY_ODD_LOT_URL,
+    TWSE_POST_ODD_LOT_URL,
 )
 from db import (
     connect,
@@ -37,6 +48,16 @@ TWSE_REQUIRED_FIELDS = {
     "收盤價",
 }
 TPEX_REQUIRED_FIELDS = {"代號", "名稱", "收盤", "開盤", "最高", "最低", "成交股數"}
+TWSE_COMPONENT_REQUIRED_FIELDS = {"證券代號", "成交股數"}
+TWSE_FIXED_REQUIRED_FIELDS = {"證券代號", "成交數量"}
+TPEX_COMPONENT_REQUIRED_FIELDS = {"代號", "成交股數"}
+TPEX_FIXED_REQUIRED_FIELDS = {"代號", "成交張數"}
+TPEX_BLOCK_TRADE_REQUIRED_FIELDS = {"交易型態", "交割期別", "代號", "成交股數"}
+VOLUME_DEFINITION_V2 = "REGULAR_ODD_FIXED_V2"
+VOLUME_COMPONENT_STATUS_COMPLETE = "COMPLETE"
+VOLUME_COMPONENT_STATUS_RECONCILIATION_FAILURE = "RECONCILIATION_FAILURE"
+ENDPOINT_TRANSIENT_RETRY_ATTEMPTS = 3
+ENDPOINT_TRANSIENT_RETRY_BACKOFF_SECONDS = 1
 TWSE_RECOVERY_REFERENCE_URL = "https://www.twse.com.tw/exchangeReport/TWTAUU"
 TWSE_RECOVERY_REQUIRED_FIELDS = {
     "恢復買賣日期", "股票代號", "停止買賣前收盤價格", "減資原因", "詳細資料",
@@ -76,7 +97,7 @@ def verify_twse_suspensions(
     stopped* and gives the recovery trading date.  A target strictly between
     those two official dates is therefore unavailable, not a zero-volume row.
     """
-    response = session.get(TWSE_RECOVERY_REFERENCE_URL, params={"response": "json"}, timeout=HTTP_TIMEOUT_SECONDS)
+    response = session.get(TWSE_RECOVERY_REFERENCE_URL, params={"response": "json"}, timeout=HTTP_REQUEST_TIMEOUT)
     response.raise_for_status()
     try:
         payload = response.json()
@@ -241,11 +262,120 @@ def parse_tpex_market(payload: Mapping[str, Any], trade_date: date, target_codes
     return _select_target_records(rows, positions, target_codes, trade_date)
 
 
+def _component_volumes(
+    rows: Iterable[list[Any]], positions: Mapping[str, int], target_codes: set[str],
+    *, code_field: str, volume_field: str, multiplier: int, source: str,
+) -> dict[str, int]:
+    """Read a validated full-market component report; absent targets are official zero."""
+    values: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, list):
+            raise StockMarketFormatError(f"{source} component row is malformed")
+        try:
+            code = str(row[positions[code_field]]).strip()
+        except IndexError as exc:
+            raise StockMarketFormatError(f"{source} component row has too few columns") from exc
+        if code not in target_codes:
+            continue
+        if code in values:
+            raise StockMarketFormatError(f"{source} component report duplicates {code}")
+        try:
+            raw_volume = row[positions[volume_field]]
+        except IndexError as exc:
+            raise StockMarketFormatError(f"{source} component row has too few columns") from exc
+        volume = _number(raw_volume, integer=True)
+        if volume is None or volume < 0:
+            raise StockMarketFormatError(f"{source} component volume is invalid for {code}")
+        values[code] = volume * multiplier
+    return {code: values.get(code, 0) for code in target_codes}
+
+
+def _twse_component_table(payload: Mapping[str, Any], trade_date: date, required: set[str], source: str) -> tuple[list[Any], dict[str, int]]:
+    if payload.get("stat") != "OK" or payload.get("date") != trade_date.strftime("%Y%m%d"):
+        raise StockMarketFormatError(f"{source} response is not the requested published trade date")
+    try:
+        rows = payload["data"]
+        positions = _field_positions(payload["fields"], required, source)
+    except (KeyError, TypeError) as exc:
+        raise StockMarketFormatError(f"{source} response structure changed") from exc
+    if not isinstance(rows, list):
+        raise StockMarketFormatError(f"{source} response rows are malformed")
+    return rows, positions
+
+
+def _tpex_component_table(payload: Mapping[str, Any], trade_date: date, required: set[str], source: str) -> tuple[list[Any], dict[str, int]]:
+    if str(payload.get("stat", "")).lower() != "ok" or payload.get("date") != trade_date.strftime("%Y%m%d"):
+        raise StockMarketFormatError(f"{source} response is not the requested published trade date")
+    try:
+        table = payload["tables"][0]
+        rows = table["data"]
+        positions = _field_positions(table["fields"], required, source)
+    except (KeyError, IndexError, TypeError) as exc:
+        raise StockMarketFormatError(f"{source} response structure changed") from exc
+    if not isinstance(rows, list):
+        raise StockMarketFormatError(f"{source} response rows are malformed")
+    return rows, positions
+
+
+def parse_twse_volume_component(
+    payload: Mapping[str, Any], trade_date: date, target_codes: set[str], *, fixed_price: bool = False,
+) -> dict[str, int]:
+    required = TWSE_FIXED_REQUIRED_FIELDS if fixed_price else TWSE_COMPONENT_REQUIRED_FIELDS
+    rows, positions = _twse_component_table(payload, trade_date, required, "TWSE fixed-price" if fixed_price else "TWSE odd-lot")
+    return _component_volumes(
+        rows, positions, target_codes, code_field="證券代號",
+        volume_field="成交數量" if fixed_price else "成交股數",
+        multiplier=1_000 if fixed_price else 1,
+        source="TWSE fixed-price" if fixed_price else "TWSE odd-lot",
+    )
+
+
+def parse_tpex_volume_component(
+    payload: Mapping[str, Any], trade_date: date, target_codes: set[str], *, fixed_price: bool = False,
+) -> dict[str, int]:
+    required = TPEX_FIXED_REQUIRED_FIELDS if fixed_price else TPEX_COMPONENT_REQUIRED_FIELDS
+    rows, positions = _tpex_component_table(payload, trade_date, required, "TPEx fixed-price" if fixed_price else "TPEx odd-lot")
+    return _component_volumes(
+        rows, positions, target_codes, code_field="代號",
+        volume_field="成交張數" if fixed_price else "成交股數",
+        multiplier=1_000 if fixed_price else 1,
+        source="TPEx fixed-price" if fixed_price else "TPEx odd-lot",
+    )
+
+
+def parse_tpex_block_trade(
+    payload: Mapping[str, Any], trade_date: date, target_codes: set[str],
+) -> dict[str, int]:
+    """Aggregate TPEx's validated full-market block-trade report by stock.
+
+    The report can legitimately have multiple executions for one code, unlike
+    the other component reports.  It is an audit input only: dailyQuotes is
+    the canonical TPEx market-volume source.
+    """
+    rows, positions = _tpex_component_table(
+        payload, trade_date, TPEX_BLOCK_TRADE_REQUIRED_FIELDS, "TPEx block-trade",
+    )
+    values = {code: 0 for code in target_codes}
+    for row in rows:
+        if not isinstance(row, list):
+            raise StockMarketFormatError("TPEx block-trade component row is malformed")
+        try:
+            code = str(row[positions["代號"]]).strip()
+            volume = _number(row[positions["成交股數"]], integer=True)
+        except IndexError as exc:
+            raise StockMarketFormatError("TPEx block-trade component row has too few columns") from exc
+        if volume is None or volume < 0:
+            raise StockMarketFormatError(f"TPEx block-trade component volume is invalid for {code}")
+        if code in values:
+            values[code] += volume
+    return values
+
+
 def fetch_twse_market(session: requests.Session, trade_date: date) -> Mapping[str, Any]:
     response = session.get(
         TWSE_DAILY_MARKET_URL,
         params={"response": "json", "date": trade_date.strftime("%Y%m%d"), "type": "ALLBUT0999"},
-        timeout=HTTP_TIMEOUT_SECONDS,
+        timeout=HTTP_REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     try:
@@ -258,7 +388,7 @@ def fetch_tpex_market(session: requests.Session, trade_date: date) -> Mapping[st
     response = session.post(
         TPEX_DAILY_MARKET_URL,
         data={"date": trade_date.strftime("%Y/%m/%d"), "type": "EW", "response": "json"},
-        timeout=HTTP_TIMEOUT_SECONDS,
+        timeout=HTTP_REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     try:
@@ -267,7 +397,49 @@ def fetch_tpex_market(session: requests.Session, trade_date: date) -> Mapping[st
         raise StockMarketFormatError("TPEx response is not JSON") from exc
 
 
-def collect_stock_daily_market(
+def fetch_tpex_daily_quotes(session: requests.Session, trade_date: date) -> Mapping[str, Any]:
+    response = session.post(
+        TPEX_DAILY_QUOTES_URL,
+        data={"date": trade_date.strftime("%Y/%m/%d"), "response": "json"},
+        timeout=HTTP_REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise StockMarketFormatError("TPEx dailyQuotes response is not JSON") from exc
+
+
+def _fetch_twse_component(session: requests.Session, url: str, trade_date: date, *, fixed_price: bool = False) -> Mapping[str, Any]:
+    params = {"response": "json", "date": trade_date.strftime("%Y%m%d")}
+    if not fixed_price:
+        params["selectType"] = "ALL"
+    response = session.get(url, params=params, timeout=HTTP_REQUEST_TIMEOUT)
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise StockMarketFormatError("TWSE component response is not JSON") from exc
+
+
+def _fetch_tpex_component(
+    session: requests.Session, url: str, trade_date: date, *, post_odd: bool = False,
+    otc: bool = False,
+) -> Mapping[str, Any]:
+    data = {"date": trade_date.strftime("%Y/%m/%d"), "response": "json"}
+    if post_odd:
+        data["type"] = "Daily"
+    if otc:
+        data["type"] = "EW"
+    response = session.post(url, data=data, timeout=HTTP_REQUEST_TIMEOUT)
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise StockMarketFormatError("TPEx component response is not JSON") from exc
+
+
+def _collect_stock_daily_market_impl(
     trade_date: date,
     db_path: Path | str = DEFAULT_DB_PATH,
     session: requests.Session | None = None,
@@ -275,6 +447,9 @@ def collect_stock_daily_market(
     allow_monthly_verified: bool = False,
     verified_mappings: Mapping[str, Mapping[str, str]] | None = None,
     suspension_verifier=verify_twse_suspensions,
+    write_coverage: bool = True,
+    progress=None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, object]:
     if verified_mappings is None:
         with connect(db_path) as connection:
@@ -296,14 +471,80 @@ def collect_stock_daily_market(
     }
     checked_at = datetime.now(timezone.utc).isoformat()
 
-    http = session or build_session()
+    if session is None:
+        raise ValueError("_collect_stock_daily_market_impl requires a session")
+    http = session
+
+    def report(endpoint: str, outcome: str, started: float, attempt: int) -> None:
+        if progress is not None:
+            progress({
+                "trade_date": trade_date.isoformat(), "endpoint": endpoint,
+                "attempt": attempt, "elapsed_seconds": round(time.monotonic() - started, 3),
+                "outcome": outcome,
+            })
+
+    def check_deadline(endpoint: str) -> None:
+        if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+            raise StockMarketFormatError(f"daily collector deadline exceeded before {endpoint}")
+
+    transient_body_read_errors = (
+        requests.exceptions.ChunkedEncodingError,
+        requests.exceptions.TooManyRedirects,
+        ProtocolError,
+        IncompleteRead,
+    )
+
+    def fetch_and_parse(endpoint: str, fetcher, parser):
+        """Fetch, consume and parse one official report with bounded read retries.
+
+        urllib3's adapter retry can only act before a response is returned.  A
+        chunked body may instead fail while requests consumes ``response.content``
+        for ``response.json()``.  Retrying the complete fetch/parse boundary
+        discards that partial response and issues a fresh official request.
+        """
+        for attempt in range(1, ENDPOINT_TRANSIENT_RETRY_ATTEMPTS + 1):
+            check_deadline(endpoint)
+            started = time.monotonic()
+            try:
+                value = parser(fetcher())
+            except transient_body_read_errors as exc:
+                if attempt >= ENDPOINT_TRANSIENT_RETRY_ATTEMPTS:
+                    report(endpoint, f"FAIL {type(exc).__name__}: {exc}", started, attempt)
+                    raise
+                report(endpoint, f"RETRY {type(exc).__name__}: {exc}", started, attempt)
+                check_deadline(endpoint)
+                delay = ENDPOINT_TRANSIENT_RETRY_BACKOFF_SECONDS * attempt
+                if deadline_monotonic is not None and time.monotonic() + delay > deadline_monotonic:
+                    raise StockMarketFormatError(
+                        f"daily collector deadline exceeded before retrying {endpoint}"
+                    ) from exc
+                time.sleep(delay)
+                continue
+            except Exception as exc:
+                report(endpoint, f"FAIL {type(exc).__name__}: {exc}", started, attempt)
+                raise
+            check_deadline(endpoint)
+            report(endpoint, f"PASS rows={len(value)}", started, attempt)
+            return value
+        raise AssertionError("unreachable endpoint retry state")
     try:
-        # Both full-market responses are validated before any parent-stock record is written.
-        twse_records = parse_twse_market(fetch_twse_market(http, trade_date), trade_date, target_codes)
-        tpex_records = parse_tpex_market(fetch_tpex_market(http, trade_date), trade_date, target_codes)
+        # Every official total and audit-component report must validate before
+        # any V2 row is written.  dailyQuotes, not reconstructed components,
+        # is TPEx's formal market-volume source.
+        twse_records = fetch_and_parse("TWSE MI_INDEX", lambda: fetch_twse_market(http, trade_date), lambda p: parse_twse_market(p, trade_date, target_codes))
+        tpex_records = fetch_and_parse("TPEx dailyQuotes", lambda: fetch_tpex_daily_quotes(http, trade_date), lambda p: parse_tpex_market(p, trade_date, target_codes))
+        twse_intraday = fetch_and_parse("TWSE TWTC7U", lambda: _fetch_twse_component(http, TWSE_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_twse_volume_component(p, trade_date, target_codes))
+        twse_post_odd = fetch_and_parse("TWSE TWT53U", lambda: _fetch_twse_component(http, TWSE_POST_ODD_LOT_URL, trade_date), lambda p: parse_twse_volume_component(p, trade_date, target_codes))
+        twse_fixed = fetch_and_parse("TWSE BFT41U", lambda: _fetch_twse_component(http, TWSE_FIXED_PRICE_URL, trade_date, fixed_price=True), lambda p: parse_twse_volume_component(p, trade_date, target_codes, fixed_price=True))
+        tpex_intraday = fetch_and_parse("TPEx oddQuote", lambda: _fetch_tpex_component(http, TPEX_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
+        tpex_post_odd = fetch_and_parse("TPEx odd", lambda: _fetch_tpex_component(http, TPEX_POST_ODD_LOT_URL, trade_date, post_odd=True), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
+        tpex_fixed = fetch_and_parse("TPEx fixPricing", lambda: _fetch_tpex_component(http, TPEX_FIXED_PRICE_URL, trade_date), lambda p: parse_tpex_volume_component(p, trade_date, target_codes, fixed_price=True))
+        tpex_regular = fetch_and_parse("TPEx otc", lambda: _fetch_tpex_component(http, TPEX_DAILY_MARKET_URL, trade_date, otc=True), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
+        tpex_block = fetch_and_parse("TPEx blockTrade/quote", lambda: _fetch_tpex_component(http, TPEX_BLOCK_TRADE_URL, trade_date), lambda p: parse_tpex_block_trade(p, trade_date, target_codes))
     except (requests.RequestException, StockMarketFormatError) as exc:
-        with connect(db_path) as connection:
-            upsert_stock_daily_coverage(connection, [
+        if write_coverage:
+            with connect(db_path) as connection:
+                upsert_stock_daily_coverage(connection, [
                 {
                     "trade_date": trade_date.isoformat(),
                     "stock_code": stock_code,
@@ -321,7 +562,7 @@ def collect_stock_daily_market(
                     "checked_at": checked_at,
                 }
                 for stock_code in sorted(target_codes)
-            ])
+                ])
         raise
     records = {**twse_records, **tpex_records}
     duplicate_codes = set(twse_records) & set(tpex_records)
@@ -331,8 +572,9 @@ def collect_stock_daily_market(
     if missing_codes:
         suspended = suspension_verifier(http, missing_codes, trade_date)
         unverified_missing_codes = missing_codes - suspended.keys()
-        with connect(db_path) as connection:
-            upsert_stock_daily_coverage(connection, [
+        if write_coverage:
+            with connect(db_path) as connection:
+                upsert_stock_daily_coverage(connection, [
                 {
                     "trade_date": trade_date.isoformat(),
                     "stock_code": stock_code,
@@ -352,12 +594,62 @@ def collect_stock_daily_market(
                     "checked_at": checked_at,
                 }
                 for stock_code in sorted(missing_codes)
-            ])
+                ])
         if unverified_missing_codes:
             raise StockMarketFormatError(
                 f"Parent stocks missing from official daily markets: {sorted(unverified_missing_codes)}"
             )
 
+    for stock_code, record in records.items():
+        if stock_code in twse_records:
+            intraday, post_odd, fixed, block = (
+                twse_intraday[stock_code], twse_post_odd[stock_code], twse_fixed[stock_code],
+                0,
+            )
+        else:
+            intraday, post_odd, fixed, block = (
+                tpex_intraday[stock_code], tpex_post_odd[stock_code], tpex_fixed[stock_code],
+                tpex_block[stock_code],
+            )
+        # MI_INDEX already includes both intraday and post-market odd lots.
+        # TPEx otc is regular trading only; all four reports are disjoint there.
+        legacy_primary_volume = int(record["p_volume_shares"])
+        if stock_code in twse_records:
+            regular = legacy_primary_volume - intraday - post_odd
+            if regular < 0:
+                raise StockMarketFormatError(
+                    f"TWSE MI_INDEX volume is smaller than odd-lot components for {stock_code}"
+                )
+            market_volume = legacy_primary_volume
+            all_execution_volume = legacy_primary_volume + fixed
+            component_status = VOLUME_COMPONENT_STATUS_COMPLETE
+        else:
+            # Preserve p_volume_shares' historical TPEx OTC meaning for
+            # compatibility.  The official total is held separately in V2.
+            regular = tpex_regular[stock_code]
+            record["p_volume_shares"] = regular
+            market_volume = legacy_primary_volume
+            all_execution_volume = regular + intraday + post_odd + fixed + block
+            component_status = (
+                VOLUME_COMPONENT_STATUS_COMPLETE
+                if all_execution_volume == market_volume
+                else VOLUME_COMPONENT_STATUS_RECONCILIATION_FAILURE
+            )
+        record.update({
+            "p_regular_volume_shares": regular,
+            "p_intraday_odd_lot_shares": intraday,
+            "p_post_odd_lot_shares": post_odd,
+            "p_fixed_price_volume_shares": fixed,
+            "p_block_trade_volume_shares": block,
+            "p_market_volume_shares": market_volume,
+            "p_all_execution_volume_shares": all_execution_volume,
+            # In TPEx COMPLETE rows this reconciles exactly to dailyQuotes.
+            "p_total_volume_shares": all_execution_volume,
+            "p_volume_definition": VOLUME_DEFINITION_V2,
+            "p_volume_component_status": component_status,
+        })
+
+    check_deadline("database upsert")
     with connect(db_path) as connection:
         inserted, updated = upsert_stock_daily_market(connection, records.values())
         coverage = []
@@ -367,7 +659,7 @@ def collect_stock_daily_market(
             market = mapped_market if mapped_market != "UNKNOWN" else source_market
             if record["p_close_price"] is None:
                 status, reason = "MISSING_CLOSE", "official_close_price_missing"
-            elif record["p_volume_shares"] == 0:
+            elif record["p_market_volume_shares"] == 0:
                 status, reason = "OFFICIAL_ZERO", "official_zero_volume"
             else:
                 status, reason = "COMPLETE", None
@@ -390,15 +682,46 @@ def collect_stock_daily_market(
                 "availability_evidence_json": None,
                 "checked_at": checked_at,
             })
-        upsert_stock_daily_coverage(connection, coverage)
+        if write_coverage:
+            upsert_stock_daily_coverage(connection, coverage)
     return {
         "trade_date": trade_date.isoformat(),
         "target_stocks": len(target_codes),
         "twse_records": len(twse_records),
         "tpex_records": len(tpex_records),
+        "complete_records": sum(
+            record["p_volume_component_status"] == VOLUME_COMPONENT_STATUS_COMPLETE
+            for record in records.values()
+        ),
+        "reconciliation_failures": sum(
+            record["p_volume_component_status"] == VOLUME_COMPONENT_STATUS_RECONCILIATION_FAILURE
+            for record in records.values()
+        ),
         "records_inserted": inserted,
         "records_updated": updated,
     }
+
+
+def collect_stock_daily_market(
+    trade_date: date, db_path: Path | str = DEFAULT_DB_PATH,
+    session: requests.Session | None = None, *, allow_monthly_verified: bool = False,
+    verified_mappings: Mapping[str, Mapping[str, str]] | None = None,
+    suspension_verifier=verify_twse_suspensions, write_coverage: bool = True,
+    progress=None, deadline_monotonic: float | None = None,
+) -> dict[str, object]:
+    """Collect one day, closing only a session this function created."""
+    owns_session = session is None
+    http = session or build_session()
+    try:
+        return _collect_stock_daily_market_impl(
+            trade_date, db_path, http, allow_monthly_verified=allow_monthly_verified,
+            verified_mappings=verified_mappings, suspension_verifier=suspension_verifier,
+            write_coverage=write_coverage, progress=progress,
+            deadline_monotonic=deadline_monotonic,
+        )
+    finally:
+        if owns_session:
+            http.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

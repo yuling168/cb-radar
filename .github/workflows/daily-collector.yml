@@ -202,7 +202,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- data/cb_history.manifest.json docs/data.json docs/index.html; then
+          if git diff --quiet -- data/cb_history.manifest.json docs/data.json docs/data/v2 docs/data-loader.js docs/index.html docs/daily-market.html docs/institutional.html docs/strategy-a.html docs/strategy-b.html docs/strategy-c.html docs/strategy-g.html; then
             echo "Snapshot manifest and dashboard have no changes; nothing to commit."
             exit 0
           fi
@@ -215,7 +215,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/cb_history.manifest.json docs/data.json docs/index.html
+          git add data/cb_history.manifest.json docs/data.json docs/data/v2 docs/data-loader.js docs/index.html docs/daily-market.html docs/institutional.html docs/strategy-a.html docs/strategy-b.html docs/strategy-c.html docs/strategy-g.html
           git commit -m "Update CB history $trade_date"
           git push origin HEAD:main
 

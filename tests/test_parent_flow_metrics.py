@@ -11,8 +11,14 @@ def seed_parent(con, stock="1111", cbs=("11111",)):
                      VALUES (?, 'CB', ?, '母股', '2020-01-01', '2030-01-01', 1, 't', 't', 'x')""", (cb, stock))
 
 
-def market(con, day, stock="1111", volume=10000, close=10):
-    con.execute("INSERT INTO stock_daily_market VALUES (?, ?, NULL, NULL, NULL, ?, ?)", (day, stock, close, volume))
+def market(con, day, stock="1111", volume=10000, close=10, market_volume=None):
+    con.execute(
+        """INSERT INTO stock_daily_market
+           (trade_date, p_stock_code, p_open_price, p_high_price, p_low_price,
+            p_close_price, p_volume_shares, p_market_volume_shares)
+           VALUES (?, ?, NULL, NULL, NULL, ?, ?, ?)""",
+        (day, stock, close, volume, market_volume),
+    )
 
 
 def institution(con, day, net, kind="foreign", stock="1111", status="COMPLETE"):
@@ -49,6 +55,15 @@ def test_institutional_buy_sell_zero_and_volume_zero(tmp_path):
         market(con, "2026-09-05"); institution(con, "2026-09-05", 0)
         value = row(con, "2026-09-05")
         assert (value["foreign_streak_days"], value["foreign_streak_lots"]) == (0, 0)
+
+
+def test_institutional_volume_percentage_prefers_v2_market_volume(tmp_path):
+    with connect(tmp_path / "x.db") as con:
+        seed_parent(con)
+        market(con, "2026-09-09", volume=1_351_000, market_volume=1_356_000)
+        institution(con, "2026-09-09", 13_560)
+        value = row(con, "2026-09-09")
+    assert value["foreign_volume_pct"] == 1.0
 
 
 def test_institutional_unavailable_and_tib_6645_never_zero_filled(tmp_path):

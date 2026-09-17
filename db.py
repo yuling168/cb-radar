@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS stock_daily_market (
     p_low_price REAL,
     p_close_price REAL,
     p_volume_shares INTEGER NOT NULL CHECK (p_volume_shares >= 0),
+    p_regular_volume_shares INTEGER CHECK (p_regular_volume_shares >= 0),
+    p_intraday_odd_lot_shares INTEGER CHECK (p_intraday_odd_lot_shares >= 0),
+    p_post_odd_lot_shares INTEGER CHECK (p_post_odd_lot_shares >= 0),
+    p_fixed_price_volume_shares INTEGER CHECK (p_fixed_price_volume_shares >= 0),
+    p_block_trade_volume_shares INTEGER CHECK (p_block_trade_volume_shares >= 0),
+    p_market_volume_shares INTEGER CHECK (p_market_volume_shares >= 0),
+    p_all_execution_volume_shares INTEGER CHECK (p_all_execution_volume_shares >= 0),
+    p_total_volume_shares INTEGER CHECK (p_total_volume_shares >= 0),
+    p_volume_definition TEXT CHECK (p_volume_definition IN ('REGULAR_ONLY_V1', 'REGULAR_ODD_FIXED_V2')),
+    p_volume_component_status TEXT CHECK (p_volume_component_status IN ('LEGACY_REGULAR_ONLY', 'COMPLETE', 'RECONCILIATION_FAILURE')),
     PRIMARY KEY (trade_date, p_stock_code)
 );
 
@@ -534,6 +544,77 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     }
     if "reference_price" not in daily_columns:
         connection.execute("ALTER TABLE cb_daily ADD COLUMN reference_price REAL")
+    stock_volume_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(stock_daily_market)")
+    }
+    volume_migrations = {
+        "p_regular_volume_shares": "INTEGER CHECK (p_regular_volume_shares >= 0)",
+        "p_intraday_odd_lot_shares": "INTEGER CHECK (p_intraday_odd_lot_shares >= 0)",
+        "p_post_odd_lot_shares": "INTEGER CHECK (p_post_odd_lot_shares >= 0)",
+        "p_fixed_price_volume_shares": "INTEGER CHECK (p_fixed_price_volume_shares >= 0)",
+        "p_block_trade_volume_shares": "INTEGER CHECK (p_block_trade_volume_shares >= 0)",
+        "p_market_volume_shares": "INTEGER CHECK (p_market_volume_shares >= 0)",
+        "p_all_execution_volume_shares": "INTEGER CHECK (p_all_execution_volume_shares >= 0)",
+        "p_total_volume_shares": "INTEGER CHECK (p_total_volume_shares >= 0)",
+        "p_volume_definition": "TEXT CHECK (p_volume_definition IN ('REGULAR_ONLY_V1', 'REGULAR_ODD_FIXED_V2'))",
+        "p_volume_component_status": "TEXT CHECK (p_volume_component_status IN ('LEGACY_REGULAR_ONLY', 'COMPLETE', 'RECONCILIATION_FAILURE'))",
+    }
+    for column, definition in volume_migrations.items():
+        if column not in stock_volume_columns:
+            connection.execute(f"ALTER TABLE stock_daily_market ADD COLUMN {column} {definition}")
+    connection.execute(
+        """UPDATE stock_daily_market
+           SET p_regular_volume_shares = p_volume_shares,
+               p_total_volume_shares = p_volume_shares,
+               p_volume_definition = 'REGULAR_ONLY_V1',
+               p_volume_component_status = 'LEGACY_REGULAR_ONLY'
+           WHERE p_volume_definition IS NULL"""
+    )
+    # SQLite cannot widen an existing CHECK constraint.  Rebuild only V2-era
+    # tables created before RECONCILIATION_FAILURE was a valid audit status.
+    stock_sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'stock_daily_market'"
+    ).fetchone()
+    stock_sql = stock_sql_row[0] if stock_sql_row else ""
+    if "RECONCILIATION_FAILURE" not in stock_sql:
+        connection.execute("ALTER TABLE stock_daily_market RENAME TO stock_daily_market_pre_reconciliation")
+        connection.execute("DROP INDEX IF EXISTS idx_stock_daily_market_stock_date")
+        connection.execute(
+            """CREATE TABLE stock_daily_market (
+                trade_date TEXT NOT NULL, p_stock_code TEXT NOT NULL,
+                p_open_price REAL, p_high_price REAL, p_low_price REAL, p_close_price REAL,
+                p_volume_shares INTEGER NOT NULL CHECK (p_volume_shares >= 0),
+                p_regular_volume_shares INTEGER CHECK (p_regular_volume_shares >= 0),
+                p_intraday_odd_lot_shares INTEGER CHECK (p_intraday_odd_lot_shares >= 0),
+                p_post_odd_lot_shares INTEGER CHECK (p_post_odd_lot_shares >= 0),
+                p_fixed_price_volume_shares INTEGER CHECK (p_fixed_price_volume_shares >= 0),
+                p_block_trade_volume_shares INTEGER CHECK (p_block_trade_volume_shares >= 0),
+                p_market_volume_shares INTEGER CHECK (p_market_volume_shares >= 0),
+                p_all_execution_volume_shares INTEGER CHECK (p_all_execution_volume_shares >= 0),
+                p_total_volume_shares INTEGER CHECK (p_total_volume_shares >= 0),
+                p_volume_definition TEXT CHECK (p_volume_definition IN ('REGULAR_ONLY_V1', 'REGULAR_ODD_FIXED_V2')),
+                p_volume_component_status TEXT CHECK (p_volume_component_status IN ('LEGACY_REGULAR_ONLY', 'COMPLETE', 'RECONCILIATION_FAILURE')),
+                PRIMARY KEY (trade_date, p_stock_code)
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO stock_daily_market (
+                    trade_date, p_stock_code, p_open_price, p_high_price, p_low_price, p_close_price,
+                    p_volume_shares, p_regular_volume_shares, p_intraday_odd_lot_shares,
+                    p_post_odd_lot_shares, p_fixed_price_volume_shares, p_block_trade_volume_shares,
+                    p_market_volume_shares, p_all_execution_volume_shares, p_total_volume_shares,
+                    p_volume_definition, p_volume_component_status)
+                SELECT trade_date, p_stock_code, p_open_price, p_high_price, p_low_price, p_close_price,
+                    p_volume_shares, p_regular_volume_shares, p_intraday_odd_lot_shares,
+                    p_post_odd_lot_shares, p_fixed_price_volume_shares, NULL,
+                    p_market_volume_shares, p_all_execution_volume_shares, p_total_volume_shares,
+                    p_volume_definition, p_volume_component_status
+                FROM stock_daily_market_pre_reconciliation"""
+        )
+        connection.execute("DROP TABLE stock_daily_market_pre_reconciliation")
+        connection.execute(
+            "CREATE INDEX idx_stock_daily_market_stock_date ON stock_daily_market (p_stock_code, trade_date)"
+        )
     coverage_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(stock_daily_coverage)")
     }
@@ -1180,17 +1261,55 @@ def upsert_stock_daily_market(
     connection: sqlite3.Connection, records: Iterable[Mapping[str, object]]
 ) -> tuple[int, int]:
     """Atomically upsert validated parent-stock daily market records."""
-    rows = list(records)
+    rows = [dict(record) for record in records]
     if not rows:
         return 0, 0
 
     keys = [(str(row["trade_date"]), str(row["p_stock_code"])) for row in rows]
     if len(set(keys)) != len(keys):
         raise ValueError("Duplicate parent-stock market records")
+    component_columns = (
+        "p_regular_volume_shares", "p_intraday_odd_lot_shares",
+        "p_post_odd_lot_shares", "p_fixed_price_volume_shares",
+        "p_block_trade_volume_shares",
+    )
     for row in rows:
         volume = row["p_volume_shares"]
         if isinstance(volume, bool) or not isinstance(volume, int) or volume < 0:
             raise ValueError("p_volume_shares must be a non-negative integer")
+        if "p_volume_definition" not in row:
+            row.update({
+                "p_regular_volume_shares": volume,
+                "p_intraday_odd_lot_shares": None,
+                "p_post_odd_lot_shares": None,
+                "p_fixed_price_volume_shares": None,
+                "p_block_trade_volume_shares": None,
+                # Legacy p_volume_shares is the historical primary-report value;
+                # it is not a cross-market market-volume definition.
+                "p_market_volume_shares": None,
+                "p_all_execution_volume_shares": None,
+                "p_total_volume_shares": volume,
+                "p_volume_definition": "REGULAR_ONLY_V1",
+                "p_volume_component_status": "LEGACY_REGULAR_ONLY",
+            })
+            continue
+        if row["p_volume_definition"] != "REGULAR_ODD_FIXED_V2":
+            raise ValueError("new stock volume records must use REGULAR_ODD_FIXED_V2")
+        if row.get("p_volume_component_status") not in ("COMPLETE", "RECONCILIATION_FAILURE"):
+            raise ValueError("V2 stock volume components must be COMPLETE or RECONCILIATION_FAILURE")
+        for column in component_columns:
+            value = row.get(column)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{column} must be a non-negative integer")
+        total = sum(int(row[column]) for column in component_columns)
+        if row.get("p_total_volume_shares") != total:
+            raise ValueError("p_total_volume_shares must equal the five V2 components")
+        for column in ("p_market_volume_shares", "p_all_execution_volume_shares"):
+            value = row.get(column)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{column} must be a non-negative integer")
+        if row["p_all_execution_volume_shares"] != total:
+            raise ValueError("p_all_execution_volume_shares must equal the five V2 components")
     existing = {
         key
         for key in keys
@@ -1207,17 +1326,39 @@ def upsert_stock_daily_market(
             """
             INSERT INTO stock_daily_market (
                 trade_date, p_stock_code, p_open_price, p_high_price,
-                p_low_price, p_close_price, p_volume_shares
+                p_low_price, p_close_price, p_volume_shares,
+                p_regular_volume_shares, p_intraday_odd_lot_shares,
+                p_post_odd_lot_shares, p_fixed_price_volume_shares,
+                p_block_trade_volume_shares,
+                p_market_volume_shares, p_all_execution_volume_shares,
+                p_total_volume_shares, p_volume_definition,
+                p_volume_component_status
             ) VALUES (
                 :trade_date, :p_stock_code, :p_open_price, :p_high_price,
-                :p_low_price, :p_close_price, :p_volume_shares
+                :p_low_price, :p_close_price, :p_volume_shares,
+                :p_regular_volume_shares, :p_intraday_odd_lot_shares,
+                :p_post_odd_lot_shares, :p_fixed_price_volume_shares,
+                :p_block_trade_volume_shares,
+                :p_market_volume_shares, :p_all_execution_volume_shares,
+                :p_total_volume_shares, :p_volume_definition,
+                :p_volume_component_status
             )
             ON CONFLICT(trade_date, p_stock_code) DO UPDATE SET
                 p_open_price = excluded.p_open_price,
                 p_high_price = excluded.p_high_price,
                 p_low_price = excluded.p_low_price,
                 p_close_price = excluded.p_close_price,
-                p_volume_shares = excluded.p_volume_shares
+                p_volume_shares = excluded.p_volume_shares,
+                p_regular_volume_shares = excluded.p_regular_volume_shares,
+                p_intraday_odd_lot_shares = excluded.p_intraday_odd_lot_shares,
+                p_post_odd_lot_shares = excluded.p_post_odd_lot_shares,
+                p_fixed_price_volume_shares = excluded.p_fixed_price_volume_shares,
+                p_block_trade_volume_shares = excluded.p_block_trade_volume_shares,
+                p_market_volume_shares = excluded.p_market_volume_shares,
+                p_all_execution_volume_shares = excluded.p_all_execution_volume_shares,
+                p_total_volume_shares = excluded.p_total_volume_shares,
+                p_volume_definition = excluded.p_volume_definition,
+                p_volume_component_status = excluded.p_volume_component_status
             """,
             rows,
         )

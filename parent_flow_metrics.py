@@ -28,7 +28,9 @@ def _market_dates(connection: sqlite3.Connection, stock_code: str, as_of: str) -
 
 def _institutional_value(connection, stock_code: str, trade_date: str, column: str):
     row = connection.execute(
-        """SELECT coverage.status, daily.%s, market.p_volume_shares
+        """SELECT coverage.status, daily.%s,
+                  COALESCE(market.p_market_volume_shares, market.p_volume_shares)
+                    AS p_market_volume_shares
            FROM institutional_coverage AS coverage
            LEFT JOIN institutional_daily AS daily
              ON daily.trade_date=coverage.trade_date AND daily.stock_code=coverage.stock_code
@@ -37,9 +39,9 @@ def _institutional_value(connection, stock_code: str, trade_date: str, column: s
            WHERE coverage.trade_date=? AND coverage.stock_code=?""" % column,
         (trade_date, stock_code),
     ).fetchone()
-    if row is None or row["status"] not in GOOD_INSTITUTIONAL or row[column] is None or row["p_volume_shares"] is None:
+    if row is None or row["status"] not in GOOD_INSTITUTIONAL or row[column] is None or row["p_market_volume_shares"] is None:
         return None
-    return int(row[column]), int(row["p_volume_shares"])
+    return int(row[column]), int(row["p_market_volume_shares"])
 
 
 def _institutional_metrics(connection, stock_code: str, dates: list[str], column: str):

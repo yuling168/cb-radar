@@ -1,12 +1,17 @@
 from datetime import date
+import hashlib
 
 import pytest
 
 from db import (
     connect, upsert_daily, upsert_parent_stock_mappings,
     upsert_parent_stock_monthly_mappings, record_monthly_mapping_status,
+    upsert_stock_daily_market,
 )
-from stock_backfill import BackfillPreconditionError, backfill_stock_daily_market
+from stock_backfill import (
+    BackfillPreconditionError, backfill_pending_stock_daily_market_v2_by_month,
+    backfill_stock_daily_market,
+)
 
 
 def add_phase1_day(connection, trade_date: str, cb_code: str = "11111"):
@@ -238,3 +243,76 @@ def test_partial_mapping_coverage_is_idempotent(tmp_path):
         assert connection.execute(
             "SELECT COUNT(*) FROM stock_backfill_mapping_coverage"
         ).fetchone()[0] == 1
+
+
+def _seed_legacy_stock_row(connection, trade_date: str):
+    upsert_stock_daily_market(connection, [{
+        "trade_date": trade_date, "p_stock_code": "1101",
+        "p_open_price": 20.0, "p_high_price": 20.0, "p_low_price": 20.0,
+        "p_close_price": 20.0, "p_volume_shares": 1000,
+    }])
+
+
+def test_v2_monthly_orchestrator_skips_zero_target_without_collector_or_db_write(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path):
+        pass
+    before = hashlib.sha256(db_path.read_bytes()).hexdigest()
+    calls = []
+
+    def enricher(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("zero-target month must not invoke enricher")
+
+    checkpoints = backfill_pending_stock_daily_market_v2_by_month(
+        db_path, date(2026, 1, 1), date(2026, 1, 31), enricher=enricher,
+    )
+
+    assert calls == []
+    assert checkpoints[0]["status"] == "SKIPPED_NO_TARGET_ROWS"
+    assert checkpoints[0]["target_rows"] == 0
+    assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
+
+
+def test_v2_monthly_orchestrator_skips_empty_month_then_runs_next_target_month(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        _seed_legacy_stock_row(connection, "2026-02-02")
+    calls = []
+
+    def enricher(database, start, end, **_kwargs):
+        calls.append((start, end))
+        with connect(database) as connection:
+            connection.execute(
+                """UPDATE stock_daily_market SET p_market_volume_shares=p_volume_shares,
+                   p_total_volume_shares=p_volume_shares,
+                   p_volume_definition='REGULAR_ODD_FIXED_V2',
+                   p_volume_component_status='COMPLETE'
+                   WHERE trade_date=?""",
+                (start.isoformat(),),
+            )
+        return {}
+
+    checkpoints = backfill_pending_stock_daily_market_v2_by_month(
+        db_path, date(2026, 1, 1), date(2026, 2, 28), enricher=enricher,
+    )
+
+    assert [item["status"] for item in checkpoints] == ["SKIPPED_NO_TARGET_ROWS", "PASS"]
+    assert calls == [(date(2026, 2, 2), date(2026, 2, 2))]
+
+
+def test_v2_monthly_orchestrator_rejects_nonempty_month_with_incomplete_v2(tmp_path):
+    db_path = tmp_path / "history.db"
+    with connect(db_path) as connection:
+        _seed_legacy_stock_row(connection, "2026-02-02")
+    calls = []
+
+    def no_write_enricher(_database, start, end, **_kwargs):
+        calls.append((start, end))
+        return {}
+
+    with pytest.raises(RuntimeError, match="monthly V2 checkpoint failed"):
+        backfill_pending_stock_daily_market_v2_by_month(
+            db_path, date(2026, 2, 1), date(2026, 2, 28), enricher=no_write_enricher,
+        )
+    assert calls == [(date(2026, 2, 2), date(2026, 2, 2))]

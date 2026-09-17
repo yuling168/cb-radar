@@ -306,6 +306,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="data-loader.js"></script>
   <script>
     const state = { records: [], selectedDate: "", query: "", sortKey: "cb_code", sortDirection: "asc" };
     const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 4 });
@@ -461,9 +462,16 @@
       });
     });
 
-    elements.dateSelect.addEventListener("change", () => {
+    elements.dateSelect.addEventListener("change", async () => {
       state.selectedDate = elements.dateSelect.value;
-      render();
+      try {
+        const payload = await CBRadarData.month("market", state.selectedDate);
+        state.records = payload.records;
+        render();
+      } catch (error) {
+        elements.resultCount.textContent = "載入失敗";
+        elements.activeFilter.textContent = error.message;
+      }
     });
 
     elements.searchInput.addEventListener("input", () => {
@@ -489,18 +497,15 @@
       XLSX.writeFile(workbook, `CB每日行情_${state.selectedDate}.xlsx`);
     });
 
-    fetch("./data.json", { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((payload) => {
+    Promise.all([CBRadarData.manifest(), CBRadarData.latest()])
+      .then(([manifest, payload]) => {
         if (!payload || !Array.isArray(payload.records)) throw new Error("資料格式不正確");
         state.records = payload.records;
-        const dates = [...new Set(state.records.map((record) => record.trade_date))].sort().reverse();
+        const dates = manifest.market_dates || [];
         if (!dates.length) throw new Error("資料庫目前沒有行情資料");
         dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
-        state.selectedDate = dates[0];
+        state.selectedDate = payload.trade_date;
+        elements.dateSelect.value = state.selectedDate;
         render();
       })
       .catch((error) => {

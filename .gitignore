@@ -1,9 +1,15 @@
 .venv*/
 __pycache__/
 .pytest_cache/
+/.pytest-*/
 .pytest-dashboard-verify/
 .pytest-tmp*/
 .pytest-zero-volume/
-tmp/
+/tmp/
+/logs/
 /data/cb_history.db
+/data/*.bak
+/data/*-test.db
+/data/*.test.db
+/data/*.volume-v2-test.db
 *.py[cod]
