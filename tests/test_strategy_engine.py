@@ -304,13 +304,31 @@ def test_a_v2_null_cb_close_without_verified_suspension_keeps_close_reason(tmp_p
             "availability_status": "AVAILABLE", "checked_at": "2026-08-12T00:00:00+00:00",
         }])
         assert evaluate_a_v2(connection, "2026-08-12")[0]["unavailable_reasons"] == [
-            "missing_cb_close_price"
+            "missing_cb_price"
         ]
         connection.execute("DELETE FROM stock_daily_coverage")
         connection.execute("DELETE FROM stock_daily_market")
         assert evaluate_a_v2(connection, "2026-08-12")[0]["unavailable_reasons"] == [
-            "missing_cb_close_price"
+                "missing_cb_price"
         ]
+
+
+def test_a_v2_uses_reference_price_without_changing_zero_volume(tmp_path):
+    with connect(tmp_path / "strategy.db") as connection:
+        _seed_a_v1_data(connection)
+        connection.execute(
+            "UPDATE cb_daily SET close_price=NULL, reference_price=130, volume_lots=0 "
+            "WHERE cb_code='12345' AND trade_date='2026-08-12'"
+        )
+        result = evaluate_a_v2(connection, "2026-08-12")[0]
+        assert result["data_status"] == "AVAILABLE"
+        assert result["values"]["effective_cb_price"] == 130
+        assert result["values"]["effective_cb_price_source"] == "REFERENCE"
+        assert result["values"]["today_volume_lots"] == 0
+        raw = connection.execute(
+            "SELECT close_price, reference_price, volume_lots FROM cb_daily WHERE cb_code='12345' AND trade_date='2026-08-12'"
+        ).fetchone()
+        assert tuple(raw) == (None, 130.0, 0)
 
 
 def test_cli_accepts_a_single_date_or_an_inclusive_history_range():

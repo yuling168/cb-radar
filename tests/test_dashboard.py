@@ -156,6 +156,7 @@ def test_dashboard_module_command_runs_from_a_clean_repo_root(tmp_path):
     (repo_root / "docs").mkdir()
     source_root = Path(__file__).resolve().parents[1]
     shutil.copy2(source_root / "scripts" / "build_dashboard.py", repo_root / "scripts" / "build_dashboard.py")
+    shutil.copy2(source_root / "cb_price.py", repo_root / "cb_price.py")
     shutil.copy2(source_root / "strategy_registry.py", repo_root / "strategy_registry.py")
     create_dashboard_database(repo_root / "data" / "cb_history.db")
 
@@ -197,7 +198,9 @@ def test_dashboard_data_joins_phase_two_fields_and_formats_display_values(
         "cb_code": "12345",
         "cb_name": "測試 CB",
         "close_price": 101.5,
-        "reference_price": 99.5,
+            "reference_price": 99.5,
+            "effective_cb_price": 101.5,
+            "effective_cb_price_source": "CLOSE",
         "volume_lots": 12,
         "remaining_days": 125,
         "p_close_price": 24.3,
@@ -293,6 +296,8 @@ def test_dashboard_uses_reference_price_for_zero_volume_premium(tmp_path, monkey
     row = json.loads(output_path.read_text(encoding="utf-8"))["records"][0]
     assert row["close_price"] is None
     assert row["reference_price"] == 90.0
+    assert row["effective_cb_price"] == 90.0
+    assert row["effective_cb_price_source"] == "REFERENCE"
     assert row["premium_rate"] == pytest.approx(48.14814815)
 
 

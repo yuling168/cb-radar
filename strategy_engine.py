@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config import DEFAULT_DB_PATH
+from cb_price import EFFECTIVE_CB_PRICE_SQL, EFFECTIVE_CB_PRICE_SOURCE_SQL
 from db import connect
 from strategy_registry import get_strategy
 
@@ -107,7 +108,7 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
     """
     calendar = _effective_dates(connection, trade_date)
     today_rows = connection.execute(
-        "SELECT cb_code, cb_name, close_price, volume_lots FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
+        f"SELECT cb_code, cb_name, {EFFECTIVE_CB_PRICE_SQL} AS close_price, {EFFECTIVE_CB_PRICE_SOURCE_SQL} AS effective_cb_price_source, volume_lots FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
         (trade_date,),
     ).fetchall()
     if not today_rows:
@@ -124,7 +125,8 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
         cb_code = str(today["cb_code"])
         rows = connection.execute(
             f"""
-            SELECT trade_date, close_price, volume_lots
+            SELECT trade_date, {EFFECTIVE_CB_PRICE_SQL} AS close_price,
+                   {EFFECTIVE_CB_PRICE_SOURCE_SQL} AS effective_cb_price_source, volume_lots
             FROM cb_daily
             WHERE cb_code = ? AND trade_date IN ({','.join('?' for _ in window_dates)})
             ORDER BY trade_date
@@ -156,7 +158,7 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
                      "parent_stock_evidence": json.loads(evidence) if evidence else None},
                 ))
             else:
-                results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_close_price"], {}))
+                results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_price"], {}))
             continue
         if master is None:
             results.append(_unavailable_result(cb_code, trade_date, ["missing_cb_master"], {}))
@@ -208,6 +210,8 @@ def evaluate_a_v2(connection: sqlite3.Connection, trade_date: str) -> list[dict[
             "average_5_volume_lots": average_5_volume,
             "ten_day_total_volume_lots": sum(volumes),
             "close_price": close_price,
+            "effective_cb_price": close_price,
+            "effective_cb_price_source": today["effective_cb_price_source"],
             "conversion_price": float(conversion[0]),
             "parent_stock_close_price": float(stock[0]),
             "conversion_value": conversion_value,

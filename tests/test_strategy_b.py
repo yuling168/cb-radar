@@ -110,6 +110,20 @@ def test_b_v1_treats_observed_zero_volume_as_a_valid_day(tmp_path):
     assert result["values"]["window_43_trade_dates"][0] == DATES[0]
 
 
+def test_b_v1_uses_reference_price_in_43_day_window(tmp_path):
+    with connect(tmp_path / "b.db") as connection:
+        _seed(connection)
+        connection.execute(
+            "UPDATE cb_daily SET close_price=NULL, reference_price=110, volume_lots=0 WHERE trade_date=?",
+            (TRADE_DATE,),
+        )
+        result = _only_result(connection)
+    assert result["data_status"] == "AVAILABLE"
+    assert result["values"]["effective_cb_price"] == 110
+    assert result["values"]["effective_cb_price_source"] == "REFERENCE"
+    assert result["values"]["today_volume_lots"] == 0
+
+
 def test_b_v1_uses_historical_balance_and_marks_absent_rows_or_prices_unavailable(tmp_path):
     with connect(tmp_path / "b.db") as connection:
         _seed(connection)
@@ -123,7 +137,7 @@ def test_b_v1_uses_historical_balance_and_marks_absent_rows_or_prices_unavailabl
         assert _only_result(connection)["unavailable_reasons"] == ["missing_cb_daily_rows"]
         connection.execute("INSERT INTO cb_daily VALUES (?,?,?,?,?,?,?,?)", (DATES[4], "10001", "CB B", None, None, 60, "test", "x"))
         result = _only_result(connection)
-    assert result["unavailable_reasons"] == ["missing_cb_close_price"]
+    assert result["unavailable_reasons"] == ["missing_cb_price"]
     assert result["values"]["missing_close_trade_dates"] == [DATES[4]]
 
 

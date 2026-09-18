@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config import DEFAULT_DB_PATH
+from cb_price import EFFECTIVE_CB_PRICE_SQL, EFFECTIVE_CB_PRICE_SOURCE_SQL
 from db import connect
 
 
@@ -116,7 +117,9 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
     """Evaluate active CBs on one day without filling absent rows or values."""
     calendar_dates = _effective_dates(connection, trade_date)
     today_rows = connection.execute(
-        "SELECT cb_code, close_price FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
+        f"SELECT cb_code, {EFFECTIVE_CB_PRICE_SQL} AS close_price, "
+        f"{EFFECTIVE_CB_PRICE_SOURCE_SQL} AS effective_cb_price_source "
+        "FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
         (trade_date,),
     ).fetchall()
     if not today_rows:
@@ -148,7 +151,7 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
             continue
 
         rows = connection.execute(
-            f"""SELECT trade_date, close_price, volume_lots FROM cb_daily
+            f"""SELECT trade_date, {EFFECTIVE_CB_PRICE_SQL} AS close_price, volume_lots FROM cb_daily
                 WHERE cb_code = ? AND trade_date IN ({','.join('?' for _ in window_43_dates)})
                 ORDER BY trade_date""",
             (cb_code, *window_43_dates),
@@ -163,7 +166,7 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         missing_close_dates = [day for day in window_43_dates if by_date[day]["close_price"] is None]
         if missing_close_dates:
             results.append(_unavailable(
-                cb_code, trade_date, ["missing_cb_close_price"], {"missing_close_trade_dates": missing_close_dates}
+                cb_code, trade_date, ["missing_cb_price"], {"missing_close_trade_dates": missing_close_dates}
             ))
             continue
         conversion = connection.execute(
@@ -214,6 +217,8 @@ def evaluate_b_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         values = {
             "trigger_reason": "all_b_v1_conditions_met",
             "close_price": float(closes[-1]),
+            "effective_cb_price": float(closes[-1]),
+            "effective_cb_price_source": today["effective_cb_price_source"],
             "today_volume_lots": volumes[-1],
             "window_43_trade_dates": window_43_dates,
             "window_10_trade_dates": window_10_dates,

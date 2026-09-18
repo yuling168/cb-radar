@@ -10,6 +10,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+from cb_price import effective_cb_price_source_sql, effective_cb_price_sql
 from strategy_registry import active_strategy_codes, get_strategy
 
 
@@ -406,8 +407,8 @@ def add_cb_rolling_averages(records: list[dict[str, object]]) -> None:
             for key, source, window in (
                 ("volume_ma5", "volume_lots", 5),
                 ("volume_ma10", "volume_lots", 10),
-                ("price_ma20", "close_price", 20),
-                ("price_ma43", "close_price", 43),
+                ("price_ma20", "effective_cb_price", 20),
+                ("price_ma43", "effective_cb_price", 43),
             ):
                 dates = calendar[index - window + 1:index + 1]
                 values = [observed_by_date[day][source] for day in dates if day in observed_by_date]
@@ -464,13 +465,15 @@ def load_rows() -> list[dict[str, object]]:
                 )
 
         cursor = connection.execute(
-            """
+            f"""
             SELECT
                 daily.trade_date,
                 daily.cb_code,
                 daily.cb_name,
                 daily.close_price,
                 daily.reference_price,
+                {effective_cb_price_sql("daily.")} AS effective_cb_price,
+                {effective_cb_price_source_sql("daily.")} AS effective_cb_price_source,
                 daily.volume_lots,
                 stock.p_close_price,
                 COALESCE(stock.p_market_volume_shares, stock.p_volume_shares) AS p_volume_shares,
@@ -535,11 +538,7 @@ def load_rows() -> list[dict[str, object]]:
                     record["p_close_price"] / conversion_price * 100, 8
                 )
                 record["conversion_value"] = conversion_value
-                valuation_price = (
-                    record["close_price"]
-                    if record["volume_lots"] > 0
-                    else record["reference_price"]
-                )
+                valuation_price = record["effective_cb_price"]
                 if valuation_price is not None and conversion_value != 0:
                     record["premium_rate"] = round(
                         (valuation_price / conversion_value - 1) * 100, 8

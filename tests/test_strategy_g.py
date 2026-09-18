@@ -51,6 +51,20 @@ def test_g_v1_combines_all_three_same_day_events_in_one_snapshot(tmp_path):
     assert result["values"]["balance_date"] == "2026-04-30"
 
 
+def test_g_v1_uses_reference_price_for_current_and_history_window(tmp_path):
+    with connect(tmp_path / "g.db") as connection:
+        _seed(connection, closes=[100.0] * 19 + [110.0])
+        connection.execute(
+            "UPDATE cb_daily SET close_price=NULL, reference_price=110, volume_lots=0 WHERE trade_date=?",
+            (TRADE_DATE,),
+        )
+        result = _result(connection)
+    assert result["data_status"] == "AVAILABLE"
+    assert result["values"]["effective_cb_price"] == 110
+    assert result["values"]["effective_cb_price_source"] == "REFERENCE"
+    assert result["values"]["today_volume_lots"] == 0
+
+
 def test_g_v1_g1_and_g3_only_trigger_on_the_first_effective_trade_day(tmp_path):
     with connect(tmp_path / "g.db") as connection:
         _seed(connection)
@@ -147,7 +161,7 @@ def test_g_v1_marks_required_core_history_missing_without_using_future_balance(t
         connection.execute("UPDATE cb_daily SET close_price=NULL WHERE trade_date=?", (TRADE_DATE,))
         missing_close = _result(connection)
     assert missing_balance["unavailable_reasons"] == ["missing_historical_balance"]
-    assert missing_close["unavailable_reasons"] == ["missing_cb_close_price"]
+    assert missing_close["unavailable_reasons"] == ["missing_cb_price"]
 
 
 def test_g_v1_persists_only_g_and_keeps_a_b_c_isolated(tmp_path):

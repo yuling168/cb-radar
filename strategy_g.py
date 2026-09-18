@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config import DEFAULT_DB_PATH
+from cb_price import EFFECTIVE_CB_PRICE_SQL, EFFECTIVE_CB_PRICE_SOURCE_SQL
 from db import connect
 
 
@@ -119,7 +120,7 @@ def _basic_conditions_on(
     baseline cannot be established without inventing historical data.
     """
     daily = connection.execute(
-        "SELECT close_price FROM cb_daily WHERE cb_code = ? AND trade_date = ?", (cb_code, trade_date)
+        f"SELECT {EFFECTIVE_CB_PRICE_SQL} AS close_price FROM cb_daily WHERE cb_code = ? AND trade_date = ?", (cb_code, trade_date)
     ).fetchone()
     if daily is None or daily["close_price"] is None:
         return None
@@ -159,7 +160,9 @@ def evaluate_g_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
     """Evaluate G-v1 from historical rows; never substitute absent or future data."""
     dates = _effective_dates(connection, trade_date)
     todays = connection.execute(
-        "SELECT cb_code, cb_name, close_price, volume_lots FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
+        f"SELECT cb_code, cb_name, {EFFECTIVE_CB_PRICE_SQL} AS close_price, "
+        f"{EFFECTIVE_CB_PRICE_SOURCE_SQL} AS effective_cb_price_source, volume_lots "
+        "FROM cb_daily WHERE trade_date = ? ORDER BY cb_code",
         (trade_date,),
     ).fetchall()
     if not todays:
@@ -178,7 +181,7 @@ def evaluate_g_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         if str(master["issue_date"]) > trade_date or (master["delisting_date"] and str(master["delisting_date"]) <= trade_date):
             continue
         if today["close_price"] is None:
-            results.append(_unavailable(cb_code, trade_date, ["missing_cb_close_price"]))
+            results.append(_unavailable(cb_code, trade_date, ["missing_cb_price"]))
             continue
         if master["issue_amount"] is None or int(master["issue_amount"]) <= 0:
             results.append(_unavailable(cb_code, trade_date, ["missing_issue_amount"]))
@@ -256,7 +259,7 @@ def evaluate_g_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
             prior_19_dates = dates[position - 19:position]
             prior_5_dates = dates[position - 5:position]
             rows = connection.execute(
-                f"""SELECT trade_date, close_price, volume_lots FROM cb_daily WHERE cb_code = ?
+            f"""SELECT trade_date, {EFFECTIVE_CB_PRICE_SQL} AS close_price, volume_lots FROM cb_daily WHERE cb_code = ?
                     AND trade_date IN ({','.join('?' for _ in prior_19_dates)}) ORDER BY trade_date""",
                 (cb_code, *prior_19_dates),
             ).fetchall()
@@ -267,7 +270,7 @@ def evaluate_g_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
                 continue
             missing_close = [day for day in prior_19_dates if by_date[day]["close_price"] is None]
             if missing_close:
-                results.append(_unavailable(cb_code, trade_date, ["missing_cb_close_price"], {"missing_close_trade_dates": missing_close}))
+                results.append(_unavailable(cb_code, trade_date, ["missing_cb_price"], {"missing_close_trade_dates": missing_close}))
                 continue
             prior_19_high = max(Decimal(str(by_date[day]["close_price"])) for day in prior_19_dates)
             prior_5_average = sum((Decimal(int(by_date[day]["volume_lots"])) for day in prior_5_dates), Decimal()) / 5
@@ -282,7 +285,8 @@ def evaluate_g_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
                       "g2_volume_above_prior_5_average_times_3": g2_volume_breakout,
                       "g3_first_effective_trade_date_in_maturity_final_year": g3}
         values = {
-            "trigger_types": trigger_types, "close_price": float(close), "today_volume_lots": int(today["volume_lots"]),
+            "trigger_types": trigger_types, "close_price": float(close), "effective_cb_price": float(close),
+            "effective_cb_price_source": today["effective_cb_price_source"], "today_volume_lots": int(today["volume_lots"]),
             "conversion_price": float(conversion["conversion_price"]), "parent_stock_close_price": float(stock["p_close_price"]),
             "conversion_value": float(conversion_value), "issue_amount": int(master["issue_amount"]),
             "balance_amount": balance_amount, "balance_date": balance_date, "converted_ratio_pct": float(converted_ratio),

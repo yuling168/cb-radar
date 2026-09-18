@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from config import DEFAULT_DB_PATH
+from cb_price import EFFECTIVE_CB_PRICE_SQL, EFFECTIVE_CB_PRICE_SOURCE_SQL
 from db import connect
 
 
@@ -103,7 +104,9 @@ def _record_signal(connection: sqlite3.Connection, result: dict[str, Any]) -> bo
 def evaluate_c_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[dict[str, Any]]:
     """Evaluate CBs observed and effective on one day; never fill historical gaps."""
     todays = connection.execute(
-        "SELECT cb_code, close_price FROM cb_daily WHERE trade_date = ? ORDER BY cb_code", (trade_date,)
+        f"SELECT cb_code, {EFFECTIVE_CB_PRICE_SQL} AS close_price, "
+        f"{EFFECTIVE_CB_PRICE_SOURCE_SQL} AS effective_cb_price_source "
+        "FROM cb_daily WHERE trade_date = ? ORDER BY cb_code", (trade_date,)
     ).fetchall()
     if not todays:
         return [_unavailable("__RUN__", trade_date, ["target_trade_date_not_available"])]
@@ -120,7 +123,7 @@ def evaluate_c_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
         if str(master["issue_date"]) > trade_date or (master["delisting_date"] and str(master["delisting_date"]) <= trade_date):
             continue
         if daily["close_price"] is None:
-            results.append(_unavailable(cb_code, trade_date, ["missing_cb_close_price"]))
+            results.append(_unavailable(cb_code, trade_date, ["missing_cb_price"]))
             continue
         conversion = connection.execute(
             """SELECT conversion_price FROM conversion_price_events WHERE cb_code = ? AND effective_date <= ?
@@ -158,7 +161,8 @@ def evaluate_c_v1_on(connection: sqlite3.Connection, trade_date: str) -> list[di
             "within_bucket_top_two": False,
         }
         result = {"cb_code": cb_code, "trade_date": trade_date, "data_status": "AVAILABLE", "unavailable_reasons": [],
-                  "conditions": conditions, "values": {"close_price": float(daily["close_price"]), "conversion_price": float(conversion["conversion_price"]),
+                  "conditions": conditions, "values": {"close_price": float(daily["close_price"]), "effective_cb_price": float(daily["close_price"]),
+                  "effective_cb_price_source": daily["effective_cb_price_source"], "conversion_price": float(conversion["conversion_price"]),
                   "parent_stock_close_price": float(stock["p_close_price"]), "conversion_value": conversion_value,
                   "premium_rate_pct": premium_rate_pct, "issue_amount": int(master["issue_amount"]), "balance_amount": balance_amount,
                   "balance_date": balance_date, "converted_ratio_pct": converted_ratio_pct, "conversion_value_bucket": bucket,

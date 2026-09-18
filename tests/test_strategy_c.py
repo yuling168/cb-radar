@@ -49,6 +49,16 @@ def test_c_v1_four_bucket_boundaries_and_snapshots(tmp_path):
     assert value["converted_ratio_pct"] == pytest.approx(10)
 
 
+def test_c_v1_uses_reference_price_for_premium(tmp_path):
+    with connect(tmp_path / "c.db") as connection:
+        _seed(connection, [("10001", 100, 6, 10)])
+        connection.execute("UPDATE cb_daily SET close_price=NULL, reference_price=106, volume_lots=0")
+        result = _available(evaluate_c_v1_on(connection, TRADE_DATE))["10001"]
+    assert result["values"]["effective_cb_price"] == 106
+    assert result["values"]["effective_cb_price_source"] == "REFERENCE"
+    assert result["values"]["premium_rate_pct"] == pytest.approx(6)
+
+
 def test_c_v1_keeps_top_two_per_bucket_and_tie_breaks_by_code(tmp_path):
     with connect(tmp_path / "c.db") as connection:
         _seed(connection, [("10003", 101, 10, 10), ("10001", 101, 10, 10),
