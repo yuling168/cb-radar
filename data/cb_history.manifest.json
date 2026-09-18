@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "snapshot": {
-    "release_tag": "db-snapshot-2026-09-15-run-manual-effective-price-history-20260919-0045-attempt-1",
-    "asset_name": "cb_history-2026-09-15-run-manual-effective-price-history-20260919-0045-attempt-1.db.gz",
-    "trade_date": "2026-09-15",
-    "created_at": "2026-09-18T16:54:49Z",
-    "sha256_compressed": "95565AFB0AF92DDFA68858C9252F1655BEE24DA478EE46B0F951E91B62F2B9FC",
-    "sha256_uncompressed": "36ACA67FE9C143C25EE1CC3B01DCE1A43B39186F6F33C364D0D4AD98F3E3FB90",
-    "compressed_size": 25242612,
-    "uncompressed_size": 143986688,
-    "asset_url": "https://github.com/yuling168/cb-radar/releases/download/db-snapshot-2026-09-15-run-manual-effective-price-history-20260919-0045-attempt-1/cb_history-2026-09-15-run-manual-effective-price-history-20260919-0045-attempt-1.db.gz",
-    "asset_api_url": "https://api.github.com/repos/yuling168/cb-radar/releases/assets/573042987"
+    "release_tag": "db-snapshot-2026-09-18-run-manual-missing-dates-20260919-0458-attempt-1",
+    "asset_name": "cb_history-2026-09-18-run-manual-missing-dates-20260919-0458-attempt-1.db.gz",
+    "trade_date": "2026-09-18",
+    "created_at": "2026-09-18T21:06:33Z",
+    "sha256_compressed": "3205CDC3B2C0CDD361823677C0025A87F7D35A394905BDB2055A69DFD1592706",
+    "sha256_uncompressed": "525DDF275EE39E37C05C1E830FF6FC89E5760F859C893043EA581BF8228E4CBF",
+    "compressed_size": 26583503,
+    "uncompressed_size": 232321024,
+    "asset_url": "https://github.com/yuling168/cb-radar/releases/download/db-snapshot-2026-09-18-run-manual-missing-dates-20260919-0458-attempt-1/cb_history-2026-09-18-run-manual-missing-dates-20260919-0458-attempt-1.db.gz",
+    "asset_api_url": "https://api.github.com/repos/yuling168/cb-radar/releases/assets/573450638"
   },
   "provenance": {
     "generator_git_commit": "6077b60bd8fc75c82d9720f0dabdffb2e173dbb8"
@@ -22,6 +22,6 @@
     "baseline_run_id": 1,
     "evaluations": 110887,
     "signals": 226,
-    "published_through_date": "2026-09-15"
+    "published_through_date": "2026-09-18"
   }
-}\n
+}
