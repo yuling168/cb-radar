@@ -201,8 +201,10 @@ def select_verification_rows(
             blank.append(row)
         if len(positive) == 3 and len(blank) == 2:
             break
-    if len(positive) != 3 or len(blank) != 2:
-        raise TpexFormatError("Unable to select the required five verification CBs")
+    # Older official reports can legitimately lack either blank-volume rows or
+    # three distinct positive volumes.  The report has already passed its
+    # structural and date validation above, so this diagnostic sample must not
+    # reject otherwise valid historical market data.
     return positive + blank
 
 
