@@ -464,6 +464,24 @@ def load_rows() -> list[dict[str, object]]:
                     f"Required SQLite columns missing from {table_name}: {sorted(missing)}"
                 )
 
+            has_historical_terms = "cb_historical_issuance_terms" in tables
+            issue_date_sql = (
+                "COALESCE(master.issue_date, terms.issue_date)"
+                if has_historical_terms else "master.issue_date"
+            )
+            maturity_date_sql = (
+                "COALESCE(master.maturity_date, terms.maturity_date)"
+                if has_historical_terms else "master.maturity_date"
+            )
+            issue_amount_sql = (
+                "COALESCE(master.issue_amount, terms.issue_amount)"
+                if has_historical_terms else "master.issue_amount"
+            )
+            historical_terms_join = (
+                "LEFT JOIN cb_historical_issuance_terms AS terms ON terms.cb_code = daily.cb_code"
+                if has_historical_terms else ""
+            )
+
         cursor = connection.execute(
             f"""
             SELECT
@@ -485,11 +503,11 @@ def load_rows() -> list[dict[str, object]]:
                     ORDER BY event.effective_date DESC
                     LIMIT 1
                 ) AS conversion_price_on_trade_date,
-                master.issue_date,
-                master.maturity_date,
+                {issue_date_sql} AS issue_date,
+                {maturity_date_sql} AS maturity_date,
                 master.put_date,
                 master.issue_units,
-                master.issue_amount,
+                {issue_amount_sql} AS issue_amount,
                 master.balance_amount,
                 master.balance_date,
                 master.current_conversion_price,
@@ -499,6 +517,7 @@ def load_rows() -> list[dict[str, object]]:
                 master.delisting_reason
             FROM cb_daily AS daily
             LEFT JOIN cb_master AS master ON master.cb_code = daily.cb_code
+            {historical_terms_join}
             LEFT JOIN stock_daily_market AS stock
               ON stock.trade_date = daily.trade_date
              AND stock.p_stock_code = master.stock_code

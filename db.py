@@ -42,6 +42,25 @@ CREATE TABLE IF NOT EXISTS cb_master (
     collected_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS cb_historical_issuance_terms (
+    cb_code TEXT PRIMARY KEY,
+    issue_date TEXT NOT NULL,
+    maturity_date TEXT NOT NULL,
+    issue_amount INTEGER NOT NULL CHECK (issue_amount > 0),
+    source TEXT NOT NULL CHECK (source = 'TPEx:historical_listing_announcement'),
+    source_url TEXT NOT NULL,
+    collected_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cb_historical_issuance_backfill_status (
+    cb_code TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('SUCCEEDED', 'UNAVAILABLE', 'SOURCE_ERROR')),
+    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
+    matched_notice_url TEXT,
+    last_error TEXT,
+    checked_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS conversion_price_events (
     cb_code TEXT NOT NULL,
     effective_date TEXT NOT NULL,
