@@ -2,7 +2,7 @@
 
 ## Scope
 
-`master_collector.py` collects official CB issuance, current balance, put date, current conversion price, conversion-price history and monthly balance history. It does not calculate strategy signals, conversion value, premium rate or moving averages.
+`master_collector.py` collects official CB issuance, current balance, put date, current conversion price, conversion-price history and monthly balance history.  It also provides the explicit `--refresh-daily-parent-mapping` operation used by the daily workflow to save a same-date, auditable CB-to-parent-stock mapping. It does not calculate strategy signals, conversion value, premium rate or moving averages.
 
 ## Official Sources
 
@@ -47,6 +47,7 @@ No third-party website is an operational data source.
   Official names identifying `交換公司債` are excluded and any previously stored
   master/history rows for those codes are removed transactionally.
 - `--codes` may restrict a run to named active CBs for validation; omitting it processes all active TWD CBs found in the official sources.
+- Daily parent mapping is always derived from the requested day's `cb_daily` universe and stored with that exact `mapping_date`. The normal source is the active TPEx issue row. When that row is unavailable for a historical/delisted CB, a TPEx `convSearch` identity and TPEx `convDelist` lifecycle may establish a bounded, verified issuer interval; the requested date must fall inside that interval. This fallback is recorded as `TPEx:convSearch+TPEx:convDelist:VERIFIED_INTERVAL`, never silently inferred from a current master row or a previous mapping.
 
 ## Validation Rules
 
@@ -99,7 +100,7 @@ No third-party website is an operational data source.
 
 ### `cb_master`
 
-One current or historical row per CB. `put_date` is the first investor put date reported by TPEx, or `NULL` when TPEx reports no put right. `issue_units` is the official number of NT$100,000-par units. `is_secured` is 1, 0 or `NULL` for secured, unsecured or officially indeterminate. `balance_amount` is the newest verified official balance and `balance_date` is its official as-of date. `current_conversion_price` is selected from all verified monthly and announcement events by effective date.
+One current or historical row per CB. `put_date` is the first investor put date reported by TPEx, or `NULL` when TPEx reports no put right. `issue_units` is the verified original unit count calculated from the official actual issue amount divided by the official face value; no fixed face value is assumed. `is_secured` is 1, 0 or `NULL` for secured, unsecured or officially indeterminate. `balance_amount` is the newest verified official balance and `balance_date` is its official as-of date. `current_conversion_price` is selected from all verified monthly and announcement events by effective date.
 
 `current_conversion_price_effective_date` stores the `effective_date` of the same
 event selected for `current_conversion_price`. The two fields are updated together.

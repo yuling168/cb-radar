@@ -3,7 +3,7 @@
 ## 範圍與版本
 
 - 策略代號：`B`；版本：`v1`；名稱：`CB 突破轉換價`。
-- 寫入既有版本化 `strategy_evaluations` 與 `strategy_signals`；不得覆寫 A-v1、C-v1 或其他 B 版本。
+- 寫入既有版本化 `strategy_evaluations` 與 `strategy_signals`；不得覆寫 A-v2、C-v1、G-v1 或其他 B 版本。
 - `strategy_evaluations` 為 append-only 診斷記錄；`strategy_signals` 以 `(cb_code, trade_date, strategy_code, strategy_version)` 冪等新增。
 - CLI：`strategy_b.py --date YYYY-MM-DD --database PATH`，或
   `strategy_b.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD --database PATH`。
@@ -35,3 +35,7 @@
 ## 快照
 
 每筆 `AVAILABLE` 評估與訊號保存：四個窗口日期、目標日收盤／成交量、43 日收盤均價、10／5 日成交量均值、前 19 日最高收盤、轉換價、母股收盤、轉換價值、溢價率、發行額、餘額／餘額日期、已轉換比例、全部條件結果與 `trigger_reason=all_b_v1_conditions_met`。`UNAVAILABLE` 保存不可用原因與可安全保存的缺值定位資訊。
+
+## 每日整合與發布
+
+每日 workflow 在 A-v2 發布後，執行 `strategy_b.py --date`。B 步驟使用 `continue-on-error`：B 的資料或程式錯誤會保留 Actions 失敗訊號，但不阻止 C、G、Dashboard 與 snapshot 的後續步驟。Dashboard 只讀已保存快照；正式資料在 `docs/data/v2/strategies/B.json`，`docs/data.json` 保留相容欄位。

@@ -1,27 +1,33 @@
 # Dashboard Specification
 
-本文件描述 Phase 1 Dashboard **目前已實作**的行為，不包含未完成的未來設計。
+本文件描述目前已實作的 Dashboard 資料發布與呈現行為，不包含未完成的未來設計。
 
 ## Architecture
 
 ```text
-data/cb_history.db (SQLite / cb_daily)
-↓ scripts/build_dashboard.py
-docs/data.json
-↓ fetch("./data.json")
-docs/index.html（策略雷達首頁）與各獨立頁面（HTML + CSS + vanilla JavaScript）
+已驗證的 SQLite snapshot
+↓ scripts/build_dashboard.py（唯讀）
+docs/data/v2/manifest.json + 月分片 + 策略分片
+↓ docs/data-loader.js
+首頁、每日行情、法人與策略頁（HTML + CSS + vanilla JavaScript）
+↓ 相容層
+docs/data.json（僅供仍使用舊載入方式的策略頁）
 ↓
 GitHub Pages
 ```
 
-瀏覽器不直接讀取 SQLite binary。`scripts/build_dashboard.py` 以 read-only SQLite URI 讀 DB，驗證資料表與必要欄位後，產生 UTF-8 JSON；不推算日期、不補資料，也不修改 DB。
+瀏覽器不直接讀取 SQLite binary。`scripts/build_dashboard.py` 以 read-only SQLite URI 讀 DB，驗證資料表與必要欄位後，先在隔離暫存區建立並校驗完整的 v2 分片，再發布 manifest；不推算日期、不補資料，也不修改 DB。
 
 ## JSON Schema
 
-`docs/data.json` 的頂層格式：
+`docs/data/v2/manifest.json` 是正式索引，列出最新交易日、可用交易日、月分片、法人分片與策略分片的檔案路徑、筆數、日期與 SHA-256。每日行情分片位於 `market/YYYY-MM.json`，法人資料位於 `institutional/YYYY-MM.json`，策略快照位於 `strategies/A.json`、`B.json`、`C.json`、`G.json`。
+
+每日行情分片的頂層格式：
 
 ```json
 {
+  "schema_version": 2,
+  "month": "2026-08",
   "records": [
     {
       "trade_date": "2026-08-28",
@@ -44,7 +50,7 @@ GitHub Pages
 | `close_price` | number 或 null | 官方收市價；缺值為 `null` |
 | `volume_lots` | integer | 成交量（張），已確認無成交為 `0` |
 
-輸出順序是 `trade_date DESC, cb_code ASC`。產生器會先驗證 `cb_daily` 及上述必要欄位存在。
+輸出順序是 `trade_date DESC, cb_code ASC`。產生器會先驗證 `cb_daily` 及上述必要欄位存在。`docs/data.json` 是縮小的相容資料，不得作為完整歷史行情或法人資料的唯一來源。
 
 ## 網站資訊架構與導覽
 
@@ -65,8 +71,7 @@ GitHub Pages
 
 ## 已保存策略訊號
 
-JSON 另輸出共用的 `strategy_signals` 與 `strategy_evaluations`，包含 A-v2、B-v1、C-v1、G-v1 的
-SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。
+策略分片與相容資料皆輸出已保存的 A-v2、B-v1、C-v1、G-v1 策略快照；為相容既有消費者，`docs/data.json` 仍輸出 `strategy_a_signals` 與 `strategy_a_evaluations`。
 策略 B／C／G 另有各自的 `strategy_b_signals`／`strategy_b_evaluations`、`strategy_c_signals`／`strategy_c_evaluations`、
 `strategy_g_signals`／`strategy_g_evaluations`。首頁會以 A／B／C／G 標籤區分；B 顯示收盤價、43 日均價、當日量、10 日均量、轉換價值、溢價率與已轉換比例；C 顯示
 轉換價值、溢價率、已轉換比例、區間及區間排名；G 顯示 G1／G2／G3 觸發類型、收盤、轉換價值與已轉換比例。這些都是 SQLite 已保存
@@ -119,8 +124,8 @@ SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signal
 
 - 公開網址：<https://yuling168.github.io/cb-radar/>
 - GitHub Pages 使用 `main` branch 的 `/docs` 目錄。
-- Daily Collector workflow 在 Collector 成功後執行 `python scripts/build_dashboard.py`。
-- `data/cb_history.db`、`docs/data.json` 或 `docs/index.html` 任一變更時，workflow 才 commit/push 回 `main`。
+- Daily Collector workflow 先從 `data/cb_history.manifest.json` 所指的 GitHub Release 下載、驗證並還原 SQLite snapshot；Collector 與策略完成、DB validation 通過後，執行 `python -m scripts.build_dashboard`。
+- Dashboard build 成功後才建立新的候選 snapshot，重新下載驗證後發布 Release，最後以新的 manifest 與 `docs/data/v2/`、`docs/data.json` 及網站檔案一次 commit/push 回 `main`。SQLite binary 本身不進 Git。
 
 ## Known Mobile Limitation
 
@@ -130,6 +135,6 @@ SQLite 已保存快照；為相容既有消費者，仍輸出 `strategy_a_signal
 
 ## 法人籌碼頁面
 
-`docs/institutional.html` 讀取同一份 `data.json` 的 `institutional_records`。產生器只讀取既有 `parent_flow_metrics`、`institutional_coverage`、`active_etf_collection_status`、CB master/daily 與母股資料表；不重算或補齊任一統計。每列是交易日當日仍現行的 CB，因此同一母股有多檔現行 CB 時可出現多列並共用已保存的母股統計。
+`docs/institutional.html` 以 `docs/data.json` 的最新日資料作相容啟動，切換日期時由 `data-loader.js` 載入 `docs/data/v2/institutional/YYYY-MM.json`。產生器只讀取既有 `parent_flow_metrics`、`institutional_coverage`、`active_etf_collection_status`、CB master/daily 與母股資料表；不重算或補齊任一統計。每列是交易日當日仍現行的 CB，因此同一母股有多檔現行 CB 時可出現多列並共用已保存的母股統計。
 
 頁面有資料日期與 CB 名稱/代號篩選，預設最新有 `institutional_records` 的日期。桌面表格所有欄位都可排序；數值使用原始數值比較，資料未提供、NULL 與 `—` 固定排在最後，點擊同欄可切換升/降冪並顯示箭頭。桌面第一欄標示為「CB」，只顯示 CB 名稱與代號，並在表格區域橫向捲動時固定於左側；其表頭與資料格使用不透明背景及較高層級，避免其他欄位穿透。欄位依序呈現外資/投信當日張數與成交量比、兩者連續日數與累計、以及「已追蹤主動式 ETF」當日持股增減張數/市值估算（萬元）、連續日數和累計。所有以張為單位的數值四捨五入至整數，0 顯示為 `0 張`；所有正數帶 `+`。台股顏色採買超/增持紅色、賣超/減持綠色、0 與無資料灰色。ETF coverage 以 `complete` / `incomplete` 顯示。`UNAVAILABLE` 顯示「資料未提供」，而法人 coverage 原因是創新板未提供時顯示「資料未提供（創新板）」。桌面表格區域會延伸至接近頁面底部並保有自身的垂直／水平捲動；不顯示額外頁尾文字。手機寬度 `<= 768px` 以分段卡片呈現，不需橫向滑動整張法人表。

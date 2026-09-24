@@ -38,21 +38,19 @@
 ## CLI
 
 ```bash
-python strategy_engine.py --date 2026-08-28
-python strategy_engine.py --start-date 2026-08-01 --end-date 2026-08-31
-python strategy_engine.py --database path/to/history.db --date 2026-08-28
+python strategy_runs.py --date 2026-08-28
+python strategy_runs.py --start-date 2026-08-01 --end-date 2026-08-31
+python strategy_runs.py --run-published-date 2026-08-28
+python strategy_runs.py --database path/to/history.db --date 2026-08-28
 ```
 
-歷史區間只會挑選 DB 中已存在的交易日。指定單日即使沒有任何行情，仍會保存一筆
-`__RUN__` 的不可用診斷。
+歷史區間只會挑選 DB 中已存在的交易日。A-v2 的計算 run 與 Dashboard 發布序列分開保存；`--run-published-date` 會以既有已發布 baseline 原子地計算並發布單一日期。指定單日即使沒有任何行情，仍會保存一筆 `__RUN__` 的不可用診斷。
 
 ## 每日整合與呈現
 
-每日 workflow 在 TPEx CB 行情、CB master 與母股日行情完成後，對 Collector 回報的
-單一交易日執行 `strategy_engine.py --date`，再建立 Dashboard JSON。歷史區間 CLI
-不受影響。策略執行只讀既有資料；不重算或變更 CB、母股與法人資料。
+每日 workflow 在 TPEx CB 行情、CB master、當日 exact parent mapping 與母股日行情完成後，對 Collector 回報的單一交易日執行 `strategy_runs.py --run-published-date`。它會先驗證 A-v2 published baseline，再保存可發布的單日快照；歷史區間 CLI 不受影響。策略執行只讀既有資料；不重算或變更 CB、母股與法人資料。
 
-`docs/data.json` 的 `strategy_a_signals` 是符合訊號的保存快照；
+`docs/data/v2/strategies/A.json` 是正式策略分片；`docs/data.json` 的 `strategy_a_signals` 是相容用的保存快照；
 `strategy_a_evaluations` 是每個 CB／日／版本最新一次評估結果，供頁面顯示
 `UNAVAILABLE` 及原因。首頁將「沒有符合訊號」與「資料不足、無法評估」分開；
 `docs/strategy-a.html` 可按日期檢視符合訊號的完整條件、當日計算數值及不可用原因。

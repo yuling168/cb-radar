@@ -29,4 +29,4 @@
 
 ## 每日整合與 Dashboard
 
-每日 workflow 在母股日行情完成後依序執行 A-v1、B-v1、C-v1、G-v1；每個策略各自容錯，任何一個失敗都不阻斷後續策略或 Dashboard 建置。Dashboard 只讀已保存的 G 訊號完整快照，並輸出每個交易日／版本／狀態／不可用原因的評估筆數彙總，不輸出逐檔 evaluation JSON。UI 正式名稱為「時間發動」；策略內頁才顯示「策略 G · v1」。頁面先以三張條件卡說明既有基本條件，明確表示三者皆成立才有資格進入時間事件；之後依已保存的 `trigger_types` 顯示 G1 發行滿一年、G2 賣回日後發動、G3 到期前一年。同一檔的多個既有 trigger type 均可同時顯示。這些皆為呈現方式，不改變 G1/G2/G3 的計算規則。
+每日 workflow 在母股日行情完成後先發布 A-v2，再依序執行 B-v1、C-v1、G-v1。B、C、G 均使用 `continue-on-error`，所以其中一個失敗不會阻斷其後的策略、Dashboard 或 snapshot；A-v2 與此前的 Collector／mapping／母股行情步驟則是主流程前置，失敗時不會發布。Dashboard 只讀已保存的 G 訊號完整快照，並輸出每個交易日／版本／狀態／不可用原因的評估筆數彙總，不輸出逐檔 evaluation JSON。正式資料在 `docs/data/v2/strategies/G.json`，`docs/data.json` 保留相容欄位。UI 正式名稱為「時間發動」；策略內頁才顯示「策略 G · v1」。頁面先以三張條件卡說明既有基本條件，明確表示三者皆成立才有資格進入時間事件；之後依已保存的 `trigger_types` 顯示 G1 發行滿一年、G2 賣回日後發動、G3 到期前一年。同一檔的多個既有 trigger type 均可同時顯示。這些皆為呈現方式，不改變 G1/G2/G3 的計算規則。

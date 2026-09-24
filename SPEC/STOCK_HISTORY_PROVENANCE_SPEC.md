@@ -11,6 +11,7 @@
 - `mapping_date` 是該 mapping 被官方來源驗證的日期，不是可向過去延伸套用的開始日。
 - 回補與 collector 只可使用 `mapping_date = trade_date` 的 exact-date mapping；不得以今日 `cb_master` 補寫或推論歷史母股。
 - master collector 以其 `as_of_date` 保存同日官方觀測；缺少某日 mapping 時，回補在任何網路請求前以 `Unverified parent-stock mapping` 拒絕該區間。
+- 每日 workflow 的 `--refresh-daily-parent-mapping` 只從當日 `cb_daily` 取候選。若當日 active issue row 不存在，僅可用 TPEx `convSearch` 身分資料與 `convDelist` 形成的已驗證存續區間補強；日期必須落於該區間，且寫入的仍是 exact-date mapping。不得以目前 `cb_master`、前一日 mapping 或月度 mapping 代替。
 
 ## MOPS 月度 verified mapping
 
@@ -39,10 +40,12 @@
 - `MISSING_OFFICIAL_ROW`：已驗證的官方回應未出現目標母股；
 - `SOURCE_ERROR`：下載、格式或官方回應日期驗證失敗。
 
+coverage 另保存資料可用性：`AVAILABLE`、`VERIFIED_SUSPENDED`、`UNVERIFIED_MISSING` 或 `SOURCE_ERROR`。官方日行情缺列時，只有經 TWSE 停復牌資料驗證為停牌的股票可標記 `VERIFIED_SUSPENDED`；其餘缺列必須是 `UNVERIFIED_MISSING`，不可當作零量或停牌。
+
 TWSE 與 TPEx 官方回應都在寫入行情前驗證指定交易日。創新板可由 TWSE 日行情回應取得列資料，但 coverage 保留已驗證 mapping 的 `TIB` 市場別。來源錯誤及缺列只保存 coverage；不產生合成行情。
 
 ## 歷史回補 CLI
 
 `stock_backfill.py` 可使用既有 `--days`，或使用 `--start-date YYYY-MM-DD --end-date YYYY-MM-DD` 回補 DB 中已驗證的 `cb_daily` 交易日。所有日期都必須先通過 exact-date mapping preflight；任何日期未驗證時，整個呼叫在網路 I/O 前失敗。
 
-本工具只提供可驗證資料層，不授權對正式 DB 執行回補。策略計算時，MA43／MA87／MA284 只計入收盤價非空的官方交易日；資料不足時必須回報不可用原因。
+本工具只提供可驗證資料層，不授權對正式 DB 執行回補。預設要求每個日期都有完整 exact-date mapping。只有明確同時指定 `--allow-monthly-verified --allow-partial-mapping` 時，才可用已驗證月度 mapping 回補可解析部分；無法解析的 CB 必須寫入 mapping coverage 與原因，且不得對它請求母股行情。策略計算時，MA43／MA87／MA284 只計入收盤價非空的官方交易日；資料不足時必須回報不可用原因。
