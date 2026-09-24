@@ -6,22 +6,24 @@ CB Radar 的目標是建立台灣可轉換公司債（CB）資料與分析系統
 
 ## 2. Current Phase
 
-Phase 1～3 與公告歷史層已納入正式每日 workflow；策略、通知與事件分類仍未實作。
+Phase 1～3、公告歷史層，以及策略 A／B／C／G 的計算與靜態發布均已納入正式流程。通知與公告事件分類仍未實作。
 
 ## 3. Current Data Flow
 
 ```text
-GitHub Actions（週一～週五台灣 19:30）
+GitHub Actions（週一～週五台灣 18:10、20:10；GitHub 排程可能延遲）
 ↓
 Phase 1：TPEx CB 行情 → announcement collector（TWSE／TPEx）
 ↓
-Phase 2：CB Master／lifecycle → Phase 3：母股行情
+Phase 2：CB Master／lifecycle → Phase 3：母股映射與母股行情
+↓
+策略 A／B／C／G
 ↓
 data/cb_history.db
 ↓
 scripts/build_dashboard.py
 ↓
-docs/data.json
+docs/data/v2/（新版分片）＋ docs/data.json（舊策略頁相容資料）
 ↓
 docs/index.html
 ↓
@@ -67,15 +69,15 @@ CREATE TABLE cb_daily (
 
 Workflow：`.github/workflows/daily-collector.yml`
 
-- cron：`30 11 * * 1-5`，即星期一至星期五 UTC 11:30／台灣時間 19:30。
+- cron：`10 10 * * 1-5`、`10 12 * * 1-5`，即星期一至星期五台灣時間 18:10、20:10。
 - 支援 `workflow_dispatch` 手動執行。
 - Runner：`ubuntu-latest`；Python：3.11。
 - 安裝：`python -m pip install -r requirements.txt`。
-- 順序：Phase 1 `collector.py` → `announcement_collector.py` → Phase 2 `master_collector.py` → Phase 3 `stock_collector.py` → DB validation → Dashboard → 單一 commit/push。
+- 順序：Phase 1 `collector.py` → `announcement_collector.py` → Phase 2 `master_collector.py` → 母股映射與 `stock_collector.py` → 策略 A／B／C／G → DB validation → Dashboard → 單一 commit/push。
 - 公告 collector 每日各抓一次 TWSE、TPEx；任一市場最終失敗會使 workflow failed，但已成功市場與 failed fetch 都保留。
-- `workflow_dispatch` 與排程使用相同流程；`CB Daily Collector #9` 已在 `96aec6b` 版本端到端成功（約 12 分 51 秒）。下一步觀察台灣時間 19:30 scheduled run。
+- `workflow_dispatch` 與排程使用相同流程；手動執行適合用於驗證當日完整鏈路或指定交易日的窄範圍復原。
 - Dashboard build：`python scripts/build_dashboard.py`。
-- 監看 `data/cb_history.db`、`docs/data.json`、`docs/index.html`；任一變更才 commit/push 回 `main`。
+- 監看 snapshot manifest、`docs/data/v2/` 與 `docs/data.json`；任一發布內容變更才 commit/push 回 `main`。
 - 自動 commit 使用 `github-actions[bot]`，push 使用內建 `GITHUB_TOKEN`，workflow 權限是 `contents: write`，不需要 PAT。
 - concurrency group 是 `cb-daily-collector-main`，`cancel-in-progress: false`，避免排程與手動執行同時寫 DB。
 - Collector 若失敗，後續 build/commit 不會執行；沒有資料變更時 workflow 正常結束。
@@ -105,19 +107,13 @@ Workflow：`.github/workflows/daily-collector.yml`
 
 `parse_tpex_csv()` 每次執行都產生新的 `collected_at`，而 `upsert_daily()` 在衝突時會更新該欄位。因此同一天重跑時，即使行情 business data 沒有改變，SQLite binary 仍可能改變並造成新的資料 commit。這是待處理的 technical debt，本次未修改。
 
-## 9. Tests / Validation
+### GitHub Actions 的單檔母股缺失
 
-`tests/test_collector.py` 目前有 7 個測試，驗證：
+若 `stock_collector.py` 無法在官方日行情取得某個已映射母股（2026-09 曾發生代號 3591），目前 workflow 會失敗，後續策略、Dashboard 與自動提交都會跳過。這是排程「有觸發但網站沒有更新」的主要已知原因；修復方向是將單一缺失保存為明確不可用狀態，而非中斷整個日期流程。
 
-- 正常成交量以張保存，並驗證面額換算。
-- 有效官方等價市場列的 blank volume 轉為 0 且確實入庫。
-- blank close price 保存為 `NULL`。
-- TPEx 整體來源失敗時不建立 DB 或大量假 0。
-- 必要 HEADER 欄位消失時明確失敗。
-- 同日期、同 CB 重跑只保留一列，回報 update 而非重複 insert。
-- 非交易日沒有官方 index 資料時不寫假資料。
+GitHub 的 `schedule` 為 best-effort，可能較設定時間延後數小時；排查時應先看 Actions 執行紀錄，不應只以網站日期判定排程未執行。
 
-## 10. Git History Milestones
+## 9. Git History Milestones
 
 依 2026-08-29 的實際 `git log`：
 
@@ -129,7 +125,7 @@ Workflow：`.github/workflows/daily-collector.yml`
 
 GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每日資料更新，不是功能里程碑。
 
-## 11. Announcement History and Lifecycle
+## 10. Announcement History and Lifecycle
 
 - `announcement_fetch`：每次 TWSE／TPEx API 抓取結果；失敗不可當作零公告。
 - `announcement_snapshot`：完整官方 JSON raw snapshot，不覆寫。
@@ -138,19 +134,39 @@ GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每�
 - 強制贖回優先讀每日公告，歷史補洞再讀 historical 表；精確 CB 代碼與「行使債券贖回權」後，唯一收回基準日覆寫 lifecycle。缺日期或衝突日期必須失敗。
 - 15601 中砂一：MOPS 2026-07-15 公告、收回基準日 2026-09-02、TPEx 終止交易日 2026-09-03；正式 lifecycle 為 `2026-09-02 / 已贖回`。
 
-## 12. Not Implemented Yet
+## 11. Historical delisted-CB issuance terms
+
+- 現行 `cb_master` 的官方來源只涵蓋仍掛牌 CB；已下市 CB 的基本發行條款不可假設會存在於該表。
+- `cb_historical_issuance_terms` 是獨立、較窄的補充表，只保存 TPEx 歷史上櫃公告已精確驗證的 `issue_date`、`maturity_date`、`issue_amount` 與公告 URL；它不替代完整 `cb_master`。
+- 擷取器：`historical_issuance_collector.py`。先查 TPEx 公告索引第 6 類，再依公告日期與文號取得 TPEx 靜態原文；必須精確且唯一匹配 CB 代碼，並同時解析三個必要欄位才可寫入。
+- 已完成 2005–2026 的索引掃描。已驗證 6 檔；另有 279 檔尚未取得可安全寫入的完整公告條款。不得把「沒有命中」當成 0、空值推測或已完成回補。
+- Dashboard 會以 `COALESCE(cb_master, cb_historical_issuance_terms)` 顯示這三個歷史條款，因此缺少完整 master 的已下市 CB 仍可顯示經驗證的發行／到期日與發行額。
+
+## 12. Strategy and dashboard publication
+
+- 策略 A 由 `strategy_runs.py --run-published-date YYYY-MM-DD` 發布；B／C／G 分別由 `strategy_b.py`、`strategy_c.py`、`strategy_g.py` 計算。
+- 策略前提是當日 `cb_daily`、`cb_parent_stock_mapping` 與 `stock_daily_market` 都完整。補每日行情後，必須依序補映射、母股行情、策略，再 build Dashboard。
+- `scripts/build_dashboard.py` 同時輸出 `docs/data/v2/` 與 `docs/data.json`。新版頁使用分片；`strategy-b.html`、`strategy-c.html`、`strategy-g.html` 仍讀取 `docs/data.json`。發布策略結果時兩者都必須提交，否則舊策略頁會停在舊日期。
+- 2026-09-22 已完整回補並發布市場資料與 A／B／C／G 策略。9/21、9/22 的母股映射與母股行情均已補齊。
+
+## 13. Not Implemented Yet
 
 - 5MA
 - 20MA
-- A/B/C 策略雷達
 - 通知系統
 - AI 分析
 
-## 13. Planned Next Phase
+## 14. Planned Next Phase
 
 下一階段為公告事件分類、通知與策略功能；不得將它們混入每日保存／lifecycle 流程。
 
-## 14. How Future Codex Sessions Should Start
+## 15. Workspace Hygiene
+
+- 專案已清理一次性 pytest 環境、cache、log、暫存掃描輸出與測試資料庫；目前根目錄只保留正式程式、`data/` 正式 DB、`docs/` 網站發布內容、`SPEC/`、`scripts/`、`tests/`、GitHub workflow 與目前使用中的 `.venv311/`。
+- `data/cb_history.db`、`docs/`、`.github/`、`SPEC/`、`scripts/`、`tests/`、`.git/` 及 `.venv311/` 均是目前需要保留的內容；`.venv311/` 雖可重建，但正被本機工作流程使用，不應在未重建環境前刪除。
+- 新的一次性輸出不得放在專案根目錄；應使用已忽略的暫存路徑或系統暫存區，並於工作完成後移除。
+
+## 16. How Future Codex Sessions Should Start
 
 新的 Codex session 在修改專案前，應依序閱讀：
 
@@ -165,7 +181,7 @@ GitHub Actions 後續產生的 `Update CB history YYYY-MM-DD` commit 屬於每�
 
 不得只根據使用者口述直接大幅修改架構；描述與 repository 不一致時，以實際程式、schema、workflow 與測試為準並回報差異。
 
-## 15. Phase 2 CB Master Data
+## 17. Phase 2 CB Master Data
 
 - Collector：`master_collector.py`。
 - 規格：`SPEC/CB_MASTER_SPEC.md`。

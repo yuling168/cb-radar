@@ -1,6 +1,6 @@
 # CB Radar — 台股可轉債每日行情
 
-目前 Phase 1 從 TPEx 官方來源抓取與保存台灣可轉換公司債每日行情，並提供 GitHub Pages 靜態 Dashboard。現階段仍不包含雷達策略、轉換價值、溢價率、通知或 Web API。
+專案從 TPEx 等官方來源保存台灣可轉換公司債每日行情、CB 基本資料、母股行情與策略 A／B／C／G，並發布至 GitHub Pages 靜態 Dashboard。通知與 Web API 尚未實作。
 
 長期交接與目前進度請先閱讀 [`PROJECT_STATUS.md`](PROJECT_STATUS.md)，開發規則見 [`AGENTS.md`](AGENTS.md)，Dashboard 現況規格見 [`SPEC/DASHBOARD_SPEC.md`](SPEC/DASHBOARD_SPEC.md)。
 
@@ -111,16 +111,10 @@ ORDER BY trade_date DESC
 LIMIT 20;
 ```
 
-## 測試
-
-```bash
-pytest -q
-```
-
 ## 自動化與 Dashboard
 
-`.github/workflows/daily-collector.yml` 於星期一至星期五台灣時間 20:30 執行 Collector，成功後以 `scripts/build_dashboard.py` 從既有 SQLite 產生 `docs/data.json`。有追蹤輸出變更時，GitHub Actions 才 commit/push 回 `main`。
+`.github/workflows/daily-collector.yml` 於星期一至星期五台灣時間 18:10、20:10 排程執行，並支援 `workflow_dispatch` 手動驗證。流程依序收集 CB 行情、公告、CB master、母股映射與母股行情，再計算策略 A／B／C／G、驗證資料庫、產生 Dashboard，最後自動 commit/push。GitHub 的排程可能延遲；請以 Actions 執行紀錄判斷是否有觸發。
 
 Dashboard：<https://yuling168.github.io/cb-radar/>
 
-GitHub Pages 的瀏覽器端只載入 `docs/data.json`，不直接開啟 SQLite binary。頁面支援日期篩選、CB 名稱／代號搜尋、摘要與欄位排序。
+GitHub Pages 不直接開啟 SQLite binary。新版市場／策略資料在 `docs/data/v2/`；為相容既有策略頁，`docs/data.json` 仍必須隨策略發布一併更新。頁面支援日期篩選、CB 名稱／代號搜尋、摘要與欄位排序。
