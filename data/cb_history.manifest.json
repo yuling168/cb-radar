@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "snapshot": {
-    "release_tag": "db-snapshot-2026-10-01-run-36906413600-attempt-1",
-    "asset_name": "cb_history-2026-10-01-run-36906413600-attempt-1.db.gz",
-    "trade_date": "2026-10-01",
-    "created_at": "2026-10-01T18:31:09Z",
-    "sha256_compressed": "73B7F929D3CA37FD1EA3A6AAD82E47B74CFD578611068854BC0A109205607666",
-    "sha256_uncompressed": "F96AD6C900787ABA9445A7F6121C5FF1E45DEC5640DE70AB7F5EB3EC730EA33B",
-    "compressed_size": 30685216,
-    "uncompressed_size": 277618688,
-    "asset_url": "https://github.com/yuling168/cb-radar/releases/download/db-snapshot-2026-10-01-run-36906413600-attempt-1/cb_history-2026-10-01-run-36906413600-attempt-1.db.gz",
-    "asset_api_url": "https://api.github.com/repos/yuling168/cb-radar/releases/assets/603874572"
+    "release_tag": "db-snapshot-2026-10-02-run-37032488543-attempt-1",
+    "asset_name": "cb_history-2026-10-02-run-37032488543-attempt-1.db.gz",
+    "trade_date": "2026-10-02",
+    "created_at": "2026-10-02T16:19:45Z",
+    "sha256_compressed": "4D5AE268F9C2B688669F3CB5D81EEEF32621B2EC47A29F7851A108573AC87123",
+    "sha256_uncompressed": "5F5EDFCE271DA7DA4823C9B9CAF54F4BD4978465CA02790BD5CC26EC0B371C26",
+    "compressed_size": 30985869,
+    "uncompressed_size": 280211456,
+    "asset_url": "https://github.com/yuling168/cb-radar/releases/download/db-snapshot-2026-10-02-run-37032488543-attempt-1/cb_history-2026-10-02-run-37032488543-attempt-1.db.gz",
+    "asset_api_url": "https://api.github.com/repos/yuling168/cb-radar/releases/assets/605993431"
   },
   "provenance": {
     "generator_git_commit": "6077b60bd8fc75c82d9720f0dabdffb2e173dbb8"
@@ -22,6 +22,6 @@
     "baseline_run_id": 1,
     "evaluations": 110887,
     "signals": 226,
-    "published_through_date": "2026-10-01"
+    "published_through_date": "2026-10-02"
   }
 }
