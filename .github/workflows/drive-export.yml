@@ -1,0 +1,65 @@
+name: Export CB Summary to Google Drive
+
+# Runs after the daily collector succeeds (it publishes the DB snapshot + manifest),
+# then uploads the summary CSV and index to Google Drive for Gemini.
+on:
+  workflow_run:
+    workflows: ["CB Daily Collector"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cb-drive-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install google-api-python-client google-auth openpyxl
+
+      - name: Restore DB snapshot from manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readarray -t snapshot < <(python - <<'PY'
+          import json
+          data = json.load(open('data/cb_history.manifest.json', encoding='utf-8'))['snapshot']
+          print(data['release_tag'])
+          print(data['asset_name'])
+          PY
+          )
+          mkdir -p .snapshot-download
+          gh release download "${snapshot[0]}" --pattern "${snapshot[1]}" --dir .snapshot-download
+          python scripts/restore_db_snapshot.py \
+            --manifest data/cb_history.manifest.json \
+            --asset ".snapshot-download/${snapshot[1]}" \
+            --destination data/cb_history.db
+
+      - name: Generate summary exports
+        run: python export_cb.py --all --since 2026-01-01 --days 400 --database data/cb_history.db --output-dir exports
+
+      - name: Upload summary CSV and index to Google Drive
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: python scripts/upload_to_drive.py exports/all_cb_daily.xlsx exports/_index.md
