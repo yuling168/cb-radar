@@ -47,3 +47,5 @@ python scripts/restore_db_snapshot.py \
 ```
 
 不得手動把未驗證的 SQLite binary 加入 Git、覆寫 manifest，或把本機 DB 日期視為 GitHub 正式版本。
+
+GitHub 的內建 schedule 只屬 best-effort。若需要較準時觸發，可使用 `automation/cloudflare-scheduler/` 的外部 Cron 呼叫既有 `workflow_dispatch`；它必須先檢查 workflow 沒有 queued/in-progress run，且 GitHub token 只能以外部服務 Secret 保存。

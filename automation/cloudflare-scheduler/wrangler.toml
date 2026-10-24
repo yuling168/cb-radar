@@ -1,0 +1,13 @@
+name = "cb-radar-github-dispatch"
+main = "src/index.js"
+compatibility_date = "2026-09-24"
+
+# Cloudflare Cron Triggers are UTC.  These are 18:20 and 20:20 in Taiwan.
+[triggers]
+crons = ["20 10 * * 1-5", "20 12 * * 1-5"]
+
+[vars]
+GITHUB_OWNER = "yuling168"
+GITHUB_REPOSITORY = "cb-radar"
+GITHUB_WORKFLOW = "daily-collector.yml"
+GITHUB_REF = "main"

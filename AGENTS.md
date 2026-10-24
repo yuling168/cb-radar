@@ -64,3 +64,7 @@
 - 不將 token、password、secret、private key、`.env` 或其他 credentials 寫入 repository。
 - GitHub Actions 優先使用 GitHub Secrets 或內建 `GITHUB_TOKEN`，採最小必要權限。
 - 不在程式輸出、workflow log、文件或回報中顯示 credentials。
+
+# Agent Execution Guidelines
+- 執行建置、測試、修復時，請直接執行對應指令驗證結果，不需要每次事先詢問。
+- 採取主動行動完成任務，遇到明確的錯誤或需要關鍵架構決定時再提出詢問。

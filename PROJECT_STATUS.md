@@ -113,6 +113,8 @@ Workflow：`.github/workflows/daily-collector.yml`
 
 GitHub 的 `schedule` 為 best-effort，可能較設定時間延後數小時；排查時應先看 Actions 執行紀錄，不應只以網站日期判定排程未執行。
 
+外部準時排程的可部署設定位於 `automation/cloudflare-scheduler/`。它以 Cloudflare Cron 在台灣時間平日 18:20、20:20 呼叫既有 `workflow_dispatch`，並先略過已排隊或執行中的 Collector；GitHub 原生 schedule 保留為備援。實際部署前，GitHub Actions-only token 必須由帳號持有人以 Cloudflare Worker Secret 保存。
+
 ## 9. Git History Milestones
 
 依 2026-08-29 的實際 `git log`：
