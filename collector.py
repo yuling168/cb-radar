@@ -58,6 +58,13 @@ class TpexFormatError(RuntimeError):
     """TPEx returned a response whose required structure has changed."""
 
 
+class TpexCP950DecodeError(TpexFormatError):
+    """The downloaded CSV bytes are not valid CP950 (possibly a bad download)."""
+
+
+CSV_DECODE_MAX_ATTEMPTS = 3
+
+
 def get_with_transient_retry(
     session: requests.Session, url: str, **kwargs: Any
 ) -> requests.Response:
@@ -146,7 +153,7 @@ def _read_validated_csv(content: bytes, requested_date: date) -> pd.DataFrame:
     try:
         text = content.decode("cp950")
     except UnicodeDecodeError as exc:
-        raise TpexFormatError("TPEx CSV is no longer valid CP950") from exc
+        raise TpexCP950DecodeError("TPEx CSV is no longer valid CP950") from exc
 
     raw_rows = list(csv.reader(io.StringIO(text)))
     if not raw_rows or max(len(row) for row in raw_rows) > 16:
@@ -268,11 +275,20 @@ def collect(
     http = session or build_tpex_session()
     http.headers.update({"User-Agent": "cb-radar/0.1 (TPEx daily collector)"})
     trade_date, report_path = resolve_report(http, requested_date, latest_available)
-    response = get_with_transient_retry(
-        http, f"{TPEX_BASE_URL}{report_path}", timeout=HTTP_TIMEOUT_SECONDS
-    )
-    response.raise_for_status()
-    frame = _read_validated_csv(response.content, trade_date)
+    # A truncated/corrupted download can fail CP950 decoding even though the
+    # published file is fine, so re-download a bounded number of times.
+    for attempt in range(1, CSV_DECODE_MAX_ATTEMPTS + 1):
+        response = get_with_transient_retry(
+            http, f"{TPEX_BASE_URL}{report_path}", timeout=HTTP_TIMEOUT_SECONDS
+        )
+        response.raise_for_status()
+        try:
+            frame = _read_validated_csv(response.content, trade_date)
+            break
+        except TpexCP950DecodeError:
+            if attempt == CSV_DECODE_MAX_ATTEMPTS:
+                raise
+            time.sleep(attempt * 2)
     body = frame[frame[0] == "BODY"]
     equivalent = body[body[3].astype(str).str.strip() == "等價"]
     records = parse_tpex_csv(response.content, trade_date)
