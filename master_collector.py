@@ -68,6 +68,7 @@ MOPS_SOURCE = "MOPS:t120sg01"
 MOPS_ANNOUNCEMENT_SOURCE = "MOPS:t108sb08_1"
 TPEX_ISSUE_SOURCE = "TPEx:bond_ISSBD5_data"
 TPEX_VERIFIED_INTERVAL_SOURCE = "TPEx:convSearch+TPEx:convDelist:VERIFIED_INTERVAL"
+TPEX_DELISTED_CARRYFORWARD_SOURCE = "TPEx:bond_ISSBD5_data+TPEx:convDelist:DELISTING_CARRYFORWARD"
 MOPS_RULES_SOURCE = "MOPS:official_conversion_terms"
 
 
@@ -325,9 +326,63 @@ def refresh_daily_exact_parent_stock_mappings(
             cb_code = str(daily["cb_code"])
             evidence = listed.get(cb_code, [])
             if not evidence:
-                missing.append(
-                    f"{cb_code}({daily['cb_name']}):missing_from_tpex_issue_batch"
-                    ":missing_from_tpex_listed_source"
+                # A CB can drop out of both current TPEx lists on the day it is
+                # terminated (after having traded). Accept it only with official
+                # delisting evidence whose exclusive termination day is after
+                # trade_date, plus an earlier mapping that was itself verified
+                # from the official TPEx issue batch.
+                delisting = delistings.get(cb_code)
+                prior = None
+                if delisting is not None and trade_date_text < str(delisting["delisting_date"]):
+                    with connect(db_path) as connection:
+                        prior = connection.execute(
+                            """
+                            SELECT stock_code, stock_name, mapping_date
+                            FROM cb_parent_stock_mapping
+                            WHERE cb_code = ? AND mapping_date < ? AND source = ?
+                            ORDER BY mapping_date DESC
+                            LIMIT 1
+                            """,
+                            (cb_code, trade_date_text, TPEX_ISSUE_SOURCE),
+                        ).fetchone()
+                if prior is None:
+                    missing.append(
+                        f"{cb_code}({daily['cb_name']}):missing_from_tpex_issue_batch"
+                        ":missing_from_tpex_listed_source"
+                    )
+                    continue
+                mappings.append(
+                    {
+                        "cb_code": cb_code,
+                        "mapping_date": trade_date_text,
+                        "stock_code": str(prior["stock_code"]),
+                        "stock_name": str(prior["stock_name"]),
+                        "market": "UNKNOWN",
+                        "source": TPEX_DELISTED_CARRYFORWARD_SOURCE,
+                        "source_url": TPEX_CB_DELISTED_URL,
+                        "verified_at": verified_at,
+                    }
+                )
+                interval_diagnostics.append(
+                    {
+                        "cb_code": cb_code,
+                        "verification_level": "DELISTING_CARRYFORWARD",
+                        "source": TPEX_DELISTED_CARRYFORWARD_SOURCE,
+                        "source_url": TPEX_CB_DELISTED_URL,
+                        "source_as_of_date": trade_date_text,
+                        "verified_at": verified_at,
+                        "valid_from": str(prior["mapping_date"]),
+                        "valid_to": (
+                            date.fromisoformat(str(delisting["delisting_date"]))
+                            - timedelta(days=1)
+                        ).isoformat(),
+                        "evidence": {
+                            "prior_mapping_date": str(prior["mapping_date"]),
+                            "prior_mapping_source": TPEX_ISSUE_SOURCE,
+                            "official_delisting_url": TPEX_CB_DELISTED_URL,
+                            "official_delisting_date": delisting["delisting_date"],
+                        },
+                    }
                 )
                 continue
             row_parent_codes = {str(item["listed_issuer_code"]) for item in evidence}

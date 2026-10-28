@@ -1243,6 +1243,50 @@ def test_daily_exact_mapping_verified_interval_requires_end_evidence_and_rejects
         assert connection.execute("SELECT COUNT(*) FROM cb_parent_stock_mapping").fetchone()[0] == 0
 
 
+def _seed_prior_issue_mapping(db_path, code, mapping_date, source="TPEx:bond_ISSBD5_data"):
+    from master_collector import upsert_parent_stock_mappings
+
+    with connect(db_path) as connection:
+        upsert_parent_stock_mappings(connection, [{
+            "cb_code": code, "mapping_date": mapping_date, "stock_code": "2436",
+            "stock_name": "test", "market": "UNKNOWN", "source": source,
+            "source_url": "u", "verified_at": "2026-09-01T00:00:00+00:00",
+        }])
+
+
+@pytest.mark.parametrize("trade_day, prior_source, ok", [
+    ("2026-09-11", "TPEx:bond_ISSBD5_data", True),
+    ("2026-09-14", "TPEx:bond_ISSBD5_data", False),  # termination day is inactive
+    ("2026-09-11", "other", False),  # prior mapping must be official issue-batch
+])
+def test_daily_exact_mapping_carries_forward_for_cb_terminated_after_trade_date(
+    tmp_path, trade_day, prior_source, ok
+):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("24361",), trade_day)
+    _seed_prior_issue_mapping(db_path, "24361", "2026-09-10", prior_source)
+    session = DailyExactMappingSession(
+        [ISSUE_ROW], listed_rows=[], delisting_rows=[INTERVAL_DELIST_ROW]
+    )
+    if not ok:
+        with pytest.raises(MasterFormatError, match="missing_from_tpex_issue_batch"):
+            refresh_daily_exact_parent_stock_mappings(
+                date.fromisoformat(trade_day), db_path, session=session
+            )
+        return
+    result = refresh_daily_exact_parent_stock_mappings(
+        date.fromisoformat(trade_day), db_path, session=session
+    )
+    assert result["verified_mappings"] == 1
+    assert result["verified_interval_diagnostics"][0]["verification_level"] == "DELISTING_CARRYFORWARD"
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT stock_code FROM cb_parent_stock_mapping WHERE mapping_date = ?",
+            (trade_day,),
+        ).fetchone()
+    assert row["stock_code"] == "2436"
+
+
 def test_daily_exact_mapping_refresh_is_atomic_and_does_not_fallback_to_master(tmp_path):
     db_path = tmp_path / "mapping.db"
     _seed_daily_mapping_universe(db_path, ("30882", "140201", "140202"))
