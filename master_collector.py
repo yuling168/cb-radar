@@ -395,15 +395,22 @@ def refresh_daily_exact_parent_stock_mappings(
             valid_from = str(identity["listing_date"])
             delisting = delistings.get(cb_code)
             if delisting is None:
-                missing.append(
-                    f"{cb_code}({daily['cb_name']}):insufficient_verified_interval_evidence"
-                )
-                continue
-            # Existing lifecycle semantics make termination day itself inactive.
-            valid_to = (
-                date.fromisoformat(str(delisting["delisting_date"])) - timedelta(days=1)
-            ).isoformat()
-            if valid_from > trade_date_text or trade_date_text > valid_to:
+                # Currently listed with consistent parent evidence and no
+                # official termination: open-ended interval (valid_to=None).
+                if not valid_from:
+                    missing.append(
+                        f"{cb_code}({daily['cb_name']}):insufficient_verified_interval_evidence"
+                    )
+                    continue
+                valid_to = None
+            else:
+                # Existing lifecycle semantics make termination day itself inactive.
+                valid_to = (
+                    date.fromisoformat(str(delisting["delisting_date"])) - timedelta(days=1)
+                ).isoformat()
+            if valid_from > trade_date_text or (
+                valid_to is not None and trade_date_text > valid_to
+            ):
                 missing.append(f"{cb_code}({daily['cb_name']}):outside_verified_interval")
                 continue
             source_url = str(identity["mops_url"])
@@ -437,7 +444,9 @@ def refresh_daily_exact_parent_stock_mappings(
                         "mops_issuer_stock_code": identity["mops_issuer_stock_code"],
                         "mops_detail_url": source_url,
                         "official_delisting_url": TPEX_CB_DELISTED_URL,
-                        "official_delisting_date": delisting["delisting_date"],
+                        "official_delisting_date": (
+                            delisting["delisting_date"] if delisting is not None else None
+                        ),
                     },
                 }
             )

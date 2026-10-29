@@ -1222,14 +1222,22 @@ def test_daily_exact_mapping_verified_interval_respects_exclusive_termination_da
         )
 
 
-def test_daily_exact_mapping_verified_interval_requires_end_evidence_and_rejects_conflicts(tmp_path):
+def test_daily_exact_mapping_verified_interval_allows_open_ended_without_delisting(tmp_path):
     db_path = tmp_path / "mapping.db"
     _seed_daily_mapping_universe(db_path, ("24361",), "2026-09-11")
-    with pytest.raises(MasterFormatError, match="insufficient_verified_interval_evidence"):
-        refresh_daily_exact_parent_stock_mappings(
-            date(2026, 9, 11), db_path,
-            session=DailyExactMappingSession([ISSUE_ROW], listed_rows=[INTERVAL_LISTED_ROW]),
-        )
+    result = refresh_daily_exact_parent_stock_mappings(
+        date(2026, 9, 11), db_path,
+        session=DailyExactMappingSession([ISSUE_ROW], listed_rows=[INTERVAL_LISTED_ROW]),
+    )
+    diagnostic = result["verified_interval_diagnostics"][0]
+    assert diagnostic["valid_from"] == "2023-09-11"
+    assert diagnostic["valid_to"] is None
+    assert diagnostic["evidence"]["official_delisting_date"] is None
+
+
+def test_daily_exact_mapping_verified_interval_rejects_conflicts(tmp_path):
+    db_path = tmp_path / "mapping.db"
+    _seed_daily_mapping_universe(db_path, ("24361",), "2026-09-11")
     conflicting_url = INTERVAL_MOPS_URL.replace("issuer_stock_code=2436", "issuer_stock_code=9999")
     conflicting_row = [*INTERVAL_LISTED_ROW[:4], conflicting_url]
     with pytest.raises(MasterFormatError, match="parent_mapping_conflict"):
