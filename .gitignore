@@ -13,3 +13,5 @@ __pycache__/
 /data/*.test.db
 /data/*.volume-v2-test.db
 *.py[cod]
+.latest-snapshot/
+exports/

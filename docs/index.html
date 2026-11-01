@@ -1,6 +1,85 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CB策略雷達</title><style>
-:root{--i:#17211b;--m:#637068;--l:#dce4de;--p:#f4f7f3;--c:#fff;--g:#185c42;--soft:#f8fbf8;--red:#c62828}*{box-sizing:border-box}body{margin:0;background:var(--p);color:var(--i);font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif}.page{max-width:1180px;margin:auto;padding:28px 16px 56px}nav{display:flex;flex-wrap:wrap;gap:8px 16px;border-bottom:1px solid var(--l);padding-bottom:14px}a{color:var(--g);text-decoration:none;font-weight:700}h1{font-size:clamp(2rem,5vw,3.4rem);margin:26px 0 6px}.muted{color:var(--m)}.hero{display:flex;justify-content:space-between;gap:18px;align-items:end}.date,.tag{display:inline-block;padding:6px 10px;border-radius:999px;background:#e7f1eb;color:var(--g);font-weight:700}.new-issue{color:var(--red);font-size:.82rem;margin-left:6px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.card,.section{background:var(--c);border:1px solid var(--l);border-radius:16px;padding:18px}.grid .card{padding:10px 14px;line-height:1.35}.metric{display:block;color:var(--g);font-size:2rem;font-weight:800;line-height:1.08;margin-top:3px}.section{margin-top:16px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.section-head h2{margin:0}.sort-control{display:flex;align-items:center;gap:7px;color:var(--m);font-size:.84rem;font-weight:700}.sort-control select,.sort-control button{min-height:34px;border:1px solid #cbd7cf;border-radius:8px;background:#fff;color:var(--i);font:inherit;padding:5px 8px}.sort-control button{color:var(--g);font-weight:800;cursor:pointer}.signal-list{display:grid;gap:8px}.signal-card{display:flex;align-items:center;gap:16px;padding:12px 14px;border:1px solid var(--l);border-radius:12px;background:var(--soft)}.signal-identity{min-width:178px}.cb-name{display:block;font-size:1rem;font-weight:800;white-space:nowrap}.strategy-name{display:block;color:var(--m);font-size:.8rem;margin-top:3px}.signal-facts{display:flex;flex:1;flex-wrap:wrap;gap:7px 16px;align-items:center}.fact{white-space:nowrap;font-size:.88rem}.fact b{color:var(--m);font-size:.76rem;margin-right:4px}.tag{font-size:.78rem;margin:2px 0}.notice{border-left:4px solid var(--g);background:#f8fbf8;padding:11px;margin-top:8px}.list{display:grid;gap:9px}@media(max-width:760px){.page{padding:18px 12px 40px}.hero{display:block}.date{margin-top:12px}.grid{grid-template-columns:1fr}.card,.section{padding:14px}.grid .card{padding:10px 14px}.section-head{align-items:flex-start;flex-direction:column}.signal-card{align-items:flex-start;flex-direction:column;gap:9px;padding:11px 12px}.signal-identity{min-width:0}.signal-facts{gap:6px 13px}.fact{font-size:.86rem}}
+:root{--i:#17211b;--m:#637068;--l:#dce4de;--p:#f4f7f3;--c:#fff;--g:#185c42;--soft:#f8fbf8;--red:#c62828}
+*{box-sizing:border-box}body{margin:0;background:var(--p);color:var(--i);font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif}
+.page{max-width:1180px;margin:auto;padding:28px 16px 56px}
+nav{display:flex;flex-wrap:wrap;gap:8px 16px;border-bottom:1px solid var(--l);padding-bottom:14px}
+a{color:var(--g);text-decoration:none;font-weight:700}
+h1{font-size:clamp(2rem,5vw,3.4rem);margin:26px 0 6px}
+.muted{color:var(--m)}
+.hero{display:flex;justify-content:space-between;gap:18px;align-items:end}
+.date,.tag{display:inline-block;padding:6px 10px;border-radius:999px;background:#e7f1eb;color:var(--g);font-weight:700}
+.new-issue{color:var(--red);font-size:.82rem;margin-left:6px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}
+.card,.section{background:var(--c);border:1px solid var(--l);border-radius:16px;padding:18px}
+.grid .card{padding:10px 14px;line-height:1.35}
+.metric{display:block;color:var(--g);font-size:2rem;font-weight:800;line-height:1.08;margin-top:3px}
+.section{margin-top:16px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.section-head h2{margin:0}
+.sort-control{display:flex;align-items:center;gap:7px;color:var(--m);font-size:.84rem;font-weight:700}
+.sort-control select,.sort-control button{min-height:34px;border:1px solid #cbd7cf;border-radius:8px;background:#fff;color:var(--i);font:inherit;padding:5px 8px}
+.sort-control button{color:var(--g);font-weight:800;cursor:pointer}
+.signal-list{display:grid;gap:10px}
+.signal-card{border:1px solid var(--l);border-radius:14px;background:#fff;overflow:hidden;transition:border-color .15s,box-shadow .15s}
+.signal-card:hover{border-color:#cbd7cf}
+.signal-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;cursor:pointer;list-style:none;user-select:none}
+.signal-summary::-webkit-details-marker{display:none}
+.summary-left{display:flex;flex-direction:column;gap:4px}
+.summary-title{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.cb-company{font-size:1.12rem;font-weight:800;color:#17211b}
+.cb-codes{font-size:.84rem;color:var(--m);font-variant-numeric:tabular-nums}
+.summary-tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+.tag-remain{display:inline-block;padding:2px 7px;border-radius:6px;background:#eef2ff;color:#3b50df;font-size:.76rem;font-weight:700;font-variant-numeric:tabular-nums}
+.tag-strat{display:inline-block;padding:2px 7px;border-radius:6px;background:#e7f1eb;color:var(--g);font-size:.76rem;font-weight:700}
+.summary-right{display:flex;align-items:center;gap:10px;text-align:right;flex-shrink:0}
+.summary-price-col{display:flex;flex-direction:column;align-items:flex-end}
+.summary-price{font-size:1.25rem;font-weight:800;color:#17211b;font-variant-numeric:tabular-nums;line-height:1.2}
+.summary-conv{font-size:.8rem;color:var(--m);font-variant-numeric:tabular-nums;margin-top:2px}
+.summary-arrow{display:inline-block;width:7px;height:7px;border-right:2px solid #88988d;border-bottom:2px solid #88988d;transform:rotate(-45deg);transition:transform .2s ease;margin-left:4px}
+details[open] .summary-arrow{transform:rotate(45deg)}
+details[open] .signal-summary{background:#f8faf8}
+.signal-detail-body{border-top:1px solid #eef2ef;padding:14px 16px 16px;background:#fff}
+.detail-grid{display:grid;gap:2px}
+.detail-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px dashed #edf2ee;font-size:.92rem}
+.detail-row:last-child{border-bottom:none}
+.dt-lbl{color:var(--m);font-size:.88rem}
+.dt-val{font-weight:700;color:#17211b;font-variant-numeric:tabular-nums}
+.c-up{color:#d6324a}
+.c-down{color:#1f9d55}
+.c-flat{color:var(--m)}
+.detail-btn{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding:12px 16px;background:#2b56df;color:#fff !important;font-weight:800;font-size:.95rem;border-radius:10px;text-decoration:none;box-shadow:0 2px 6px rgba(43,86,223,.2);transition:background .15s ease}
+.detail-btn:hover{background:#1e42bd}
+.fact{display:inline-block}
+.notice{border:1px solid #e1ebe4;border-left:4px solid var(--g);background:#f8fbf8;padding:12px 14px;margin-top:9px;border-radius:10px;overflow:hidden;transition:all .15s ease}
+.notice-private{border:1px solid #fecaca;border-left:5px solid #dc2626 !important;background:#fff8f6 !important;box-shadow:0 2px 8px rgba(220,38,38,.07)}
+.badge-private{display:inline-flex;align-items:center;gap:3px;background:#dc2626;color:#fff;font-size:.76rem;font-weight:800;padding:2px 7px;border-radius:6px;margin-left:6px;vertical-align:middle;letter-spacing:.5px}
+.notice-summary{cursor:pointer;list-style:none;user-select:none;display:flex;flex-direction:column;gap:5px}
+.notice-summary::-webkit-details-marker{display:none}
+.notice-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.notice-subject{font-size:.95rem;font-weight:700;color:#17211b;line-height:1.45;margin-top:2px}
+.notice-private .notice-subject{color:#991b1b}
+.notice-action{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:.82rem;color:var(--m);padding-top:4px}
+.notice-toggle{color:var(--g);font-weight:700;display:inline-flex;align-items:center;gap:4px}
+.notice-private .notice-toggle{color:#dc2626}
+.notice-body{margin-top:12px;padding:14px;background:#fff;border-radius:8px;border:1px solid #e5e7eb;font-size:.88rem;line-height:1.7;color:#2d3748;white-space:pre-wrap;word-break:break-word}
+.notice-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.notice-link-btn{display:inline-flex;align-items:center;gap:4px;font-size:.8rem;font-weight:700;padding:5px 11px;border-radius:6px;background:#eef2ff;color:#2b56df;text-decoration:none;border:1px solid #dbeafe;transition:background .15s}
+.notice-link-btn:hover{background:#dbeafe}
+.list{display:grid;gap:9px}
+@media(max-width:760px){
+  .page{padding:18px 12px 40px}
+  .hero{display:block}
+  .date{margin-top:12px}
+  .grid{grid-template-columns:1fr}
+  .card,.section{padding:14px}
+  .grid .card{padding:10px 14px}
+  .section-head{align-items:flex-start;flex-direction:column}
+  .signal-summary{padding:11px 13px}
+  .cb-company{font-size:1.05rem}
+  .summary-price{font-size:1.15rem}
+  .detail-row{font-size:.88rem}
+}
 </style><link rel="stylesheet" href="site-shell.css"></head><body><main class="page">
 <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
 <header class="hero"><div><h1>CB策略雷達</h1></div><div id="date" class="date">資料載入中…</div></header>
@@ -10,11 +89,181 @@
 </main><script src="data-loader.js"></script><script>
 const $=s=>document.querySelector(s),names={A:"成交量10日新高",B:"CB突破轉換價",C:"CB資優生",G:"時間發動"},gl={G1:"G 發行滿一年",G2:"G 賣回日後",G3:"G 到期前一年"},nf=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:2}),whole=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:0});
 const blank="—",show=n=>n===null||n===undefined?blank:nf.format(n);let sortKey="",sortDirection="asc";
+const cbHistoryCache=new Map();
+async function fetchCbChange(code){
+  if(cbHistoryCache.has(code))return cbHistoryCache.get(code);
+  try{
+    const res=await fetch(`./data/v2/cb/${encodeURIComponent(code)}.json`);
+    if(res.ok){
+      const data=await res.json(),rows=data.rows||[];
+      if(rows.length>=2){
+        const idx=Object.fromEntries(data.columns.map((c,i)=>[c,i]));
+        const last=rows[rows.length-1],prev=rows[rows.length-2];
+        const p1=last[idx.close_price]??last[idx.reference_price];
+        const p0=prev[idx.close_price]??prev[idx.reference_price];
+        if(p1!==null&&p0!==null&&p0>0){
+          const diff=Math.round((p1-p0)*100)/100,pct=Math.round((diff/p0)*10000)/100;
+          const info={diff,pct};
+          cbHistoryCache.set(code,info);
+          return info;
+        }
+      }
+    }
+  }catch(e){}
+  cbHistoryCache.set(code,null);
+  return null;
+}
+function formatChange(info){
+  if(!info||info.diff===null||info.diff===undefined)return{summary:"",row:blank};
+  const d=info.diff,p=info.pct;
+  if(d>0){
+    const t=`▲ ${show(d)} (+${show(p)}%)`;
+    return{summary:`<span class="c-up" style="font-weight:700;font-size:.8rem;margin-top:2px">${t}</span>`,row:`<span class="c-up" style="font-weight:700">${t}</span>`};
+  }else if(d<0){
+    const t=`▼ ${show(Math.abs(d))} (-${show(Math.abs(p))}%)`;
+    return{summary:`<span class="c-down" style="font-weight:700;font-size:.8rem;margin-top:2px">${t}</span>`,row:`<span class="c-down" style="font-weight:700">${t}</span>`};
+  }else{
+    return{summary:`<span class="c-flat" style="font-size:.8rem;margin-top:2px">平盤 -</span>`,row:`<span class="c-flat">平盤 -</span>`};
+  }
+}
 function formatDate(value){if(!value)return "";const [year,month,day]=String(value).split("-");return `${year}/${Number(month)}/${Number(day)}`}
 function nearerEventDate(r){if(r.put_date&&(!r.maturity_date||r.put_date<=r.maturity_date))return `賣回日 ${formatDate(r.put_date)}`;if(r.maturity_date)return `到期日 ${formatDate(r.maturity_date)}`;return ""}
 function fact(label,value){return `<span class="fact"><b>${label}</b>${value}</span>`}
-function signalCard(signal,records,date){const v=signal.condition_values||{},r=records.get(`${date}|${signal.cb_code}`)||{},types=(v.trigger_types||[]).map(x=>`<span class="tag">${gl[x]||x}</span>`).join(""),converted=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(100-r.balance_ratio)}%`,volume=r.volume_lots===null||r.volume_lots===undefined?blank:`${whole.format(r.volume_lots)} 張`,eventDate=nearerEventDate(r),issued=r.issue_date&&Math.floor((Date.parse(`${date}T00:00:00Z`)-Date.parse(`${r.issue_date}T00:00:00Z`))/86400000)<30&&date>=r.issue_date?`<span class="new-issue">新發行 ${r.issue_date.replaceAll("-","/").replace(/\/(0\d)/g,"/$1").replace(/\/(\d{2})$/,(_,d)=>`/${Number(d)}`)}</span>`:"";return `<article class="signal-card"><div class="signal-identity"><span class="cb-name">${signal.cb_name||blank}（${signal.cb_code}）${issued}</span><span class="strategy-name">${names[signal.strategy_code]||signal.strategy_code}</span>${types}</div><div class="signal-facts">${fact("現價",show(r.close_price))}${fact("轉換價值",show(v.conversion_value))}${fact("溢價率",v.premium_rate_pct===null||v.premium_rate_pct===undefined?blank:`${show(v.premium_rate_pct)}%`)}${fact("已轉換",converted)}${fact("當日量",volume)}${eventDate?`<span class="fact">${eventDate}</span>`:""}</div></article>`}
+function signalCard(signal,records,date){
+  const v=signal.condition_values||{},r=records.get(`${date}|${signal.cb_code}`)||{};
+  const types=(v.trigger_types||[]).map(x=>`<span class="tag">${gl[x]||x}</span>`).join("");
+  const volume=r.volume_lots===null||r.volume_lots===undefined?blank:`${whole.format(r.volume_lots)} 張`;
+  const converted=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(100-r.balance_ratio)}%`;
+  const eventDate=nearerEventDate(r);
+  const issued=r.issue_date&&Math.floor((Date.parse(`${date}T00:00:00Z`)-Date.parse(`${r.issue_date}T00:00:00Z`))/86400000)<30&&date>=r.issue_date?`<span class="new-issue">新發行 ${r.issue_date.replaceAll("-","/").replace(/\/(0\d)/g,"/$1").replace(/\/(\d{2})$/,(_,d)=>`/${Number(d)}`)}</span>`:"";
+
+  const rawName=signal.cb_name||r.cb_name||blank;
+  const parentCode=String(signal.cb_code).slice(0,4);
+  const price=show(r.close_price??r.effective_cb_price??r.reference_price);
+  const convPrice=show(r.current_conversion_price??v.conversion_price);
+  const convValue=show(r.conversion_value??v.conversion_value);
+  const prem=v.premium_rate_pct??r.premium_rate;
+  const premText=prem===null||prem===undefined?blank:`${prem>=0?'+':''}${show(prem)}%`;
+  const premClass=prem!==null&&prem!==undefined?(prem>=0?'c-up':'c-down'):'';
+  const secured=r.is_secured==='有'||r.is_secured==='是'?'有擔保':(r.is_secured==='無'||r.is_secured==='否'?'無擔保':(r.is_secured||blank));
+  const stockPrice=show(r.p_close_price??v.parent_stock_close_price);
+  const balanceRatio=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(r.balance_ratio)}%`;
+  const issueDateStr=formatDate(r.issue_date)||blank;
+  const maturityDateStr=formatDate(r.maturity_date)||blank;
+  const chg=formatChange(cbHistoryCache.get(signal.cb_code));
+
+  return `<details class="signal-card" data-code="${signal.cb_code}">
+    <summary class="signal-summary">
+      <div class="summary-left">
+        <div class="summary-title">
+          <span class="cb-company">${rawName}</span>
+          <span class="cb-codes">${parentCode} • ${signal.cb_code}</span>
+          ${issued}
+        </div>
+        <div class="summary-tags">
+          ${balanceRatio!==blank?`<span class="tag-remain">剩餘 ${balanceRatio}</span>`:''}
+          <span class="tag-strat">${names[signal.strategy_code]||signal.strategy_code}</span>
+          ${types}
+        </div>
+      </div>
+      <div class="summary-right">
+        <div class="summary-price-col">
+          <span class="summary-price">${price}</span>
+          <span class="chg-summary">${chg.summary}</span>
+          <span class="summary-conv">轉換價 ${convPrice}</span>
+        </div>
+        <span class="summary-arrow" aria-hidden="true"></span>
+      </div>
+    </summary>
+    <div class="signal-detail-body">
+      <div class="detail-grid">
+        <div class="detail-row"><span class="dt-lbl">債券名稱</span><span class="dt-val">${rawName}</span></div>
+        <div class="detail-row"><span class="dt-lbl">可轉債價格</span><span class="dt-val">${price}</span></div>
+        <div class="detail-row"><span class="dt-lbl">當日漲跌</span><span class="dt-val chg-row">${chg.row}</span></div>
+        <div class="detail-row"><span class="dt-lbl">轉換價</span><span class="dt-val">${convPrice}</span></div>
+        <div class="detail-row"><span class="dt-lbl">轉換價值</span><span class="dt-val">${convValue}</span></div>
+        <div class="detail-row"><span class="dt-lbl">折溢價</span><span class="dt-val ${premClass}">${premText}</span></div>
+        <div class="detail-row"><span class="dt-lbl">是否擔保</span><span class="dt-val">${secured}</span></div>
+        <div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>
+        <div class="detail-row"><span class="dt-lbl">剩餘比率</span><span class="dt-val">${balanceRatio}</span></div>
+        <div class="detail-row"><span class="dt-lbl">發行日</span><span class="dt-val">${issueDateStr}</span></div>
+        <div class="detail-row"><span class="dt-lbl">到期日</span><span class="dt-val">${maturityDateStr}</span></div>
+        <div class="detail-row"><span class="dt-lbl">重要日程</span><span class="dt-val">${eventDate?`<span class="fact">${eventDate}</span>`:""}</span></div>
+        <div class="detail-row"><span class="dt-lbl">當日成交量</span><span class="dt-val">${volume}</span></div>
+      </div>
+      <a href="cb-detail.html?code=${encodeURIComponent(signal.cb_code)}" class="detail-btn">
+        📄 ${rawName} CB詳細內容（查看走勢圖）
+      </a>
+    </div>
+  </details>`;
+}
 function sortValue(signal,records,date,key){const values=signal.condition_values||{},record=records.get(`${date}|${signal.cb_code}`)||{};if(key==="converted_ratio_pct")return record.balance_ratio===null||record.balance_ratio===undefined?null:100-record.balance_ratio;return key in values?values[key]:record[key]}
 function renderSignals(today,records,date){const rows=[...today];if(sortKey)rows.sort((a,b)=>{const av=sortValue(a,records,date,sortKey),bv=sortValue(b,records,date,sortKey);if(av===null||av===undefined)return bv===null||bv===undefined?0:1;if(bv===null||bv===undefined)return -1;return(sortDirection==="asc"?1:-1)*(av-bv)});$("#signals").innerHTML=rows.length?rows.map(s=>signalCard(s,records,date)).join(""):`<p class="muted">本日沒有新觸發訊號。</p>`;$("#sortDirection").textContent=sortDirection==="asc"?"▲":"▼"}
-CBRadarData.latest().then(p=>{const rs=p.records||[],ss=p.strategy_signals||[],fs=p.institutional_records||[],as=p.announcements||[],d=p.trade_date,today=ss.filter(r=>r.trade_date===d),gs=today.filter(r=>r.strategy_code==="G"),good=fs.filter(r=>r.trade_date===d&&r.foreign_net_lots>0&&r.trust_net_lots>0&&r.active_etf_change_lots>0),records=new Map(rs.map(r=>[`${d}|${r.cb_code}`,r]));$("#date").textContent=`資料日期：${d||blank}`;$("#signalCount").textContent=today.length;$("#gCount").textContent=gs.length;$("#flowCount").textContent=good.length;renderSignals(today,records,d);$("#sortKey").addEventListener("change",e=>{sortKey=e.target.value;renderSignals(today,records,d)});$("#sortDirection").addEventListener("click",()=>{sortDirection=sortDirection==="asc"?"desc":"asc";renderSignals(today,records,d)});$("#announcements").innerHTML=as.length?as.map(a=>`<div class="notice"><strong>${a.company_name||a.company_code||blank}</strong>　${a.subject||"公告"}<br><span class="muted">${a.announcement_date||""}</span></div>`).join(""):`<div class="notice muted">今日無重要 CB 相關訊息</div>`}).catch(e=>$("#date").textContent=`資料載入失敗：${e.message}`)
+CBRadarData.latest().then(async p=>{
+  const rs=p.records||[],ss=p.strategy_signals||[],fs=p.institutional_records||[],as=p.announcements||[],d=p.trade_date,today=ss.filter(r=>r.trade_date===d),gs=today.filter(r=>r.strategy_code==="G"),good=fs.filter(r=>r.trade_date===d&&r.foreign_net_lots>0&&r.trust_net_lots>0&&r.active_etf_change_lots>0),records=new Map(rs.map(r=>[`${d}|${r.cb_code}`,r]));
+  $("#date").textContent=`資料日期：${d||blank}`;
+  $("#signalCount").textContent=today.length;
+  $("#gCount").textContent=gs.length;
+  $("#flowCount").textContent=good.length;
+  renderSignals(today,records,d);
+  $("#sortKey").addEventListener("change",e=>{sortKey=e.target.value;renderSignals(today,records,d)});
+  $("#sortDirection").addEventListener("click",()=>{sortDirection=sortDirection==="asc"?"desc":"asc";renderSignals(today,records,d)});
+  function renderAnnouncements(items){
+    if(!items||!items.length)return `<div class="notice muted">今日無重要 CB 相關訊息</div>`;
+    return items.map(a=>{
+      const isPrivate=(a.subject&&a.subject.includes("私募"))||(a.body&&a.body.includes("私募"));
+      const privateBadge=isPrivate?`<span class="badge-private">⚡ 私募公告</span>`:"";
+      const privateClass=isPrivate?" notice-private":"";
+      const cleanSubject=(a.subject||"公告").replace(/\r?\n/g," ");
+      const code=a.company_code||"";
+      const name=a.company_name||code||blank;
+      const dateStr=a.announcement_date||"";
+      const timeStr=a.announcement_time?` ${a.announcement_time}`:"";
+      const yahooUrl=code?`https://tw.stock.yahoo.com/quote/${encodeURIComponent(code)}/news`:"";
+      const searchUrl=`https://www.google.com/search?q=${encodeURIComponent(`${code} ${name} ${cleanSubject}`)}`;
+
+      if(a.body){
+        return `<details class="notice${privateClass}">
+          <summary class="notice-summary">
+            <div class="notice-top">
+              <div><strong>${name}</strong> <span class="muted">${code}</span>${privateBadge}</div>
+              <span class="muted" style="font-size:.8rem;font-variant-numeric:tabular-nums">${dateStr}${timeStr}</span>
+            </div>
+            <div class="notice-subject">${cleanSubject}</div>
+            <div class="notice-action">
+              <span class="notice-toggle">📄 查看內文 <span class="summary-arrow" aria-hidden="true" style="margin-left:2px"></span></span>
+              ${yahooUrl?`<a href="${yahooUrl}" target="_blank" rel="noopener" class="notice-link-btn" onclick="event.stopPropagation()">Yahoo新聞 ↗</a>`:""}
+            </div>
+          </summary>
+          <div class="notice-body">${a.body}</div>
+        </details>`;
+      }else{
+        return `<div class="notice${privateClass}">
+          <div class="notice-top">
+            <div><strong>${name}</strong> <span class="muted">${code}</span>${privateBadge}</div>
+            <span class="muted" style="font-size:.8rem;font-variant-numeric:tabular-nums">${dateStr}${timeStr}</span>
+          </div>
+          <div class="notice-subject">${cleanSubject}</div>
+          <div class="notice-action" style="margin-top:6px">
+            <span class="muted" style="font-size:.8rem">（點擊右側連結查看詳情）</span>
+            ${yahooUrl?`<a href="${yahooUrl}" target="_blank" rel="noopener" class="notice-link-btn">Yahoo新聞 ↗</a>`:""}
+          </div>
+        </div>`;
+      }
+    }).join("");
+  }
+  $("#announcements").innerHTML=renderAnnouncements(as);
+
+  // 非同步載入所有今日觸發標的的當日漲跌資訊
+  await Promise.all(today.map(s=>fetchCbChange(s.cb_code)));
+  document.querySelectorAll(".signal-card[data-code]").forEach(el=>{
+    const c=el.dataset.code,info=cbHistoryCache.get(c);
+    if(info){
+      const chg=formatChange(info);
+      const sumEl=el.querySelector(".chg-summary"),rowEl=el.querySelector(".chg-row");
+      if(sumEl)sumEl.innerHTML=chg.summary;
+      if(rowEl)rowEl.innerHTML=chg.row;
+    }
+  });
+}).catch(e=>$("#date").textContent=`資料載入失敗：${e.message}`)
 </script></body></html>

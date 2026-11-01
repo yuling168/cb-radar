@@ -315,6 +315,7 @@ def load_announcements(limit: int = 12) -> list[dict[str, object]]:
             return []
         date_column = "fact_date" if "fact_date" in columns else "api_batch_date"
         time_column = "spoken_time" if "spoken_time" in columns else "NULL"
+        body_select = ", announcement.body" if "body" in columns else ""
         material_terms = (
             "%可轉換公司債%", "%可轉債%", "%公司債%", "%轉換價格%", "%轉換價%",
             "%提前贖回%", "%強制贖回%", "%到期%", "%下市%", "%庫藏股%",
@@ -334,6 +335,7 @@ def load_announcements(limit: int = 12) -> list[dict[str, object]]:
                 SELECT announcement.company_code, announcement.company_name,
                        announcement.{date_column} AS announcement_date,
                        announcement.{time_column} AS announcement_time, announcement.subject
+                       {body_select}
                 FROM {ANNOUNCEMENT_TABLE_NAME} AS announcement
                 WHERE announcement.company_code IN (SELECT stock_code FROM active_issuers)
                   AND ({subject_filter})

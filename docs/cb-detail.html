@@ -20,7 +20,7 @@
     .legend { min-height:2.6em; font-size:.92rem; line-height:1.5; font-variant-numeric:tabular-nums; margin:8px 0; }
     .legend b { margin-left:10px; } .legend b:first-child { margin-left:0; }
     .c-price { color:#e53935; } .c-cv { color:var(--orange); } .c-vol { color:var(--blue); } .c-prem { color:var(--up); } .c-conv { color:#f08c00; }
-    .chart-price-wrap { position: relative; }
+    .chart-price-wrap { position: relative; touch-action: pan-y; }
     .chart-tooltip {
       position: absolute;
       top: 8px;
@@ -44,6 +44,7 @@
     .chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 8px; }
     .chart-tooltip .tt-lbl { color: var(--muted); }
     .chart-tooltip .tt-val { font-weight: 700; }
+    #chartPrice, #chartPrem, #chartConv { touch-action: pan-y; }
     #chartPrice { height:380px; } #chartPrem, #chartConv { height:140px; margin-top:6px; }
     #tv-attr-logo { display: none !important; }
     .state { padding:40px 10px; text-align:center; color:var(--muted); }
@@ -136,10 +137,16 @@
           mode: 0,
           horzLine: { labelVisible: false },
         },
+        handleScroll: {
+          vertTouchDrag: false,
+          horzTouchDrag: true,
+          mouseWheel: false,
+          pressedMouseMove: true,
+        },
         handleScale: {
           axisPressedMouseMove: { time: true, price: false },
           pinch: true,
-          mouseWheel: true,
+          mouseWheel: false,
         },
       };
 
@@ -147,9 +154,20 @@
       const premChart = LightweightCharts.createChart($("#chartPrem"), { ...base, autoSize: true });
       const convChart = LightweightCharts.createChart($("#chartConv"), { ...base, autoSize: true });
 
+      ["#chartPrice", "#chartPrem", "#chartConv"].forEach((sel) => {
+        const el = $(sel);
+        if (el) {
+          el.addEventListener("wheel", (e) => {
+            if (e.defaultPrevented) {
+              window.scrollBy({ top: e.deltaY, behavior: "auto" });
+            }
+          }, { passive: true });
+        }
+      });
+
       const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "", priceFormat: { type: "volume" } });
       convSeries.setData(convData);
-      convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+      convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
 
       const cvSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#f08c00", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: "", priceLineVisible: false, lastValueVisible: false });
       cvSeries.createPriceLine({ price: 100, color: "#1565c0", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: "" });
