@@ -20,6 +20,30 @@
     .legend { min-height:2.6em; font-size:.92rem; line-height:1.5; font-variant-numeric:tabular-nums; margin:8px 0; }
     .legend b { margin-left:10px; } .legend b:first-child { margin-left:0; }
     .c-price { color:#e53935; } .c-cv { color:var(--orange); } .c-vol { color:var(--blue); } .c-prem { color:var(--up); } .c-conv { color:#f08c00; }
+    .chart-price-wrap { position: relative; }
+    .chart-tooltip {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 10;
+      pointer-events: none;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 0.72rem;
+      line-height: 1.45;
+      color: #333;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      font-variant-numeric: tabular-nums;
+      min-width: 105px;
+    }
+    .chart-tooltip .tt-date { font-weight: 700; color: #17211b; margin-bottom: 2px; }
+    .chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 8px; }
+    .chart-tooltip .tt-lbl { color: var(--muted); }
+    .chart-tooltip .tt-val { font-weight: 700; }
     #chartPrice { height:380px; } #chartPrem, #chartConv { height:140px; margin-top:6px; }
     #tv-attr-logo { display: none !important; }
     .state { padding:40px 10px; text-align:center; color:var(--muted); }
@@ -38,7 +62,10 @@
           <button type="button" data-m="3">3個月</button><button type="button" data-m="6" class="active">6個月</button><button type="button" data-m="12">1年</button><button type="button" data-m="0">全部</button>
         </div>
       </div>
-      <div id="chartPrice"></div>
+      <div class="chart-price-wrap">
+        <div id="priceTooltip" class="chart-tooltip"></div>
+        <div id="chartPrice"></div>
+      </div>
       <div class="muted" style="font-size:.8rem;margin-top:6px">溢價率（%）</div>
       <div id="chartPrem"></div>
       <div class="muted" style="font-size:.8rem;margin-top:6px">可轉債剩餘張數（張）</div>
@@ -86,27 +113,85 @@
       const byDate = new Map(rows.map((r) => [r[idx.trade_date], r]));
 
       if (!cvData.some((p) => has(p.value)) || !premData.some((p) => has(p.value))) $("#sub").innerHTML += "　<b style=\"color:#c62828\">此 CB 在資料庫沒有母股價格／餘額資料，因此沒有轉換價值、溢價率與已轉換比例（不補假資料）。</b>";
-      const base = { localization: { timeFormatter: ymd }, layout: { background: { color: "#fff" }, textColor: "#444", attributionLogo: false }, grid: { vertLines: { color: "#eef2ef" }, horzLines: { color: "#eef2ef" } }, rightPriceScale: { borderColor: "#dce4de" }, timeScale: { borderColor: "#dce4de", rightOffset: 0, fixLeftEdge: true, fixRightEdge: true }, crosshair: { mode: 0 } };
+
+      // 依全期資料計算固定 Y 軸刻度上限，使放大縮小、切換區間時數據刻度保持固定
+      const validPrices = priceData.map((p) => p.value).filter(has);
+      const validCvs = cvData.map((p) => p.value).filter(has);
+      const maxVal = Math.max(105, ...validPrices, ...validCvs);
+      const fixedMax = Math.ceil((maxVal * 1.15) / 10) * 10;
+      const fixedScale = () => ({
+        priceRange: {
+          minValue: 0,
+          maxValue: fixedMax,
+        },
+      });
+
+      const base = {
+        localization: { timeFormatter: ymd },
+        layout: { background: { color: "#fff" }, textColor: "#444", attributionLogo: false },
+        grid: { vertLines: { color: "#eef2ef" }, horzLines: { color: "#eef2ef" } },
+        rightPriceScale: { borderColor: "#dce4de" },
+        timeScale: { borderColor: "#dce4de", rightOffset: 0, fixLeftEdge: true, fixRightEdge: true },
+        crosshair: {
+          mode: 0,
+          horzLine: { labelVisible: false },
+        },
+        handleScale: {
+          axisPressedMouseMove: { time: true, price: false },
+          pinch: true,
+          mouseWheel: true,
+        },
+      };
+
       const priceChart = LightweightCharts.createChart($("#chartPrice"), { ...base, autoSize: true });
       const premChart = LightweightCharts.createChart($("#chartPrem"), { ...base, autoSize: true });
       const convChart = LightweightCharts.createChart($("#chartConv"), { ...base, autoSize: true });
-      const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, title: "剩餘張數", priceFormat: { type: "volume" } });
+
+      const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "", priceFormat: { type: "volume" } });
       convSeries.setData(convData);
       convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
-      const fromZero = (original) => { const r = original(); if (r && r.priceRange) r.priceRange.minValue = 0; return r; };
-      const cvSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fromZero, color: "#f08c00", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: "轉換價值", priceLineVisible: false });
-      cvSeries.createPriceLine({ price: 100, color: "#1565c0", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "100" });
-      const priceSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fromZero, color: "#e53935", lineWidth: 3, title: "CB參考價", priceLineVisible: false });
-      const volSeries = priceChart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false });
+
+      const cvSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#f08c00", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: "", priceLineVisible: false, lastValueVisible: false });
+      cvSeries.createPriceLine({ price: 100, color: "#1565c0", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: "" });
+
+      const priceSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#e53935", lineWidth: 3, title: "", priceLineVisible: false, lastValueVisible: false });
+      const volSeries = priceChart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false, title: "" });
       priceChart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-      const premSeries = premChart.addHistogramSeries({ priceLineVisible: false, title: "溢價率%" });
+
+      const premSeries = premChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "" });
       priceSeries.setData(priceData); cvSeries.setData(cvData); volSeries.setData(volData); premSeries.setData(premData);
+
+      function renderTooltip(date, point) {
+        const r = byDate.get(date) || last;
+        const tooltip = $("#priceTooltip");
+        if (tooltip) {
+          if (point && point.x < 140 && point.y < 130) {
+            tooltip.style.left = "auto";
+            tooltip.style.right = "55px";
+          } else {
+            tooltip.style.left = "8px";
+            tooltip.style.right = "auto";
+          }
+          const p = fmt(r[idx.reference_price]);
+          const cv = fmt(r[idx.conversion_value]);
+          const vol = fmt(r[idx.volume_lots], 0);
+          const prem = r[idx.premium_rate] !== null && r[idx.premium_rate] !== undefined ? `${fmt(r[idx.premium_rate])}%` : "—";
+          tooltip.innerHTML = `
+            <div class="tt-date">${ymd(r[idx.trade_date])}</div>
+            <div class="tt-row"><span class="tt-lbl">參考價</span><span class="tt-val c-price">${p}</span></div>
+            <div class="tt-row"><span class="tt-lbl">轉換價值</span><span class="tt-val c-cv">${cv}</span></div>
+            <div class="tt-row"><span class="tt-lbl">成交量</span><span class="tt-val c-vol">${vol}</span></div>
+            <div class="tt-row"><span class="tt-lbl">溢價率</span><span class="tt-val c-prem">${prem}</span></div>
+          `;
+        }
+      }
 
       function legend(date) {
         const r = byDate.get(date) || last;
         $("#legend").innerHTML = `${ymd(r[idx.trade_date])}<b class="c-price">參考價 ${fmt(r[idx.reference_price])}</b><b class="c-cv">轉換價值 ${fmt(r[idx.conversion_value])}</b><b class="c-vol">成交量 ${fmt(r[idx.volume_lots], 0)}</b><b class="c-prem">溢價率 ${fmt(r[idx.premium_rate])}%</b><b class="c-conv">剩餘張數 ${fmt(convOf(r), 0)} 張</b>`;
       }
       legend(last[idx.trade_date]);
+      renderTooltip(last[idx.trade_date]);
 
       let syncing = false;
       const link = (from, to) => from.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -116,15 +201,25 @@
       const all = [priceChart, premChart, convChart];
       all.forEach((a) => all.forEach((b) => { if (a !== b) link(a, b); }));
       const cross = (chart, otherChart, otherSeries, column) => chart.subscribeCrosshairMove((param) => {
-        if (!param.time) { otherChart.clearCrosshairPosition(); legend(last[idx.trade_date]); return; }
+        if (!param.time) {
+          otherChart.clearCrosshairPosition();
+          legend(last[idx.trade_date]);
+          renderTooltip(last[idx.trade_date]);
+          return;
+        }
         legend(param.time);
+        renderTooltip(param.time, param.point);
         const row = byDate.get(param.time);
         const v = row && row[idx[column]];
         if (v !== null && v !== undefined) otherChart.setCrosshairPosition(v, param.time, otherSeries);
       });
       cross(priceChart, premChart, premSeries, "premium_rate");
       cross(premChart, priceChart, priceSeries, "reference_price");
-      convChart.subscribeCrosshairMove((param) => legend(param.time || last[idx.trade_date]));
+      convChart.subscribeCrosshairMove((param) => {
+        const date = param.time || last[idx.trade_date];
+        legend(date);
+        renderTooltip(date, param.point);
+      });
 
       function setRange(months) {
         const end = new Date(`${last[idx.trade_date]}T00:00:00Z`);
