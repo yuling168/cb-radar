@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CB Radar｜CB 量價走勢</title>
+  <style>
+    :root { --ink:#17211b; --muted:#637068; --line:#dce4de; --paper:#f4f7f3; --card:#fff; --green:#185c42; --up:#d6324a; --down:#1f9d55; --orange:#f08c00; --blue:#1c9ad6; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif; }
+    .page { max-width:1180px; margin:auto; padding:28px 16px 56px; }
+    nav { display:flex; flex-wrap:wrap; gap:8px 16px; border-bottom:1px solid var(--line); padding-bottom:14px; }
+    a { color:var(--green); font-weight:700; text-decoration:none; }
+    h1 { font-size:clamp(1.6rem,4vw,2.6rem); margin:22px 0 4px; }
+    .muted { color:var(--muted); }
+    .panel { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+    .ranges button { border:1px solid #cbd7cf; border-radius:8px; background:#fff; color:var(--green); font:inherit; font-weight:800; padding:5px 12px; cursor:pointer; }
+    .ranges button.active { background:var(--green); color:#fff; }
+    .legend { min-height:2.6em; font-size:.92rem; line-height:1.5; font-variant-numeric:tabular-nums; margin:8px 0; }
+    .legend b { margin-left:10px; } .legend b:first-child { margin-left:0; }
+    .c-price { color:#e53935; } .c-cv { color:var(--orange); } .c-vol { color:var(--blue); } .c-prem { color:var(--up); } .c-conv { color:#f08c00; }
+    #chartPrice { height:380px; } #chartPrem, #chartConv { height:140px; margin-top:6px; }
+    #tv-attr-logo { display: none !important; }
+    .state { padding:40px 10px; text-align:center; color:var(--muted); }
+  </style>
+  <link rel="stylesheet" href="site-shell.css">
+</head>
+<body>
+  <main class="page">
+    <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
+    <h1 id="title">CB 量價走勢</h1>
+    <div class="muted" id="sub">載入中…</div>
+    <section class="panel">
+      <div class="toolbar">
+        <div class="legend" id="legend"></div>
+        <div class="ranges" id="ranges">
+          <button type="button" data-m="3">3個月</button><button type="button" data-m="6" class="active">6個月</button><button type="button" data-m="12">1年</button><button type="button" data-m="0">全部</button>
+        </div>
+      </div>
+      <div id="chartPrice"></div>
+      <div class="muted" style="font-size:.8rem;margin-top:6px">溢價率（%）</div>
+      <div id="chartPrem"></div>
+      <div class="muted" style="font-size:.8rem;margin-top:6px">可轉債剩餘張數（張）</div>
+      <div id="chartConv"></div>
+      <div class="muted" style="font-size:.78rem;margin-top:8px">CB 價格使用「參考價」欄（無開高低資料，以折線呈現）；橘色虛線為轉換價值，藍色虛線為 100 基準（轉換價值高於此線代表超過 100%），藍柱為成交量（張）。圖表元件：<a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts</a>（Apache 2.0）。</div>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const fmt = (v, d = 2) => v === null || v === undefined ? "—" : Number(v).toLocaleString("zh-TW", { minimumFractionDigits: d, maximumFractionDigits: d });
+    const ymd = (t) => typeof t === "string" ? t.replaceAll("-", "/") : `${t.year}/${String(t.month).padStart(2, "0")}/${String(t.day).padStart(2, "0")}`;
+    const code = new URLSearchParams(location.search).get("code") || "";
+
+    function fail(message) { $("#sub").textContent = message; $("#legend").textContent = ""; }
+
+    async function main() {
+      if (!/^[0-9A-Za-z]{4,8}$/.test(code)) return fail("缺少或無效的 CB 代號，請從「每日行情」點選 CB 名稱進入。");
+      if (typeof LightweightCharts === "undefined") return fail("圖表元件載入失敗，請確認網路連線後重試。");
+      const response = await fetch(`./data/v2/cb/${encodeURIComponent(code)}.json`, { cache: "no-store" });
+      if (!response.ok) {
+        fail(`找不到 ${code} 的歷史資料（HTTP ${response.status}）。`);
+        try {
+          const latest = await (await fetch("./data/v2/latest.json", { cache: "no-store" })).json();
+          const related = latest.records.filter((r) => String(r.cb_code).startsWith(code));
+          if (related.length) $("#sub").innerHTML += `　你是否要找：${related.map((r) => `<a href="cb-detail.html?code=${encodeURIComponent(r.cb_code)}">${r.cb_name}（${r.cb_code}）</a>`).join("、")}`;
+        } catch (e) { /* suggestions are optional */ }
+        return;
+      }
+      const payload = await response.json();
+      const idx = Object.fromEntries(payload.columns.map((c, i) => [c, i]));
+      const rows = payload.rows;
+      $("#title").textContent = `${payload.cb_name}（${payload.cb_code}）量價走勢`;
+      document.title = `CB Radar｜${payload.cb_name}`;
+      const last = rows[rows.length - 1];
+      $("#sub").innerHTML = `資料 ${rows.length} 日，最新 ${ymd(last[idx.trade_date])} · <a href="https://www.wantgoo.com/stock/${encodeURIComponent(code.slice(0, 4))}/technical-chart" target="_blank" rel="noopener noreferrer">母股 K 線（玩股網）</a>`;
+
+      const has = (v) => v !== null && v !== undefined;
+      const pick = (col) => rows.map((r) => has(r[idx[col]]) ? { time: r[idx.trade_date], value: r[idx[col]] } : { time: r[idx.trade_date] });
+      const priceData = pick("reference_price"), cvData = pick("conversion_value");
+      const volData = pick("volume_lots").map((p) => has(p.value) ? { ...p, color: "rgba(28,154,214,.7)" } : p);
+      const premData = pick("premium_rate").map((p) => has(p.value) ? { ...p, color: p.value >= 0 ? "rgba(214,50,74,.8)" : "rgba(31,157,85,.8)" } : p);
+      const convOf = (r) => (idx.balance_units !== undefined && r[idx.balance_units] !== null && r[idx.balance_units] !== undefined) ? r[idx.balance_units] : null;
+      const convData = rows.map((r) => convOf(r) !== null ? { time: r[idx.trade_date], value: convOf(r), color: "rgba(240,140,0,.85)" } : { time: r[idx.trade_date] });
+      const byDate = new Map(rows.map((r) => [r[idx.trade_date], r]));
+
+      if (!cvData.some((p) => has(p.value)) || !premData.some((p) => has(p.value))) $("#sub").innerHTML += "　<b style=\"color:#c62828\">此 CB 在資料庫沒有母股價格／餘額資料，因此沒有轉換價值、溢價率與已轉換比例（不補假資料）。</b>";
+      const base = { localization: { timeFormatter: ymd }, layout: { background: { color: "#fff" }, textColor: "#444", attributionLogo: false }, grid: { vertLines: { color: "#eef2ef" }, horzLines: { color: "#eef2ef" } }, rightPriceScale: { borderColor: "#dce4de" }, timeScale: { borderColor: "#dce4de", rightOffset: 0, fixLeftEdge: true, fixRightEdge: true }, crosshair: { mode: 0 } };
+      const priceChart = LightweightCharts.createChart($("#chartPrice"), { ...base, autoSize: true });
+      const premChart = LightweightCharts.createChart($("#chartPrem"), { ...base, autoSize: true });
+      const convChart = LightweightCharts.createChart($("#chartConv"), { ...base, autoSize: true });
+      const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, title: "剩餘張數", priceFormat: { type: "volume" } });
+      convSeries.setData(convData);
+      convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+      const fromZero = (original) => { const r = original(); if (r && r.priceRange) r.priceRange.minValue = 0; return r; };
+      const cvSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fromZero, color: "#f08c00", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: "轉換價值", priceLineVisible: false });
+      cvSeries.createPriceLine({ price: 100, color: "#1565c0", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "100" });
+      const priceSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fromZero, color: "#e53935", lineWidth: 3, title: "CB參考價", priceLineVisible: false });
+      const volSeries = priceChart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false });
+      priceChart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      const premSeries = premChart.addHistogramSeries({ priceLineVisible: false, title: "溢價率%" });
+      priceSeries.setData(priceData); cvSeries.setData(cvData); volSeries.setData(volData); premSeries.setData(premData);
+
+      function legend(date) {
+        const r = byDate.get(date) || last;
+        $("#legend").innerHTML = `${ymd(r[idx.trade_date])}<b class="c-price">參考價 ${fmt(r[idx.reference_price])}</b><b class="c-cv">轉換價值 ${fmt(r[idx.conversion_value])}</b><b class="c-vol">成交量 ${fmt(r[idx.volume_lots], 0)}</b><b class="c-prem">溢價率 ${fmt(r[idx.premium_rate])}%</b><b class="c-conv">剩餘張數 ${fmt(convOf(r), 0)} 張</b>`;
+      }
+      legend(last[idx.trade_date]);
+
+      let syncing = false;
+      const link = (from, to) => from.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (syncing || !range) return;
+        syncing = true; to.timeScale().setVisibleLogicalRange(range); syncing = false;
+      });
+      const all = [priceChart, premChart, convChart];
+      all.forEach((a) => all.forEach((b) => { if (a !== b) link(a, b); }));
+      const cross = (chart, otherChart, otherSeries, column) => chart.subscribeCrosshairMove((param) => {
+        if (!param.time) { otherChart.clearCrosshairPosition(); legend(last[idx.trade_date]); return; }
+        legend(param.time);
+        const row = byDate.get(param.time);
+        const v = row && row[idx[column]];
+        if (v !== null && v !== undefined) otherChart.setCrosshairPosition(v, param.time, otherSeries);
+      });
+      cross(priceChart, premChart, premSeries, "premium_rate");
+      cross(premChart, priceChart, priceSeries, "reference_price");
+      convChart.subscribeCrosshairMove((param) => legend(param.time || last[idx.trade_date]));
+
+      function setRange(months) {
+        const end = new Date(`${last[idx.trade_date]}T00:00:00Z`);
+        if (!months) { priceChart.timeScale().fitContent(); return; }
+        const start = new Date(end); start.setUTCMonth(start.getUTCMonth() - months);
+        priceChart.timeScale().setVisibleRange({ from: start.toISOString().slice(0, 10), to: last[idx.trade_date] });
+      }
+      $("#ranges").addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-m]"); if (!button) return;
+        document.querySelectorAll("#ranges button").forEach((b) => b.classList.toggle("active", b === button));
+        setRange(Number(button.dataset.m));
+      });
+      setRange(6);
+    }
+    main().catch((error) => fail(`載入失敗：${error.message}`));
+  </script>
+</body>
+</html>

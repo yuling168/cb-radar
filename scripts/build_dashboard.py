@@ -694,6 +694,89 @@ def _file_metadata(path: Path, root: Path, rows: list[dict[str, object]]) -> dic
     }
 
 
+CB_SERIES_COLUMNS = ("trade_date", "reference_price", "close_price", "volume_lots",
+                     "conversion_value", "premium_rate", "p_close_price", "balance_ratio", "balance_units")
+
+
+def _monthly_balance_ratios() -> dict[tuple[str, str], tuple[float | None, int | None]]:
+    """Historical remaining (ratio, units) per (cb_code, YYYY-MM) from official monthly balances."""
+    with sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if not {"cb_monthly_balance", "cb_master"} <= tables:
+            return {}
+        cursor = connection.execute(
+            """
+            SELECT monthly.cb_code, monthly.year_month, monthly.balance_amount, master.issue_amount, master.issue_units
+            FROM cb_monthly_balance AS monthly
+            JOIN cb_master AS master ON master.cb_code = monthly.cb_code
+            """
+        )
+        info = {}
+        for cb_code, year_month, balance_amount, issue_amount, issue_units in cursor:
+            ratio = balance_ratio(balance_amount, issue_units)
+            units = balance_units_for_display(issue_amount, issue_units, balance_amount)
+            info[(str(cb_code), str(year_month))] = (ratio, units)
+    return info
+
+
+def _cb_series_groups(
+    rows: list[dict[str, object]],
+    monthly_ratios: dict[tuple[str, str], tuple[float | None, int | None]] | None = None,
+) -> dict[str, dict[str, object]]:
+    """Group published market rows into one compact, date-ordered series per CB.
+
+    Balance units and ratios carry forward known official history so stair-step conversion
+    can be visualized cleanly across months without artificial drop-to-zero spikes.
+    """
+    monthly_ratios = monthly_ratios or {}
+    ratio_idx = CB_SERIES_COLUMNS.index("balance_ratio")
+    units_idx = CB_SERIES_COLUMNS.index("balance_units")
+    groups: dict[str, dict[str, object]] = {}
+    
+    # Sort by code and trade date ascending
+    sorted_rows = sorted(rows, key=lambda item: (str(item["cb_code"]), str(item["trade_date"])))
+    
+    # Process per CB to allow clean forward-fill
+    by_code: dict[str, list[dict[str, object]]] = {}
+    for r in sorted_rows:
+        by_code.setdefault(str(r["cb_code"]), []).append(r)
+        
+    for code, cb_rows in by_code.items():
+        entry = groups.setdefault(code, {"cb_name": cb_rows[-1].get("cb_name"), "rows": []})
+        entry["cb_name"] = cb_rows[-1].get("cb_name")
+        
+        last_ratio = None
+        last_units = None
+        
+        for row in cb_rows:
+            month = str(row["trade_date"])[:7]
+            values = [row.get(column) for column in CB_SERIES_COLUMNS]
+            
+            # Check official monthly info
+            m_info = monthly_ratios.get((code, month))
+            if m_info:
+                if m_info[0] is not None:
+                    last_ratio = m_info[0]
+                if m_info[1] is not None:
+                    last_units = m_info[1]
+                    
+            # Check if this trade date has latest master balance date
+            if str(row.get("balance_date") or "") == str(row["trade_date"]):
+                if row.get("balance_ratio") is not None:
+                    last_ratio = row.get("balance_ratio")
+                if row.get("balance_units") is not None:
+                    last_units = row.get("balance_units")
+            elif str(row.get("balance_date") or "")[:7] == month and last_units is None:
+                last_ratio = row.get("balance_ratio")
+                last_units = row.get("balance_units")
+                
+            values[ratio_idx] = last_ratio
+            values[units_idx] = last_units
+            entry["rows"].append(values)
+            
+    return groups
+
+
 def _copy_if_changed(source: Path, destination: Path) -> bool:
     if destination.is_file() and source.read_bytes() == destination.read_bytes():
         return False
@@ -728,6 +811,11 @@ def build_dashboard_shards() -> tuple[int, int]:
             path = staging / "institutional" / f"{month}.json"
             _write_json(path, {"schema_version": SHARD_SCHEMA_VERSION, "month": month, "institutional_records": rows})
             institutional_manifest[month] = _file_metadata(path, staging, rows)
+        for cb_code, series in _cb_series_groups(records, _monthly_balance_ratios()).items():
+            _write_json(staging / "cb" / f"{cb_code}.json", {
+                "schema_version": SHARD_SCHEMA_VERSION, "cb_code": cb_code, "cb_name": series["cb_name"],
+                "columns": list(CB_SERIES_COLUMNS), "rows": series["rows"],
+            })
         strategy_manifest = {}
         for code in active_strategy_codes():
             lower = code.lower()

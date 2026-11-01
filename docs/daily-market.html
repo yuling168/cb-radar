@@ -121,6 +121,14 @@
       box-shadow: 0 0 0 3px rgba(24, 92, 66, 0.12);
     }
 
+    .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 20px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+    .filters .range { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.78rem; font-weight: 700; }
+    .filters .range input[type="date"] { width: 140px; }
+    .filters .range input[type="date"].is-empty:not(:focus)::-webkit-datetime-edit { color: transparent; }
+    .filters .range input { width: 84px; min-height: 36px; padding: 6px 8px; }
+    .filters .range select { width: 90px; min-height: 36px; padding: 6px 8px; }
+    .filters button { min-height: 36px; border: 1px solid #cbd7cf; border-radius: 10px; background: #fff; color: var(--green); font: inherit; font-weight: 800; padding: 6px 14px; cursor: pointer; }
+
     .result-bar {
       display: flex;
       justify-content: space-between;
@@ -260,6 +268,19 @@
         <button id="exportExcel" type="button">匯出 Excel</button>
       </div>
 
+      <div class="filters" aria-label="篩選CB條件">
+        <div class="range"><span>CB參考價</span><input data-f="reference_price" data-b="min" type="number" step="any" inputmode="decimal" aria-label="參考價下限"><i>~</i><input data-f="reference_price" data-b="max" type="number" step="any" inputmode="decimal" aria-label="參考價上限"></div>
+        <div class="range"><span>轉換價值</span><input data-f="conversion_value" data-b="min" type="number" step="any" inputmode="decimal" aria-label="轉換價值下限"><i>~</i><input data-f="conversion_value" data-b="max" type="number" step="any" inputmode="decimal" aria-label="轉換價值上限"></div>
+        <div class="range"><span>折溢價(%)</span><input data-f="premium_rate" data-b="min" type="number" step="any" inputmode="decimal" aria-label="溢價率下限"><i>~</i><input data-f="premium_rate" data-b="max" type="number" step="any" inputmode="decimal" aria-label="溢價率上限"></div>
+        <div class="range"><span>剩餘比率(%)</span><input data-f="balance_ratio" data-b="min" type="number" step="any" inputmode="decimal" aria-label="剩餘比率下限"><i>~</i><input data-f="balance_ratio" data-b="max" type="number" step="any" inputmode="decimal" aria-label="剩餘比率上限"></div>
+        <div class="range"><span>是否擔保</span><select id="securedFilter" aria-label="是否擔保"><option value="">全部</option><option value="有">有</option><option value="無">無</option></select></div>
+        <div class="range"><span>距到期 大於</span><input id="daysMin" data-f="remaining_days" data-b="min" type="number" min="0" step="1" inputmode="numeric" aria-label="距到期天數下限"><span>天</span></div>
+        <div class="range"><span>發行日</span><input data-f="issue_date" data-b="min" type="date" aria-label="發行日起"><i>~</i><input data-f="issue_date" data-b="max" type="date" aria-label="發行日迄"></div>
+        <div class="range"><span>到期日</span><input data-f="maturity_date" data-b="min" type="date" aria-label="到期日起"><i>~</i><input data-f="maturity_date" data-b="max" type="date" aria-label="到期日迄"></div>
+        <button id="clearFilters" type="button">預設條件</button>
+        <button id="emptyFilters" type="button">清空條件</button>
+      </div>
+
       <div class="result-bar">
         <strong id="resultCount">載入中…</strong>
         <span id="activeFilter">準備行情資料</span>
@@ -376,10 +397,43 @@
       return state.records.filter((record) => record.trade_date === state.selectedDate);
     }
 
+    const FILTER_FIELDS = { issue_date: "發行日", maturity_date: "到期日", reference_price: "參考價", conversion_value: "轉換價值", premium_rate: "折溢價%", balance_ratio: "剩餘比率%", remaining_days: "距到期天" };
+    const DEFAULT_MIN_DAYS = "365";
+
+    function readFilters() {
+      const ranges = {};
+      document.querySelectorAll(".filters input[data-f]").forEach((input) => {
+        const isDate = input.type === "date";
+        if (input.value.trim() === "" || (!isDate && !Number.isFinite(Number(input.value)))) return;
+        (ranges[input.dataset.f] ||= {})[input.dataset.b] = isDate ? input.value : Number(input.value);
+      });
+      return { ranges, secured: document.querySelector("#securedFilter").value };
+    }
+
+    function matchesFilters(record, filters) {
+      if (filters.secured && record.is_secured !== filters.secured) return false;
+      for (const [key, { min, max }] of Object.entries(filters.ranges)) {
+        const value = record[key];
+        if (value === null || value === undefined) return false;
+        if (min !== undefined && (key === "remaining_days" ? value <= min : value < min)) return false;
+        if (max !== undefined && value > max) return false;
+      }
+      return true;
+    }
+
+    function describeFilters(filters) {
+      const parts = Object.entries(filters.ranges).map(([key, { min, max }]) =>
+        key === "remaining_days" ? `${FILTER_FIELDS[key]}>${min}` : `${FILTER_FIELDS[key]} ${String(min ?? "").replaceAll("-", "/")}~${String(max ?? "").replaceAll("-", "/")}`);
+      if (filters.secured) parts.push(`擔保：${filters.secured}`);
+      return parts.join("；");
+    }
+
     function filteredRows() {
       const query = state.query.trim().toLocaleLowerCase("zh-Hant");
+      const filters = readFilters();
       return selectedDateRows()
         .filter((record) => !query || record.cb_code.toLocaleLowerCase().includes(query) || record.cb_name.toLocaleLowerCase("zh-Hant").includes(query))
+        .filter((record) => matchesFilters(record, filters))
         .sort(compareValues);
     }
 
@@ -403,7 +457,7 @@
       updateSortHeaders();
       const rows = filteredRows();
       elements.resultCount.textContent = `共 ${numberFormat.format(rows.length)} 筆結果`;
-      elements.activeFilter.textContent = state.query.trim() ? `${state.selectedDate} · 搜尋「${state.query.trim()}」` : state.selectedDate;
+      elements.activeFilter.textContent = [state.selectedDate, state.query.trim() ? `搜尋「${state.query.trim()}」` : "", describeFilters(readFilters())].filter(Boolean).join(" · ");
       elements.body.replaceChildren();
 
       if (!rows.length) {
@@ -418,7 +472,15 @@
       const fragment = document.createDocumentFragment();
       rows.forEach((record) => {
         const row = document.createElement("tr");
-        row.append(cell(record.cb_name, "sticky-name"));
+        const nameCell = cell("", "sticky-name");
+        const link = document.createElement("a");
+        link.href = `cb-detail.html?code=${encodeURIComponent(record.cb_code)}`;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.title = "查看 CB 量價走勢";
+        link.textContent = record.cb_name;
+        nameCell.append(link);
+        row.append(nameCell);
         row.append(cell(record.cb_code));
         row.append(cell(record.issue_date));
         row.append(cell(record.maturity_date));
@@ -474,6 +536,38 @@
       }
     });
 
+    const DEFAULT_FILTERS = {
+      "reference_price:min": "90", "reference_price:max": "110",
+      "conversion_value:min": "90", "conversion_value:max": "110",
+      "premium_rate:min": "0", "premium_rate:max": "20",
+      "balance_ratio:min": "80", "balance_ratio:max": "100",
+      "remaining_days:min": DEFAULT_MIN_DAYS
+    };
+    function applyDefaultFilters() {
+      document.querySelectorAll(".filters input[data-f]").forEach((input) => {
+        input.value = DEFAULT_FILTERS[`${input.dataset.f}:${input.dataset.b}`] ?? "";
+      });
+      document.querySelector("#securedFilter").value = "";
+    }
+    applyDefaultFilters();
+    const dateInputs = document.querySelectorAll('.filters input[type="date"]');
+    const syncDateHints = () => dateInputs.forEach((input) => input.classList.toggle("is-empty", !input.value));
+    syncDateHints();
+    document.addEventListener("input", syncDateHints);
+    document.addEventListener("click", () => setTimeout(syncDateHints));
+    document.querySelectorAll(".filters input, .filters select").forEach((control) => control.addEventListener("input", render));
+    document.querySelector("#clearFilters").addEventListener("click", () => { applyDefaultFilters(); render(); });
+    document.querySelector("#emptyFilters").addEventListener("click", () => {
+      document.querySelectorAll(".filters input").forEach((input) => { input.value = ""; });
+      document.querySelector("#securedFilter").value = "";
+      elements.searchInput.value = "";
+      state.query = "";
+      if (state.latestDate && elements.dateSelect.value !== state.latestDate) {
+        elements.dateSelect.value = state.latestDate;
+        elements.dateSelect.dispatchEvent(new Event("change"));
+      } else render();
+    });
+
     elements.searchInput.addEventListener("input", () => {
       state.query = elements.searchInput.value;
       render();
@@ -505,6 +599,7 @@
         if (!dates.length) throw new Error("資料庫目前沒有行情資料");
         dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
         state.selectedDate = payload.trade_date;
+        state.latestDate = payload.trade_date;
         elements.dateSelect.value = state.selectedDate;
         render();
       })
