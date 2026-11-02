@@ -175,6 +175,12 @@ jobs:
           --date "${{ steps.collector.outputs.trade_date }}"
           --database data/cb_history.db
 
+      - name: Collect TWSE CB auctions
+        continue-on-error: true
+        run: >
+          python scripts/collect_twse_auction.py
+          --database data/cb_history.db
+
       - name: Validate CB history database
         run: python scripts/validate_db.py --database data/cb_history.db
 

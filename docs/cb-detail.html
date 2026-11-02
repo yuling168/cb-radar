@@ -48,19 +48,41 @@
     #chartPrice { height:380px; } #chartPrem, #chartConv { height:140px; margin-top:6px; }
     #tv-attr-logo { display: none !important; }
     .state { padding:40px 10px; text-align:center; color:var(--muted); }
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font: inherit;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--green);
+      background: var(--green-soft);
+      border: 1px solid rgba(24, 92, 66, 0.2);
+      border-radius: 8px;
+      padding: 6px 14px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .back-btn:hover { background: #d4e5dc; }
+    .back-btn:active { transform: scale(0.98); }
+
   </style>
   <link rel="stylesheet" href="site-shell.css">
 </head>
 <body>
   <main class="page">
     <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
+    <div style="margin: 12px 0 8px;">
+      <button type="button" class="back-btn" onclick="goBack()">← 返回上一頁</button>
+    </div>
     <h1 id="title">CB 量價走勢</h1>
     <div class="muted" id="sub">載入中…</div>
     <section class="panel">
       <div class="toolbar">
         <div class="legend" id="legend"></div>
         <div class="ranges" id="ranges">
-          <button type="button" data-m="3">3個月</button><button type="button" data-m="6" class="active">6個月</button><button type="button" data-m="12">1年</button><button type="button" data-m="0">全部</button>
+          <button type="button" data-d="30" class="active">30天</button><button type="button" data-m="3">3個月</button><button type="button" data-m="6">6個月</button><button type="button" data-m="12">1年</button><button type="button" data-m="0">全部</button>
         </div>
       </div>
       <div class="chart-price-wrap">
@@ -77,6 +99,18 @@
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
+    function goBack() {
+      if (window.history.length > 1) {
+        window.history.back();
+      } else if (window.opener) {
+        window.close();
+      } else if (document.referrer && document.referrer.includes(window.location.host)) {
+        window.location.href = document.referrer;
+      } else {
+        window.location.href = "daily-market.html";
+      }
+    }
+
     const fmt = (v, d = 2) => v === null || v === undefined ? "—" : Number(v).toLocaleString("zh-TW", { minimumFractionDigits: d, maximumFractionDigits: d });
     const ymd = (t) => typeof t === "string" ? t.replaceAll("-", "/") : `${t.year}/${String(t.month).padStart(2, "0")}/${String(t.day).padStart(2, "0")}`;
     const code = new URLSearchParams(location.search).get("code") || "";
@@ -131,7 +165,7 @@
         localization: { timeFormatter: ymd },
         layout: { background: { color: "#fff" }, textColor: "#444", attributionLogo: false },
         grid: { vertLines: { color: "#eef2ef" }, horzLines: { color: "#eef2ef" } },
-        rightPriceScale: { borderColor: "#dce4de" },
+        rightPriceScale: { borderColor: "#dce4de", entireTextOnly: true },
         timeScale: { borderColor: "#dce4de", rightOffset: 0, fixLeftEdge: true, fixRightEdge: true },
         crosshair: {
           mode: 0,
@@ -167,7 +201,7 @@
 
       const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "", priceFormat: { type: "volume" } });
       convSeries.setData(convData);
-      convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
+      convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.22, bottom: 0 }, entireTextOnly: true });
 
       const cvSeries = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#f08c00", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, title: "", priceLineVisible: false, lastValueVisible: false });
       cvSeries.createPriceLine({ price: 100, color: "#1565c0", lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: "" });
@@ -239,18 +273,23 @@
         renderTooltip(date, param.point);
       });
 
-      function setRange(months) {
+      function setRange(days, months) {
         const end = new Date(`${last[idx.trade_date]}T00:00:00Z`);
-        if (!months) { priceChart.timeScale().fitContent(); return; }
-        const start = new Date(end); start.setUTCMonth(start.getUTCMonth() - months);
+        if (!days && !months) { priceChart.timeScale().fitContent(); return; }
+        const start = new Date(end);
+        if (days) {
+          start.setUTCDate(start.getUTCDate() - days);
+        } else if (months) {
+          start.setUTCMonth(start.getUTCMonth() - months);
+        }
         priceChart.timeScale().setVisibleRange({ from: start.toISOString().slice(0, 10), to: last[idx.trade_date] });
       }
       $("#ranges").addEventListener("click", (event) => {
-        const button = event.target.closest("button[data-m]"); if (!button) return;
+        const button = event.target.closest("button"); if (!button) return;
         document.querySelectorAll("#ranges button").forEach((b) => b.classList.toggle("active", b === button));
-        setRange(Number(button.dataset.m));
+        setRange(Number(button.dataset.d || 0), Number(button.dataset.m || 0));
       });
-      setRange(6);
+      setRange(30, 0);
     }
     main().catch((error) => fail(`載入失敗：${error.message}`));
   </script>

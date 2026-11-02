@@ -19,6 +19,13 @@
 
   async function manifest() { return read("manifest.json"); }
   async function latest() { return read("latest.json"); }
+  async function auctions() {
+    try {
+      return await read("auctions.json");
+    } catch (e) {
+      return { schema_version: 2, records: {} };
+    }
+  }
   async function month(kind, tradeDate) {
     const index = await manifest();
     const months = index[`${kind}_months`];
@@ -32,5 +39,5 @@
     if (!entry || !entry.path) throw new Error(`沒有策略 ${code} 資料分片`);
     return read(entry.path);
   }
-  global.CBRadarData = { manifest, latest, month, strategy };
+  global.CBRadarData = { manifest, latest, month, strategy, auctions };
 })(window);

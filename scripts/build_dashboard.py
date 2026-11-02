@@ -840,6 +840,23 @@ def build_dashboard_shards() -> tuple[int, int]:
             "announcements": payload["announcements"],
         }
         _write_json(staging / "latest.json", latest_payload)
+        try:
+            with sqlite3.connect(f"{DB_PATH.resolve().as_uri()}?mode=ro", uri=True) as connection:
+                connection.row_factory = sqlite3.Row
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
+                if "cb_auction" in tables:
+                    auction_rows = connection.execute("SELECT cb_code, cb_name, underwriting_method, avg_price FROM cb_auction").fetchall()
+                    auction_records = {
+                        str(r["cb_code"]): {
+                            "cb_name": r["cb_name"],
+                            "underwriting_method": r["underwriting_method"],
+                            "avg_price": r["avg_price"],
+                        }
+                        for r in auction_rows
+                    }
+                    _write_json(staging / "auctions.json", {"schema_version": 2, "records": auction_records})
+        except Exception:
+            pass
         manifest = {
             "schema_version": SHARD_SCHEMA_VERSION,
             "latest_trade_date": latest_date,

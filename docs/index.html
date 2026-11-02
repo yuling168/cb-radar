@@ -7,6 +7,10 @@ nav{display:flex;flex-wrap:wrap;gap:8px 16px;border-bottom:1px solid var(--l);pa
 a{color:var(--g);text-decoration:none;font-weight:700}
 h1{font-size:clamp(2rem,5vw,3.4rem);margin:26px 0 6px}
 .muted{color:var(--m)}
+.summary-stats-bar{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;font-size:.88rem;color:var(--m);margin:10px 0 16px;line-height:1.5}
+.summary-stats-bar span{display:inline-flex;align-items:center}
+.summary-stats-bar strong{color:var(--g);font-weight:800;margin:0 2px}
+.summary-stats-bar .sep{color:var(--l);margin:0 2px}
 .hero{display:flex;justify-content:space-between;gap:18px;align-items:end}
 .date,.tag{display:inline-block;padding:6px 10px;border-radius:999px;background:#e7f1eb;color:var(--g);font-weight:700}
 .new-issue{color:var(--red);font-size:.82rem;margin-left:6px}
@@ -64,6 +68,11 @@ details[open] .signal-summary{background:#f8faf8}
 .notice-private .notice-toggle{color:#dc2626}
 .notice-body{margin-top:12px;padding:14px;background:#fff;border-radius:8px;border:1px solid #e5e7eb;font-size:.88rem;line-height:1.7;color:#2d3748;white-space:pre-wrap;word-break:break-word}
 .notice-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.auction-tag-btn{display:inline-flex;align-items:center;gap:3px;font-size:.82rem;font-weight:700;padding:2px 8px;border-radius:6px;background:#f0fdf4;color:#166534 !important;border:1px solid #bbf7d0;text-decoration:none;transition:all .15s}
+.auction-tag-btn:hover{background:#dcfce7;border-color:#86efac}
+.tag-method{display:inline-block;padding:2px 7px;border-radius:6px;font-size:.76rem;font-weight:800;white-space:nowrap}
+.method-auction{background:#e7f5ec;color:#15803d;border:1px solid #bbf7d0}
+.method-inquiry{background:#fdf2f8;color:#db2777;border:1px solid #fbcfe8}
 .notice-link-btn{display:inline-flex;align-items:center;gap:4px;font-size:.8rem;font-weight:700;padding:5px 11px;border-radius:6px;background:#eef2ff;color:#2b56df;text-decoration:none;border:1px solid #dbeafe;transition:background .15s}
 .notice-link-btn:hover{background:#dbeafe}
 .list{display:grid;gap:9px}
@@ -83,10 +92,12 @@ details[open] .signal-summary{background:#f8faf8}
 </style><link rel="stylesheet" href="site-shell.css"></head><body><main class="page">
 <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
 <header class="hero"><div><h1>CB策略雷達</h1></div><div id="date" class="date">資料載入中…</div></header>
-<section class="grid"><div class="card">今日新觸發<strong id="signalCount" class="metric">—</strong></div><div class="card">時間發動提醒<strong id="gCount" class="metric">—</strong></div><div class="card">法人 / ETF 同步看好<strong id="flowCount" class="metric">—</strong></div></section>
+<div class="summary-stats-bar">
+  <span>今日新觸發：<strong id="signalCount">—</strong> 檔</span><span class="sep">，</span><span>時間發動提醒：<strong id="gCount">—</strong> 檔</span><span class="sep">，</span><span>法人 / ETF 同步看好：<strong id="flowCount">—</strong> 檔</span>
+</div>
 <section class="section"><div class="section-head"><h2>今日新觸發標的</h2><div class="sort-control"><label for="sortKey">排序</label><select id="sortKey"><option value="">原始順序</option><option value="close_price">現CB價格</option><option value="conversion_value">轉換價值</option><option value="premium_rate_pct">溢價率</option><option value="converted_ratio_pct">已轉換比率</option><option value="volume_lots">當日CB量</option></select><button id="sortDirection" type="button" aria-label="切換排序方向" title="切換排序方向">▲</button></div></div><div id="signals" class="signal-list"></div></section>
 <section class="section"><h2>重要公告與新聞</h2><p class="muted">僅列現行 CB 發行公司且主旨屬可轉債、籌資、資本、併購或重大營運／財務事件的已保存公告。</p><div id="announcements" class="list"></div></section>
-</main><script src="data-loader.js"></script><script>
+</main><script src="data-loader.js?v=20261102b"></script><script>
 const $=s=>document.querySelector(s),names={A:"成交量10日新高",B:"CB突破轉換價",C:"CB資優生",G:"時間發動"},gl={G1:"G 發行滿一年",G2:"G 賣回日後",G3:"G 到期前一年"},nf=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:2}),whole=new Intl.NumberFormat("zh-TW",{maximumFractionDigits:0});
 const blank="—",show=n=>n===null||n===undefined?blank:nf.format(n);let sortKey="",sortDirection="asc";
 const cbHistoryCache=new Map();
@@ -145,12 +156,21 @@ function signalCard(signal,records,date){
   const prem=v.premium_rate_pct??r.premium_rate;
   const premText=prem===null||prem===undefined?blank:`${prem>=0?'+':''}${show(prem)}%`;
   const premClass=prem!==null&&prem!==undefined?(prem>=0?'c-up':'c-down'):'';
-  const secured=r.is_secured==='有'||r.is_secured==='是'?'有擔保':(r.is_secured==='無'||r.is_secured==='否'?'無擔保':(r.is_secured||blank));
+  const secured=r.is_secured==='有'||r.is_secured==='是'?'<span style="color:#d6324a;font-weight:700">有擔保</span>':(r.is_secured==='無'||r.is_secured==='否'?'無擔保':(r.is_secured||blank));
   const stockPrice=show(r.p_close_price??v.parent_stock_close_price);
   const balanceRatio=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(r.balance_ratio)}%`;
   const issueDateStr=formatDate(r.issue_date)||blank;
   const maturityDateStr=formatDate(r.maturity_date)||blank;
   const chg=formatChange(cbHistoryCache.get(signal.cb_code));
+  const auctionQueryUrl=`https://www.google.com/search?q=${encodeURIComponent(`${rawName} ${signal.cb_code} 競價拍賣 開標結果 得標加權平均價格`)}`;
+  const aucInfo = auctionDataMap.get(String(signal.cb_code)) || {};
+  const underwriteMethod = aucInfo.underwriting_method || (aucInfo.avg_price ? "競拍" : "詢圈");
+  const isAuction = underwriteMethod === "競拍" || (aucInfo.avg_price !== null && aucInfo.avg_price !== undefined);
+  const aucPriceVal = aucInfo.avg_price !== null && aucInfo.avg_price !== undefined
+    ? `${show(aucInfo.avg_price)} 元 <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`
+    : (isAuction
+        ? `— <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`
+        : `<span class="tag-method method-inquiry">詢圈</span>`);
 
   return `<details class="signal-card" data-code="${signal.cb_code}">
     <summary class="signal-summary">
@@ -177,19 +197,16 @@ function signalCard(signal,records,date){
     </summary>
     <div class="signal-detail-body">
       <div class="detail-grid">
-        <div class="detail-row"><span class="dt-lbl">債券名稱</span><span class="dt-val">${rawName}</span></div>
-        <div class="detail-row"><span class="dt-lbl">可轉債價格</span><span class="dt-val">${price}</span></div>
-        <div class="detail-row"><span class="dt-lbl">當日漲跌</span><span class="dt-val chg-row">${chg.row}</span></div>
-        <div class="detail-row"><span class="dt-lbl">轉換價</span><span class="dt-val">${convPrice}</span></div>
         <div class="detail-row"><span class="dt-lbl">轉換價值</span><span class="dt-val">${convValue}</span></div>
         <div class="detail-row"><span class="dt-lbl">折溢價</span><span class="dt-val ${premClass}">${premText}</span></div>
+        <div class="detail-row"><span class="dt-lbl">當日成交量</span><span class="dt-val">${volume}</span></div>
         <div class="detail-row"><span class="dt-lbl">是否擔保</span><span class="dt-val">${secured}</span></div>
         <div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>
         <div class="detail-row"><span class="dt-lbl">剩餘比率</span><span class="dt-val">${balanceRatio}</span></div>
         <div class="detail-row"><span class="dt-lbl">發行日</span><span class="dt-val">${issueDateStr}</span></div>
         <div class="detail-row"><span class="dt-lbl">到期日</span><span class="dt-val">${maturityDateStr}</span></div>
         <div class="detail-row"><span class="dt-lbl">重要日程</span><span class="dt-val">${eventDate?`<span class="fact">${eventDate}</span>`:""}</span></div>
-        <div class="detail-row"><span class="dt-lbl">當日成交量</span><span class="dt-val">${volume}</span></div>
+        <div class="detail-row"><span class="dt-lbl">競拍均價</span><span class="dt-val">${aucPriceVal}</span></div>
       </div>
       <a href="cb-detail.html?code=${encodeURIComponent(signal.cb_code)}" class="detail-btn">
         📄 ${rawName} CB詳細內容（查看走勢圖）
@@ -199,7 +216,16 @@ function signalCard(signal,records,date){
 }
 function sortValue(signal,records,date,key){const values=signal.condition_values||{},record=records.get(`${date}|${signal.cb_code}`)||{};if(key==="converted_ratio_pct")return record.balance_ratio===null||record.balance_ratio===undefined?null:100-record.balance_ratio;return key in values?values[key]:record[key]}
 function renderSignals(today,records,date){const rows=[...today];if(sortKey)rows.sort((a,b)=>{const av=sortValue(a,records,date,sortKey),bv=sortValue(b,records,date,sortKey);if(av===null||av===undefined)return bv===null||bv===undefined?0:1;if(bv===null||bv===undefined)return -1;return(sortDirection==="asc"?1:-1)*(av-bv)});$("#signals").innerHTML=rows.length?rows.map(s=>signalCard(s,records,date)).join(""):`<p class="muted">本日沒有新觸發訊號。</p>`;$("#sortDirection").textContent=sortDirection==="asc"?"▲":"▼"}
-CBRadarData.latest().then(async p=>{
+let auctionDataMap = new Map();
+const loadAuctions = (typeof CBRadarData !== 'undefined' && typeof CBRadarData.auctions === 'function')
+  ? CBRadarData.auctions()
+  : fetch('./data/v2/auctions.json', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : { schema_version: 2, records: {} })
+      .catch(() => ({ schema_version: 2, records: {} }));
+Promise.all([CBRadarData.latest(), loadAuctions]).then(async ([p, aucPayload])=>{
+  if (aucPayload && aucPayload.records) {
+    auctionDataMap = new Map(Object.entries(aucPayload.records));
+  }
   const rs=p.records||[],ss=p.strategy_signals||[],fs=p.institutional_records||[],as=p.announcements||[],d=p.trade_date,today=ss.filter(r=>r.trade_date===d),gs=today.filter(r=>r.strategy_code==="G"),good=fs.filter(r=>r.trade_date===d&&r.foreign_net_lots>0&&r.trust_net_lots>0&&r.active_etf_change_lots>0),records=new Map(rs.map(r=>[`${d}|${r.cb_code}`,r]));
   $("#date").textContent=`資料日期：${d||blank}`;
   $("#signalCount").textContent=today.length;

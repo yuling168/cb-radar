@@ -209,6 +209,40 @@
     td.numeric { text-align: right; }
     tbody tr:hover { background: #fbfcfa; }
     .zero { color: var(--muted); }
+    .cb-data-row { cursor: pointer; user-select: none; transition: background 0.12s ease; }
+    .cb-data-row:hover { background: #f0f7f3 !important; }
+    .cb-data-row.row-expanded { background: #eaf4ee !important; }
+    .sticky-name-wrap { display: flex; align-items: center; gap: 6px; }
+    .row-arrow { display: inline-block; font-size: 0.65rem; color: var(--green); width: 12px; text-align: center; }
+    .tag-method { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 0.78rem; font-weight: 800; white-space: nowrap; }
+    .method-auction { background: #e7f5ec; color: #15803d; border: 1px solid #bbf7d0; }
+    .method-inquiry { background: #fdf2f8; color: #db2777; border: 1px solid #fbcfe8; }
+    .auction-mini-link { color: var(--green); text-decoration: none; font-size: 0.82rem; font-weight: 800; margin-left: 3px; }
+    .auction-mini-link:hover { text-decoration: underline; }
+    .quick-view-row { background: #f8faf8; }
+    .quick-view-td { padding: 0 16px 16px !important; border-bottom: 2px solid var(--line); }
+    .quick-view-card { position: sticky; left: 16px; max-width: 660px; background: #ffffff; border: 1px solid #dce4de; border-radius: 14px; padding: 16px 18px; margin-top: 6px; box-shadow: 0 4px 18px rgba(23, 33, 27, 0.08); }
+    .quick-view-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #edf1ee; margin-bottom: 10px; }
+    .quick-view-title-group { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .quick-cb-title { font-size: 1.15rem; font-weight: 800; color: var(--ink); }
+    .quick-cb-dates { font-size: 0.84rem; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+    .tag-remain { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #eef2ff; color: #3b50df; font-size: 0.76rem; font-weight: 700; }
+    .tag-secured { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #fdf2f2; color: #d6324a; border: 1px solid #fecdd3; font-size: 0.76rem; font-weight: 700; }
+    .tag-unsecured { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #f3f4f6; color: #17211b; border: 1px solid #e5e7eb; font-size: 0.76rem; font-weight: 700; }
+    .quick-view-price-box { text-align: right; }
+    .quick-price { font-size: 1.25rem; font-weight: 800; color: var(--ink); }
+    .quick-conv { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+    .detail-grid { display: grid; gap: 2px; }
+    .detail-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px dashed #edf2ee; font-size: 0.9rem; }
+    .detail-row:last-child { border-bottom: none; }
+    .dt-lbl { color: var(--muted); font-size: 0.86rem; }
+    .dt-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .c-up { color: #d6324a; }
+    .c-down { color: #1f9d55; }
+    .auction-tag-btn { display: inline-flex; align-items: center; gap: 3px; font-size: 0.82rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #f0fdf4; color: #166534 !important; border: 1px solid #bbf7d0; text-decoration: none; transition: all 0.15s ease; }
+    .auction-tag-btn:hover { background: #dcfce7; border-color: #86efac; }
+    .detail-btn { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 14px; padding: 11px 16px; background: #2b56df; color: #fff !important; font-weight: 800; font-size: 0.92rem; border-radius: 10px; text-decoration: none; box-shadow: 0 2px 6px rgba(43,86,223,.2); transition: background .15s ease; }
+    .detail-btn:hover { background: #1e42bd; }
     .null { color: #98a29c; }
 
     .state {
@@ -284,6 +318,7 @@
       <div class="result-bar">
         <strong id="resultCount">載入中…</strong>
         <span id="activeFilter">準備行情資料</span>
+
       </div>
 
       <div class="table-wrap">
@@ -292,6 +327,8 @@
             <tr>
               <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="cb_code">CB代號 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="underwriting_method">承銷方式 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="auction_avg_price">競拍均價 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="issue_date">發行日 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="maturity_date">到期日 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="put_date">首次賣回日 <span class="sort-mark"></span></button></th>
@@ -319,7 +356,7 @@
               <th aria-sort="none"><button type="button" data-sort="remaining_days">剩餘天數 <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="27">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="29">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -327,7 +364,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="data-loader.js"></script>
+  <script src="data-loader.js?v=20261102b"></script>
   <script>
     const state = { records: [], selectedDate: "", query: "", sortKey: "cb_code", sortDirection: "asc" };
     const numberFormat = new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 4 });
@@ -338,6 +375,8 @@
     const SORT_TYPES = {
       cb_name: "text",
       cb_code: "text",
+      underwriting_method: "text",
+      auction_avg_price: "number",
       issue_date: "date",
       maturity_date: "date",
       put_date: "date",
@@ -378,8 +417,15 @@
     }
 
     function compareValues(a, b) {
-      const aValue = a[state.sortKey];
-      const bValue = b[state.sortKey];
+      let aValue = a[state.sortKey];
+      let bValue = b[state.sortKey];
+      if (state.sortKey === "underwriting_method") {
+        aValue = (auctionMap.get(a.cb_code) || {}).underwriting_method || "詢圈";
+        bValue = (auctionMap.get(b.cb_code) || {}).underwriting_method || "詢圈";
+      } else if (state.sortKey === "auction_avg_price") {
+        aValue = (auctionMap.get(a.cb_code) || {}).avg_price;
+        bValue = (auctionMap.get(b.cb_code) || {}).avg_price;
+      }
       if (!hasValue(aValue) && !hasValue(bValue)) return 0;
       if (!hasValue(aValue)) return 1;
       if (!hasValue(bValue)) return -1;
@@ -463,25 +509,67 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 27;
+        row.firstChild.colSpan = 29;
         elements.body.append(row);
-        renderStrategy();
         return;
       }
 
       const fragment = document.createDocumentFragment();
       rows.forEach((record) => {
         const row = document.createElement("tr");
+        row.className = "cb-data-row";
+        row.title = "點擊整列可開合速覽卡片";
+
         const nameCell = cell("", "sticky-name");
+        const wrap = document.createElement("div");
+        wrap.className = "sticky-name-wrap";
+        
+        const arrow = document.createElement("span");
+        arrow.className = "row-arrow";
+        arrow.textContent = "▶";
+        
         const link = document.createElement("a");
         link.href = `cb-detail.html?code=${encodeURIComponent(record.cb_code)}`;
-        link.target = "_blank";
-        link.rel = "noopener";
-        link.title = "查看 CB 量價走勢";
+        link.title = "查看走勢圖";
         link.textContent = record.cb_name;
-        nameCell.append(link);
+        
+        wrap.append(arrow, link);
+        nameCell.append(wrap);
         row.append(nameCell);
         row.append(cell(record.cb_code));
+
+        const auc = auctionMap.get(record.cb_code) || {};
+        const method = auc.underwriting_method || (auc.avg_price ? "競拍" : "詢圈");
+        const avgPrice = auc.avg_price;
+
+        // 承銷方式 (競拍 / 詢圈)
+        const methodCell = cell("");
+        const methodBadge = document.createElement("span");
+        methodBadge.className = `tag-method ${method === "競拍" ? "method-auction" : "method-inquiry"}`;
+        methodBadge.textContent = method;
+        methodCell.append(methodBadge);
+        row.append(methodCell);
+
+        // 競拍均價
+        const avgCell = cell("", "numeric");
+        if (avgPrice) {
+          const avgText = document.createElement("span");
+          avgText.style.fontWeight = "700";
+          avgText.textContent = valuationFormat.format(avgPrice);
+          const extLink = document.createElement("a");
+          extLink.href = `https://www.google.com/search?q=${encodeURIComponent(`${record.cb_name} ${record.cb_code} 競價拍賣 開標結果 得標加權平均價格`)}`;
+          extLink.target = "_blank";
+          extLink.rel = "noopener";
+          extLink.className = "auction-mini-link";
+          extLink.title = "前往查詢官方開標統計表";
+          extLink.textContent = " ↗";
+          avgCell.append(avgText, extLink);
+        } else {
+          avgCell.textContent = "—";
+          avgCell.className = "numeric null";
+        }
+        row.append(avgCell);
+
         row.append(cell(record.issue_date));
         row.append(cell(record.maturity_date));
         row.append(cell(record.put_date));
@@ -508,6 +596,78 @@
         row.append(cell(record.balance_ratio === null ? "" : `${valuationFormat.format(record.balance_ratio)}%`, `numeric ${record.balance_ratio === null ? "null" : ""}`));
         row.append(cell(record.remaining_days === null ? "" : numberFormat.format(record.remaining_days), `numeric ${record.remaining_days === null ? "null" : ""}`));
         fragment.append(row);
+
+        // 開合速覽 sub-row
+        const quickRow = document.createElement("tr");
+        quickRow.className = "quick-view-row";
+        quickRow.style.display = "none";
+        const quickTd = document.createElement("td");
+        quickTd.colSpan = 29;
+        quickTd.className = "quick-view-td";
+
+        const pVal = record.close_price ?? record.reference_price;
+        const pStr = pVal === null ? "—" : numberFormat.format(pVal);
+        const cpVal = record.current_conversion_price;
+        const cpStr = cpVal === null ? "—" : numberFormat.format(cpVal);
+        const cvVal = record.conversion_value;
+        const cvStr = cvVal === null ? "—" : valuationFormat.format(cvVal);
+        const premVal = record.premium_rate;
+        const premStr = premVal === null ? "—" : `${premVal >= 0 ? "+" : ""}${valuationFormat.format(premVal)}%`;
+        const premClass = premVal !== null ? (premVal >= 0 ? "c-up" : "c-down") : "";
+        const securedStr = record.is_secured === "有" || record.is_secured === "是" ? "有擔保" : (record.is_secured === "無" || record.is_secured === "否" ? "無擔保" : (record.is_secured || "—"));
+        const parentCode = String(record.cb_code).slice(0, 4);
+        const auctionUrl = `https://www.google.com/search?q=${encodeURIComponent(`${record.cb_name} ${record.cb_code} 競價拍賣 開標結果 得標加權平均價格`)}`;
+        const spStr = record.p_close_price === null ? "—" : numberFormat.format(record.p_close_price);
+        const spVolStr = record.p_volume_lots === null ? "—" : `${new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 0 }).format(record.p_volume_lots)} 張`;
+        const brStr = record.balance_ratio === null ? "—" : `${valuationFormat.format(record.balance_ratio)}%`;
+        const iuStr = record.issue_units === null ? "—" : `${numberFormat.format(record.issue_units)} 張`;
+        const buStr = record.balance_units === null ? "—" : `${numberFormat.format(record.balance_units)} 張`;
+        const vlStr = record.volume_lots === null ? "—" : `${numberFormat.format(record.volume_lots)} 張`;
+        const vMaStr = (record.volume_ma5 !== null || record.volume_ma10 !== null) ? `${record.volume_ma5 ? Math.round(record.volume_ma5) : "—"} / ${record.volume_ma10 ? Math.round(record.volume_ma10) : "—"} 張` : "—";
+        const pMaStr = (record.price_ma20 !== null || record.price_ma43 !== null) ? `${record.price_ma20 ? valuationFormat.format(record.price_ma20) : "—"} / ${record.price_ma43 ? valuationFormat.format(record.price_ma43) : "—"}` : "—";
+        const remDaysStr = record.remaining_days === null ? "—" : `${numberFormat.format(record.remaining_days)} 天`;
+
+        quickTd.innerHTML = `
+          <div class="quick-view-card">
+            <div class="quick-view-header">
+              <div class="quick-view-title-group">
+                <span class="quick-cb-title">${record.cb_name}</span>
+                <span class="quick-cb-dates">${record.issue_date || "—"} ～ ${record.maturity_date || "—"}</span>
+                ${brStr !== "—" ? `<span class="tag-remain">剩餘 ${brStr}</span>` : ""}
+                <span class="${record.is_secured === '有' || record.is_secured === '是' ? 'tag-secured' : 'tag-unsecured'}">${securedStr}</span>
+              </div>
+              <div class="quick-view-price-box">
+                <div class="quick-price">${pStr}</div>
+                <div class="quick-conv">轉換價 ${cpStr}</div>
+              </div>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-row"><span class="dt-lbl">轉換價值</span><span class="dt-val">${cvStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">折溢價</span><span class="dt-val ${premClass}">${premStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">當日成交量</span><span class="dt-val">${vlStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${spStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">母股成交量</span><span class="dt-val">${spVolStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">發行張數 / 餘額張數</span><span class="dt-val">${iuStr} / ${buStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">首次賣回日</span><span class="dt-val">${record.put_date || "—"}</span></div>
+              <div class="detail-row"><span class="dt-lbl">距到期天數</span><span class="dt-val">${remDaysStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">5日均量 / 10日均量</span><span class="dt-val">${vMaStr}</span></div>
+              <div class="detail-row"><span class="dt-lbl">20日均價 / 43日均價</span><span class="dt-val">${pMaStr}</span></div>
+            </div>
+            <a href="cb-detail.html?code=${encodeURIComponent(record.cb_code)}" class="detail-btn">
+              📄 ${record.cb_name} CB詳細內容（查看走勢圖）
+            </a>
+          </div>
+        `;
+        quickRow.append(quickTd);
+        fragment.append(quickRow);
+
+        row.addEventListener("click", (e) => {
+          if (e.target.closest("a, button, input, select")) return;
+          const open = quickRow.style.display !== "none";
+          quickRow.style.display = open ? "none" : "";
+          row.classList.toggle("row-expanded", !open);
+          arrow.textContent = open ? "▶" : "▼";
+        });
       });
       elements.body.append(fragment);
     }
@@ -549,7 +709,8 @@
       });
       document.querySelector("#securedFilter").value = "";
     }
-    applyDefaultFilters();
+    // 預設不套用過濾條件，完整顯示最新日行情；使用者可依需求點擊「預設條件」篩選
+    // applyDefaultFilters();
     const dateInputs = document.querySelectorAll('.filters input[type="date"]');
     const syncDateHints = () => dateInputs.forEach((input) => input.classList.toggle("is-empty", !input.value));
     syncDateHints();
@@ -591,8 +752,18 @@
       XLSX.writeFile(workbook, `CB每日行情_${state.selectedDate}.xlsx`);
     });
 
-    Promise.all([CBRadarData.manifest(), CBRadarData.latest()])
-      .then(([manifest, payload]) => {
+    let auctionMap = new Map();
+    const loadAuctions = (typeof CBRadarData !== "undefined" && typeof CBRadarData.auctions === "function")
+      ? CBRadarData.auctions()
+      : fetch("./data/v2/auctions.json", { cache: "no-store" })
+          .then((r) => r.ok ? r.json() : { schema_version: 2, records: {} })
+          .catch(() => ({ schema_version: 2, records: {} }));
+
+    Promise.all([CBRadarData.manifest(), CBRadarData.latest(), loadAuctions])
+      .then(([manifest, payload, aucPayload]) => {
+        if (aucPayload && aucPayload.records) {
+          auctionMap = new Map(Object.entries(aucPayload.records));
+        }
         if (!payload || !Array.isArray(payload.records)) throw new Error("資料格式不正確");
         state.records = payload.records;
         const dates = manifest.market_dates || [];
@@ -604,11 +775,12 @@
         render();
       })
       .catch((error) => {
+        console.error("載入行情資料失敗：", error);
         elements.resultCount.textContent = "載入失敗";
         elements.activeFilter.textContent = error.message;
         const row = document.createElement("tr");
-        row.append(cell("無法載入行情資料，請稍後再試。", "state"));
-        row.firstChild.colSpan = 27;
+        row.append(cell(`無法載入行情資料：${error.message}`, "state"));
+        row.firstChild.colSpan = 29;
         elements.body.replaceChildren(row);
       });
   </script>

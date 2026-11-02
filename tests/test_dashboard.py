@@ -869,6 +869,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert [header["sort"] for header in parser.headers] == [
         "cb_name",
         "cb_code",
+        "underwriting_method",
+        "auction_avg_price",
         "issue_date",
         "maturity_date",
         "put_date",
