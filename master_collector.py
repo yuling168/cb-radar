@@ -896,21 +896,25 @@ def is_forced_redemption_announcement(content: str, cb_code: str) -> bool:
     )
 
 
-def parse_forced_redemption_date(body: str, cb_code: str) -> str:
-    """Read one contractual redemption baseline date from an official body."""
+def parse_forced_redemption_dates(body: str) -> set[str]:
     matches = re.findall(
-        r"轉換公司債收回基準日\s*[：:]\s*(\d{2,3})年\s*(\d{1,2})月\s*(\d{1,2})日",
+        r"(?:轉換公司債)?收回基準日\s*[：:]?\s*(\d{2,3})年\s*(\d{1,2})月\s*(\d{1,2})日",
         body,
     )
-    dates = {
+    return {
         _parse_roc_date(f"{year}/{int(month):02d}/{int(day):02d}", "redemption date")
         for year, month, day in matches
     }
+
+
+def parse_forced_redemption_date(body: str, cb_code: str) -> str:
+    """Read one contractual redemption baseline date from an official body."""
+    dates = parse_forced_redemption_dates(body)
     if not dates:
         raise MasterFormatError(f"Forced-redemption date missing for {cb_code}")
     if len(dates) != 1:
         raise MasterFormatError(f"Conflicting forced-redemption dates for {cb_code}")
-    return dates.pop()
+    return next(iter(dates))
 
 
 def latest_effective_event(
@@ -1303,10 +1307,14 @@ def _announcement_redemption_dates(
             ).fetchall()
             for code in codes:
                 dates = set()
+                matched_announcement = False
                 for row in rows:
                     content = f"{row['subject']}\n{row['body']}"
                     if is_forced_redemption_announcement(content, code):
-                        dates.add(parse_forced_redemption_date(str(row["body"]), code))
+                        matched_announcement = True
+                        dates.update(parse_forced_redemption_dates(str(row["body"])))
+                if matched_announcement and not dates:
+                    raise MasterFormatError(f"Forced-redemption date missing for {code}")
                 if len(dates) > 1:
                     raise MasterFormatError(
                         f"Conflicting forced-redemption dates for {code}"

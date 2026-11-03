@@ -950,6 +950,33 @@ def test_announcement_history_redemption_lookup_uses_exact_code_and_rejects_conf
         _announcement_redemption_dates(db_path, candidates, masters, date(2026, 9, 3))
 
 
+def test_announcement_history_redemption_lookup_handles_reminder_and_variant_phrasing(tmp_path):
+    db_path = tmp_path / "history.db"
+    candidates = {"27551": {"delisting_date": "2026-11-02"}}
+    masters = {"27551": {"stock_code": "2755"}}
+    with connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO announcement_fetch (source_market, requested_at, status) VALUES ('TPEX', 'fetch1', 'succeeded')"
+        )
+        fid1 = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        connection.execute(
+            "INSERT INTO announcement_snapshot (fetch_id, source_market, api_batch_date_roc, api_batch_date, payload_sha256, raw_json, created_at) VALUES (?, 'TPEX', '1150903', '2026-09-03', 'h1', '[]', 'x')", (fid1,)
+        )
+        sid1 = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+        body1 = "公告揚秦一(27551)發行公司行使債券贖回權，轉換公司債收回基準日:115年10月30日。"
+        connection.execute(
+            "INSERT INTO company_announcements (source_market, company_code, company_name, api_batch_date_roc, api_batch_date, spoken_date_roc, spoken_date, spoken_time, clause, subject, body, subject_sha256, body_sha256, logical_key, event_key, first_seen_at, last_seen_at, first_snapshot_id, last_snapshot_id) VALUES ('TPEX','2755','揚秦','1150903','2026-09-03','1150903','2026-09-03','17:00:00','第51款','公告',?,'s1','b1','l1','e1','x','x',?,?)",
+            (body1, sid1, sid1),
+        )
+        body2 = "公司第一次無擔保轉換公司債(簡稱:揚秦一,代碼:27551)行使債券贖回權特此催告，本公司將依收回基準日115年10月30日之債權人名冊現金收回未轉換之揚秦一。"
+        connection.execute(
+            "INSERT INTO company_announcements (source_market, company_code, company_name, api_batch_date_roc, api_batch_date, spoken_date_roc, spoken_date, spoken_time, clause, subject, body, subject_sha256, body_sha256, logical_key, event_key, first_seen_at, last_seen_at, first_snapshot_id, last_snapshot_id) VALUES ('TPEX','2755','揚秦','1151020','2026-10-20','1151020','2026-10-20','17:00:00','第51款','催告',?,'s2','b2','l2','e2','x','x',?,?)",
+            (body2, sid1, sid1),
+        )
+    dates = _announcement_redemption_dates(db_path, candidates, masters, date(2026, 11, 2))
+    assert dates == {"27551": "2026-10-30"}
+
+
 def test_historical_announcement_is_idempotent_and_drives_redemption_lifecycle(tmp_path):
     db_path = tmp_path / "history.db"
     row = ("1560", "中砂", "2026-07-15", "16:24:27", "15601行使債券贖回權",
