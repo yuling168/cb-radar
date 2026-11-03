@@ -237,14 +237,14 @@
 
     table {
       width: 100%;
-      min-width: 1900px;
+      min-width: 1600px;
       border-collapse: collapse;
     }
 
     th, td {
-      padding: 14px 18px;
+      padding: 10px 10px;
       border-bottom: 1px solid #edf1ee;
-      text-align: left;
+      text-align: center;
       white-space: nowrap;
     }
 
@@ -252,9 +252,11 @@
       position: sticky;
       left: 0;
       z-index: 2;
-      min-width: 110px;
-      max-width: 140px;
+      min-width: 100px;
+      max-width: 130px;
+      padding: 10px 10px;
       white-space: nowrap;
+      text-align: left;
       background: var(--card);
       box-shadow: 2px 0 0 var(--line);
     }
@@ -279,7 +281,8 @@
     th button {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      justify-content: center;
+      gap: 3px;
       border: 0;
       background: transparent;
       color: inherit;
@@ -287,12 +290,21 @@
       font: inherit;
       font-weight: 800;
       padding: 0;
+      white-space: nowrap;
     }
 
     th button:hover, th button:focus-visible { color: var(--green); }
     .sort-mark { width: 1em; color: var(--gold); }
     td { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
-    td.numeric { text-align: right; }
+    td.numeric { text-align: center; }
+    .col-vol {
+      min-width: 60px;
+      max-width: 75px;
+    }
+    .cv-high {
+      color: #d6324a !important;
+      font-weight: 800 !important;
+    }
     tbody tr:hover { background: #fbfcfa; }
     .zero { color: var(--muted); }
     .cb-data-row { cursor: pointer; user-select: none; transition: background 0.12s ease; }
@@ -570,7 +582,7 @@
             <tr>
               <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="reference_price">CB市價 <span class="sort-mark"></span></button></th>
-              <th aria-sort="none"><button type="button" data-sort="volume_lots">成交量（張） <span class="sort-mark"></span></button></th>
+              <th class="col-vol" aria-sort="none"><button type="button" data-sort="volume_lots">成交量 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="conversion_value">轉換價值 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="balance_ratio">餘額比例 <span class="sort-mark"></span></button></th>
@@ -786,11 +798,12 @@
         const marketPriceVal = record.reference_price ?? record.close_price;
         row.append(cell(marketPriceVal === null ? "" : numberFormat.format(marketPriceVal), `numeric ${marketPriceVal === null ? "null" : ""}`));
 
-        // 2. 成交量（張）
-        row.append(cell(numberFormat.format(record.volume_lots), `numeric ${record.volume_lots === 0 ? "zero" : ""}`));
+        // 2. 成交量 (四位數字寬，置中)
+        row.append(cell(numberFormat.format(record.volume_lots), `numeric col-vol ${record.volume_lots === 0 ? "zero" : ""}`));
 
-        // 3. 轉換價值
-        row.append(cell(record.conversion_value === null ? "" : valuationFormat.format(record.conversion_value), `numeric ${record.conversion_value === null ? "null" : ""}`));
+        // 3. 轉換價值 (100以上紅色)
+        const isCvHigh = record.conversion_value !== null && record.conversion_value >= 100;
+        row.append(cell(record.conversion_value === null ? "" : valuationFormat.format(record.conversion_value), `numeric ${record.conversion_value === null ? "null" : (isCvHigh ? "cv-high" : "")}`));
 
         // 4. 溢價率
         row.append(cell(record.premium_rate === null ? "" : `${valuationFormat.format(record.premium_rate)}%`, `numeric ${record.premium_rate === null ? "null" : ""}`));
@@ -1033,7 +1046,7 @@
     const EXPORT_COLUMNS = [
       ["CB名稱", "cb_name"],
       ["CB市價", "reference_price"],
-      ["成交量（張）", "volume_lots"],
+      ["成交量", "volume_lots"],
       ["轉換價值", "conversion_value"],
       ["溢價率", "premium_rate"],
       ["餘額比例", "balance_ratio"],
