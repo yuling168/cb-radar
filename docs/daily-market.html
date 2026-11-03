@@ -95,6 +95,28 @@
       background: #fbfcfa;
     }
 
+    #exportExcel {
+      min-height: 42px;
+      padding: 10px 16px;
+      border: 1px solid #cbd7cf;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--green);
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    #exportExcel:hover {
+      background: var(--green-soft);
+      border-color: var(--green);
+    }
+
     label {
       display: grid;
       gap: 7px;
@@ -121,7 +143,72 @@
       box-shadow: 0 0 0 3px rgba(24, 92, 66, 0.12);
     }
 
-    .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 20px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+    .filter-collapse {
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .filter-toggle-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 20px;
+      background: #fbfcfa;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      transition: background 0.15s ease;
+    }
+
+    .filter-toggle-bar::-webkit-details-marker {
+      display: none;
+    }
+
+    .filter-toggle-bar:hover {
+      background: #f2f7f4;
+    }
+
+    .filter-toggle-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .filter-toggle-arrow {
+      display: inline-block;
+      font-size: 0.72rem;
+      color: var(--green);
+      transition: transform 0.2s ease;
+      line-height: 1;
+    }
+
+    .filter-collapse[open] .filter-toggle-arrow {
+      transform: rotate(90deg);
+    }
+
+    .filter-toggle-title {
+      font-weight: 800;
+      color: var(--green);
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+    }
+
+    .filter-toggle-hint {
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .filter-toggle-hint::before {
+      content: "（點擊展開條件設定）";
+    }
+
+    .filter-collapse[open] .filter-toggle-hint::before {
+      content: "（點擊收合條件設定）";
+    }
+
+    .filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px 20px; padding: 14px 20px; border-top: 1px dashed var(--line); }
     .filters .range { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.78rem; font-weight: 700; }
     .filters .range input[type="date"] { width: 140px; }
     .filters .range input[type="date"].is-empty:not(:focus)::-webkit-datetime-edit { color: transparent; }
@@ -220,28 +307,109 @@
     .auction-mini-link { color: var(--green); text-decoration: none; font-size: 0.82rem; font-weight: 800; margin-left: 3px; }
     .auction-mini-link:hover { text-decoration: underline; }
     .quick-view-row { background: #f8faf8; }
-    .quick-view-td { padding: 0 16px 16px !important; border-bottom: 2px solid var(--line); }
-    .quick-view-card { position: sticky; left: 16px; max-width: 660px; background: #ffffff; border: 1px solid #dce4de; border-radius: 14px; padding: 16px 18px; margin-top: 6px; box-shadow: 0 4px 18px rgba(23, 33, 27, 0.08); }
-    .quick-view-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #edf1ee; margin-bottom: 10px; }
-    .quick-view-title-group { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+    .quick-view-td {
+      padding: 0 16px 16px !important;
+      border-bottom: 2px solid var(--line);
+      overflow: visible;
+    }
+    .quick-view-card {
+      position: sticky;
+      left: 12px;
+      width: calc(100vw - 40px);
+      max-width: 660px;
+      box-sizing: border-box;
+      background: #ffffff;
+      border: 1px solid #dce4de;
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-top: 6px;
+      box-shadow: 0 4px 18px rgba(23, 33, 27, 0.08);
+    }
+    .quick-close-btn {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      width: 26px;
+      height: 26px;
+      border: 1px solid #dce4de;
+      border-radius: 50%;
+      background: #f4f7f4;
+      color: var(--muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 700;
+      line-height: 1;
+      padding: 0;
+      transition: all 0.15s ease;
+      z-index: 2;
+    }
+    .quick-close-btn:hover {
+      background: #e2ede5;
+      color: var(--ink);
+      border-color: #cbd7cf;
+    }
+    .quick-view-header {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      padding-bottom: 12px;
+      padding-right: 32px;
+      border-bottom: 1px solid #edf1ee;
+      margin-bottom: 10px;
+    }
+    .quick-view-title-group { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; flex: 1 1 auto; }
     .quick-cb-title { font-size: 1.15rem; font-weight: 800; color: var(--ink); }
     .quick-cb-dates { font-size: 0.84rem; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
     .tag-remain { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #eef2ff; color: #3b50df; font-size: 0.76rem; font-weight: 700; }
     .tag-secured { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #fdf2f2; color: #d6324a; border: 1px solid #fecdd3; font-size: 0.76rem; font-weight: 700; }
     .tag-unsecured { display: inline-block; padding: 2px 7px; border-radius: 6px; background: #f3f4f6; color: #17211b; border: 1px solid #e5e7eb; font-size: 0.76rem; font-weight: 700; }
-    .quick-view-price-box { text-align: right; }
-    .quick-price { font-size: 1.25rem; font-weight: 800; color: var(--ink); }
+    .quick-view-price-box { text-align: right; flex-shrink: 0; }
+    .quick-price { font-size: 1.25rem; font-weight: 800; color: var(--ink); line-height: 1.15; }
     .quick-conv { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
     .detail-grid { display: grid; gap: 2px; }
-    .detail-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px dashed #edf2ee; font-size: 0.9rem; }
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px dashed #edf2ee;
+      font-size: 0.9rem;
+    }
     .detail-row:last-child { border-bottom: none; }
-    .dt-lbl { color: var(--muted); font-size: 0.86rem; }
-    .dt-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .dt-lbl { color: var(--muted); font-size: 0.86rem; flex-shrink: 0; white-space: nowrap; }
+    .dt-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; word-break: break-word; }
     .c-up { color: #d6324a; }
     .c-down { color: #1f9d55; }
     .auction-tag-btn { display: inline-flex; align-items: center; gap: 3px; font-size: 0.82rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #f0fdf4; color: #166534 !important; border: 1px solid #bbf7d0; text-decoration: none; transition: all 0.15s ease; }
     .auction-tag-btn:hover { background: #dcfce7; border-color: #86efac; }
-    .detail-btn { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 14px; padding: 11px 16px; background: #2b56df; color: #fff !important; font-weight: 800; font-size: 0.92rem; border-radius: 10px; text-decoration: none; box-shadow: 0 2px 6px rgba(43,86,223,.2); transition: background .15s ease; }
+    .detail-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 14px;
+      padding: 11px 16px;
+      background: #2b56df;
+      color: #fff !important;
+      font-weight: 800;
+      font-size: 0.92rem;
+      border-radius: 10px;
+      text-decoration: none;
+      box-shadow: 0 2px 6px rgba(43,86,223,.2);
+      transition: background .15s ease;
+      box-sizing: border-box;
+      max-width: 100%;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .detail-btn:hover { background: #1e42bd; }
     .null { color: #98a29c; }
 
@@ -265,12 +433,50 @@
       .source-badge { align-self: start; }
       .controls { grid-template-columns: 1fr; gap: 12px; padding: 15px; }
       select, input { width: 100%; min-width: 0; font-size: 16px; }
+      .filter-toggle-bar { padding: 10px 14px; }
+      .filter-toggle-hint { display: none; }
+      .filters { padding: 12px 14px; gap: 10px 14px; }
       .result-bar { align-items: start; flex-direction: column; padding: 12px 15px; }
       th, td { padding: 12px 14px; }
       table { min-width: 2100px; }
       th { font-size: 0.75rem; }
       td { font-size: 0.85rem; }
       th:first-child, td:first-child { font-size: 0.76rem; }
+
+      .quick-view-td {
+        padding: 0 4px 12px !important;
+      }
+      .quick-view-card {
+        left: 4px;
+        width: calc(100vw - 32px);
+        max-width: calc(100vw - 32px);
+        padding: 12px 12px;
+        border-radius: 12px;
+      }
+      .quick-view-header {
+        padding-right: 26px;
+        gap: 6px;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+      }
+      .quick-cb-title { font-size: 1.05rem; }
+      .quick-cb-dates { font-size: 0.78rem; }
+      .quick-price { font-size: 1.15rem; }
+      .quick-conv { font-size: 0.75rem; }
+      .detail-row {
+        font-size: 0.84rem;
+        padding: 5px 0;
+        gap: 8px;
+      }
+      .dt-lbl { font-size: 0.8rem; }
+      .dt-val { font-size: 0.84rem; }
+      .detail-btn {
+        margin-top: 10px;
+        padding: 9px 10px;
+        font-size: 0.82rem;
+        white-space: normal;
+        line-height: 1.35;
+      }
     }
 
     @media (max-width: 480px) {
@@ -282,6 +488,35 @@
       th, td { padding: 10px 12px; }
       th { font-size: 0.72rem; }
       td { font-size: 0.82rem; }
+
+      .quick-view-td {
+        padding: 0 2px 10px !important;
+      }
+      .quick-view-card {
+        left: 2px;
+        width: calc(100vw - 28px);
+        max-width: calc(100vw - 28px);
+        padding: 10px 10px;
+        border-radius: 10px;
+      }
+      .quick-cb-title { font-size: 1rem; }
+      .quick-cb-dates { font-size: 0.72rem; }
+      .quick-price { font-size: 1.08rem; }
+      .quick-conv { font-size: 0.7rem; }
+      .detail-row {
+        font-size: 0.8rem;
+        padding: 4px 0;
+        gap: 6px;
+      }
+      .dt-lbl { font-size: 0.76rem; }
+      .dt-val { font-size: 0.8rem; }
+      .detail-btn {
+        margin-top: 8px;
+        padding: 8px 8px;
+        font-size: 0.78rem;
+        white-space: normal;
+        line-height: 1.35;
+      }
     }
   </style><link rel="stylesheet" href="site-shell.css">
 </head>
@@ -302,18 +537,27 @@
         <button id="exportExcel" type="button">匯出 Excel</button>
       </div>
 
-      <div class="filters" aria-label="篩選CB條件">
-        <div class="range"><span>CB參考價</span><input data-f="reference_price" data-b="min" type="number" step="any" inputmode="decimal" aria-label="參考價下限"><i>~</i><input data-f="reference_price" data-b="max" type="number" step="any" inputmode="decimal" aria-label="參考價上限"></div>
-        <div class="range"><span>轉換價值</span><input data-f="conversion_value" data-b="min" type="number" step="any" inputmode="decimal" aria-label="轉換價值下限"><i>~</i><input data-f="conversion_value" data-b="max" type="number" step="any" inputmode="decimal" aria-label="轉換價值上限"></div>
-        <div class="range"><span>折溢價(%)</span><input data-f="premium_rate" data-b="min" type="number" step="any" inputmode="decimal" aria-label="溢價率下限"><i>~</i><input data-f="premium_rate" data-b="max" type="number" step="any" inputmode="decimal" aria-label="溢價率上限"></div>
-        <div class="range"><span>剩餘比率(%)</span><input data-f="balance_ratio" data-b="min" type="number" step="any" inputmode="decimal" aria-label="剩餘比率下限"><i>~</i><input data-f="balance_ratio" data-b="max" type="number" step="any" inputmode="decimal" aria-label="剩餘比率上限"></div>
-        <div class="range"><span>是否擔保</span><select id="securedFilter" aria-label="是否擔保"><option value="">全部</option><option value="有">有</option><option value="無">無</option></select></div>
-        <div class="range"><span>距到期 大於</span><input id="daysMin" data-f="remaining_days" data-b="min" type="number" min="0" step="1" inputmode="numeric" aria-label="距到期天數下限"><span>天</span></div>
-        <div class="range"><span>發行日</span><input data-f="issue_date" data-b="min" type="date" aria-label="發行日起"><i>~</i><input data-f="issue_date" data-b="max" type="date" aria-label="發行日迄"></div>
-        <div class="range"><span>到期日</span><input data-f="maturity_date" data-b="min" type="date" aria-label="到期日起"><i>~</i><input data-f="maturity_date" data-b="max" type="date" aria-label="到期日迄"></div>
-        <button id="clearFilters" type="button">預設條件</button>
-        <button id="emptyFilters" type="button">清空條件</button>
-      </div>
+      <details id="filterCollapse" class="filter-collapse">
+        <summary class="filter-toggle-bar">
+          <div class="filter-toggle-left">
+            <span class="filter-toggle-arrow">▶</span>
+            <span class="filter-toggle-title">篩選條件</span>
+            <span class="filter-toggle-hint"></span>
+          </div>
+        </summary>
+        <div class="filters" aria-label="篩選CB條件">
+          <div class="range"><span>CB參考價</span><input data-f="reference_price" data-b="min" type="number" step="any" inputmode="decimal" aria-label="參考價下限"><i>~</i><input data-f="reference_price" data-b="max" type="number" step="any" inputmode="decimal" aria-label="參考價上限"></div>
+          <div class="range"><span>轉換價值</span><input data-f="conversion_value" data-b="min" type="number" step="any" inputmode="decimal" aria-label="轉換價值下限"><i>~</i><input data-f="conversion_value" data-b="max" type="number" step="any" inputmode="decimal" aria-label="轉換價值上限"></div>
+          <div class="range"><span>折溢價(%)</span><input data-f="premium_rate" data-b="min" type="number" step="any" inputmode="decimal" aria-label="溢價率下限"><i>~</i><input data-f="premium_rate" data-b="max" type="number" step="any" inputmode="decimal" aria-label="溢價率上限"></div>
+          <div class="range"><span>剩餘比率(%)</span><input data-f="balance_ratio" data-b="min" type="number" step="any" inputmode="decimal" aria-label="剩餘比率下限"><i>~</i><input data-f="balance_ratio" data-b="max" type="number" step="any" inputmode="decimal" aria-label="剩餘比率上限"></div>
+          <div class="range"><span>是否擔保</span><select id="securedFilter" aria-label="是否擔保"><option value="">全部</option><option value="有">有</option><option value="無">無</option></select></div>
+          <div class="range"><span>距到期 大於</span><input id="daysMin" data-f="remaining_days" data-b="min" type="number" min="0" step="1" inputmode="numeric" aria-label="距到期天數下限"><span>天</span></div>
+          <div class="range"><span>發行日</span><input data-f="issue_date" data-b="min" type="date" aria-label="發行日起"><i>~</i><input data-f="issue_date" data-b="max" type="date" aria-label="發行日迄"></div>
+          <div class="range"><span>到期日</span><input data-f="maturity_date" data-b="min" type="date" aria-label="到期日起"><i>~</i><input data-f="maturity_date" data-b="max" type="date" aria-label="到期日迄"></div>
+          <button id="clearFilters" type="button">預設條件</button>
+          <button id="emptyFilters" type="button">清空條件</button>
+        </div>
+      </details>
 
       <div class="result-bar">
         <strong id="resultCount">載入中…</strong>
@@ -503,7 +747,7 @@
       updateSortHeaders();
       const rows = filteredRows();
       elements.resultCount.textContent = `共 ${numberFormat.format(rows.length)} 筆結果`;
-      elements.activeFilter.textContent = [state.selectedDate, state.query.trim() ? `搜尋「${state.query.trim()}」` : "", describeFilters(readFilters())].filter(Boolean).join(" · ");
+      elements.activeFilter.textContent = state.selectedDate;
       elements.body.replaceChildren();
 
       if (!rows.length) {
@@ -629,6 +873,7 @@
 
         quickTd.innerHTML = `
           <div class="quick-view-card">
+            <button type="button" class="quick-close-btn" aria-label="收合速覽" title="收合速覽">✕</button>
             <div class="quick-view-header">
               <div class="quick-view-title-group">
                 <span class="quick-cb-title">${record.cb_name}</span>
@@ -660,6 +905,16 @@
         `;
         quickRow.append(quickTd);
         fragment.append(quickRow);
+
+        const closeBtn = quickTd.querySelector(".quick-close-btn");
+        if (closeBtn) {
+          closeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            quickRow.style.display = "none";
+            row.classList.remove("row-expanded");
+            arrow.textContent = "▶";
+          });
+        }
 
         row.addEventListener("click", (e) => {
           if (e.target.closest("a, button, input, select")) return;
@@ -723,10 +978,7 @@
       document.querySelector("#securedFilter").value = "";
       elements.searchInput.value = "";
       state.query = "";
-      if (state.latestDate && elements.dateSelect.value !== state.latestDate) {
-        elements.dateSelect.value = state.latestDate;
-        elements.dateSelect.dispatchEvent(new Event("change"));
-      } else render();
+      render();
     });
 
     elements.searchInput.addEventListener("input", () => {
