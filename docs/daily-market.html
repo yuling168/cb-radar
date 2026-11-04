@@ -395,8 +395,10 @@
     .detail-row:last-child { border-bottom: none; }
     .dt-lbl { color: var(--muted); font-size: 0.86rem; flex-shrink: 0; white-space: nowrap; }
     .dt-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; word-break: break-word; }
-    .c-up { color: #d6324a; }
-    .c-down { color: #1f9d55; }
+    .c-up { color: #d6324a !important; font-weight: 700; }
+    .c-down { color: #1f9d55 !important; font-weight: 700; }
+    .c-flat { color: #17211b !important; font-weight: 700; }
+    .quick-chg { font-size: 0.84rem; margin: 2px 0; font-variant-numeric: tabular-nums; }
     .auction-tag-btn { display: inline-flex; align-items: center; gap: 3px; font-size: 0.82rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: #f0fdf4; color: #166534 !important; border: 1px solid #bbf7d0; text-decoration: none; transition: all 0.15s ease; }
     .auction-tag-btn:hover { background: #dcfce7; border-color: #86efac; }
     .detail-btn {
@@ -582,6 +584,7 @@
             <tr>
               <th class="sticky-name" aria-sort="none"><button type="button" data-sort="cb_name">CB名稱 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="reference_price">CB市價 <span class="sort-mark"></span></button></th>
+              <th aria-sort="none"><button type="button" data-sort="price_change">當日漲跌 <span class="sort-mark"></span></button></th>
               <th class="col-vol" aria-sort="none"><button type="button" data-sort="volume_lots">成交量 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="conversion_value">轉換價值 <span class="sort-mark"></span></button></th>
               <th aria-sort="none"><button type="button" data-sort="premium_rate">溢價率 <span class="sort-mark"></span></button></th>
@@ -609,7 +612,7 @@
               <th aria-sort="none"><button type="button" data-sort="p_volume_lots">母股成交量（張） <span class="sort-mark"></span></button></th>
             </tr>
           </thead>
-          <tbody id="resultsBody"><tr><td class="state" colspan="29">行情資料載入中…</td></tr></tbody>
+          <tbody id="resultsBody"><tr><td class="state" colspan="28">行情資料載入中…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -646,6 +649,7 @@
       delisting_reason: "text",
       close_price: "number",
       reference_price: "number",
+      price_change: "number",
       volume_lots: "number",
       volume_ma5: "number",
       volume_ma10: "number",
@@ -690,6 +694,61 @@
           ? new Date(`${aValue}T00:00:00Z`) - new Date(`${bValue}T00:00:00Z`)
           : String(aValue).localeCompare(String(bValue), "zh-Hant", { numeric: true, sensitivity: "base" });
       return state.sortDirection === "asc" ? result : -result;
+    }
+
+    function formatDailyChange(diff, pct) {
+      if (diff === null || diff === undefined) return { html: "—", text: "" };
+      if (diff > 0) {
+        const text = `▲ ${valuationFormat.format(diff)} (+${valuationFormat.format(pct)}%)`;
+        return { html: `<span class="c-up">${text}</span>`, text };
+      } else if (diff < 0) {
+        const text = `▼ ${valuationFormat.format(Math.abs(diff))} (-${valuationFormat.format(Math.abs(pct))}%)`;
+        return { html: `<span class="c-down">${text}</span>`, text };
+      } else {
+        const text = "平盤 -";
+        return { html: `<span class="c-flat">${text}</span>`, text };
+      }
+    }
+
+    async function computePriceChanges(currentRecords, tradeDate, allDates) {
+      if (!Array.isArray(currentRecords) || !currentRecords.length) return;
+      const dateIdx = (allDates || []).indexOf(tradeDate);
+      const prevDate = dateIdx >= 0 && dateIdx < allDates.length - 1 ? allDates[dateIdx + 1] : null;
+      if (!prevDate) return;
+
+      let prevRecords = state.records.filter((r) => r.trade_date === prevDate);
+      if (!prevRecords.length) {
+        try {
+          const prevPayload = await CBRadarData.month("market", prevDate);
+          if (prevPayload && Array.isArray(prevPayload.records)) {
+            prevRecords = prevPayload.records.filter((r) => r.trade_date === prevDate);
+          }
+        } catch (e) {
+          console.warn("無法取得前一交易日行情以計算漲跌：", e);
+        }
+      }
+
+      const prevPriceMap = new Map();
+      for (const r of prevRecords) {
+        const p = r.reference_price ?? r.close_price;
+        if (p !== null && p !== undefined) {
+          prevPriceMap.set(r.cb_code, p);
+        }
+      }
+
+      for (const r of currentRecords) {
+        const p1 = r.reference_price ?? r.close_price;
+        const p0 = prevPriceMap.get(r.cb_code);
+        if (p1 !== null && p1 !== undefined && p0 !== null && p0 !== undefined && p0 > 0) {
+          const diff = Math.round((p1 - p0) * 100) / 100;
+          const pct = Math.round((diff / p0) * 10000) / 100;
+          r.price_change = diff;
+          r.price_change_pct = pct;
+        } else {
+          r.price_change = null;
+          r.price_change_pct = null;
+        }
+      }
     }
 
     function selectedDateRows() {
@@ -762,7 +821,7 @@
       if (!rows.length) {
         const row = document.createElement("tr");
         row.append(cell("沒有符合條件的 CB", "state"));
-        row.firstChild.colSpan = 27;
+        row.firstChild.colSpan = 28;
         elements.body.append(row);
         return;
       }
@@ -797,6 +856,13 @@
         // 1. CB市價 (抓參考價顯示，無則抓收盤價)
         const marketPriceVal = record.reference_price ?? record.close_price;
         row.append(cell(marketPriceVal === null ? "" : numberFormat.format(marketPriceVal), `numeric ${marketPriceVal === null ? "null" : ""}`));
+
+        // 1b. 當日漲跌 (跌用綠，漲用紅色，平盤黑色)
+        const chgInfo = formatDailyChange(record.price_change, record.price_change_pct);
+        const chgCell = cell("");
+        chgCell.className = `numeric ${record.price_change === null || record.price_change === undefined ? "null" : ""}`;
+        chgCell.innerHTML = chgInfo.html;
+        row.append(chgCell);
 
         // 2. 成交量 (四位數字寬，置中)
         row.append(cell(numberFormat.format(record.volume_lots), `numeric col-vol ${record.volume_lots === 0 ? "zero" : ""}`));
@@ -940,6 +1006,7 @@
               </div>
               <div class="quick-view-price-box">
                 <div class="quick-price">${pStr}</div>
+                <div class="quick-chg">${formatDailyChange(record.price_change, record.price_change_pct).html}</div>
                 <div class="quick-conv">轉換價 ${cpStr}</div>
               </div>
             </div>
@@ -1001,6 +1068,11 @@
       try {
         const payload = await CBRadarData.month("market", state.selectedDate);
         state.records = payload.records;
+        try {
+          await computePriceChanges(selectedDateRows(), state.selectedDate, window.__marketDates);
+        } catch (calcErr) {
+          console.warn("計算當日漲跌失敗：", calcErr);
+        }
         render();
       } catch (error) {
         elements.resultCount.textContent = "載入失敗";
@@ -1046,6 +1118,7 @@
     const EXPORT_COLUMNS = [
       ["CB名稱", "cb_name"],
       ["CB市價", "reference_price"],
+      ["當日漲跌", "price_change_display"],
       ["成交量", "volume_lots"],
       ["轉換價值", "conversion_value"],
       ["溢價率", "premium_rate"],
@@ -1080,6 +1153,7 @@
           const auc = auctionMap.get(record.cb_code) || {};
           return EXPORT_COLUMNS.map(([, key]) => {
             if (key === "reference_price") return record.reference_price ?? record.close_price ?? "";
+            if (key === "price_change_display") return formatDailyChange(record.price_change, record.price_change_pct).text;
             if (key === "underwriting_method") return auc.underwriting_method || (auc.avg_price ? "競拍" : "詢圈");
             if (key === "auction_avg_price") return auc.avg_price ?? "";
             return record[key] ?? "";
@@ -1099,7 +1173,7 @@
           .catch(() => ({ schema_version: 2, records: {} }));
 
     Promise.all([CBRadarData.manifest(), CBRadarData.latest(), loadAuctions])
-      .then(([manifest, payload, aucPayload]) => {
+      .then(async ([manifest, payload, aucPayload]) => {
         if (aucPayload && aucPayload.records) {
           auctionMap = new Map(Object.entries(aucPayload.records));
         }
@@ -1107,10 +1181,16 @@
         state.records = payload.records;
         const dates = manifest.market_dates || [];
         if (!dates.length) throw new Error("資料庫目前沒有行情資料");
+        window.__marketDates = dates;
         dates.forEach((date) => elements.dateSelect.add(new Option(date, date)));
         state.selectedDate = payload.trade_date;
         state.latestDate = payload.trade_date;
         elements.dateSelect.value = state.selectedDate;
+        try {
+          await computePriceChanges(state.records, state.selectedDate, dates);
+        } catch (calcErr) {
+          console.warn("計算當日漲跌失敗：", calcErr);
+        }
         render();
       })
       .catch((error) => {

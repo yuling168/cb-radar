@@ -136,7 +136,7 @@
       $("#title").textContent = `${payload.cb_name}（${payload.cb_code}）量價走勢`;
       document.title = `CB Radar｜${payload.cb_name}`;
       const last = rows[rows.length - 1];
-      $("#sub").innerHTML = `資料 ${rows.length} 日，最新 ${ymd(last[idx.trade_date])} · <a href="https://www.wantgoo.com/stock/${encodeURIComponent(code.slice(0, 4))}/technical-chart" target="_blank" rel="noopener noreferrer">母股 K 線（玩股網）</a>`;
+      $("#sub").innerHTML = `CB代號：${payload.cb_code} · 股票代號：${code.slice(0, 4)} · 資料 ${rows.length} 日，最新 ${ymd(last[idx.trade_date])} · <a href="https://www.wantgoo.com/stock/${encodeURIComponent(code.slice(0, 4))}/technical-chart" target="_blank" rel="noopener noreferrer">母股 K 線（玩股網）</a>`;
 
       const has = (v) => v !== null && v !== undefined;
       const pick = (col) => rows.map((r) => has(r[idx[col]]) ? { time: r[idx.trade_date], value: r[idx[col]] } : { time: r[idx.trade_date] });

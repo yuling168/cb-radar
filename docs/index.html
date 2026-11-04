@@ -33,9 +33,17 @@ h1{font-size:clamp(2rem,5vw,3.4rem);margin:26px 0 6px}
 .summary-title{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .cb-company{font-size:1.12rem;font-weight:800;color:#17211b}
 .cb-codes{font-size:.84rem;color:var(--m);font-variant-numeric:tabular-nums}
+.summary-metrics{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;margin:2px 0 3px;font-size:.88rem;font-variant-numeric:tabular-nums}
+.metric-item{display:inline-flex;align-items:center;gap:4px}
+.m-lbl{color:var(--m);font-size:.82rem}
+.m-val{font-weight:700;color:var(--i)}
+.cv-high{color:#d6324a !important;font-weight:800 !important}
 .summary-tags{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
 .tag-remain{display:inline-block;padding:2px 7px;border-radius:6px;background:#eef2ff;color:#3b50df;font-size:.76rem;font-weight:700;font-variant-numeric:tabular-nums}
-.tag-strat{display:inline-block;padding:2px 7px;border-radius:6px;background:#e7f1eb;color:var(--g);font-size:.76rem;font-weight:700}
+.tag-secured{display:inline-block;padding:2px 7px;border-radius:6px;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;font-size:.76rem;font-weight:700}
+.tag-unsecured{display:inline-block;padding:2px 7px;border-radius:6px;background:#f3f4f6;color:#637068;border:1px solid #e5e7eb;font-size:.76rem;font-weight:700}
+.cb-issue-date{font-size:.8rem;color:var(--m);font-variant-numeric:tabular-nums;font-weight:600}
+.tag-strat{display:inline-block;padding:2px 7px;border-radius:6px;background:#fef9c3;color:#854d0e;border:1px solid #fef08a;font-size:.76rem;font-weight:700}
 .summary-right{display:flex;align-items:center;gap:10px;text-align:right;flex-shrink:0}
 .summary-price-col{display:flex;flex-direction:column;align-items:flex-end}
 .summary-price{font-size:1.25rem;font-weight:800;color:#17211b;font-variant-numeric:tabular-nums;line-height:1.2}
@@ -88,6 +96,8 @@ details[open] .signal-summary{background:#f8faf8}
   .cb-company{font-size:1.05rem}
   .summary-price{font-size:1.15rem}
   .detail-row{font-size:.88rem}
+  .summary-metrics{gap:4px 10px;font-size:.82rem;margin:2px 0}
+  .m-lbl{font-size:.78rem}
 }
 </style><link rel="stylesheet" href="site-shell.css"></head><body><main class="page">
 <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
@@ -152,11 +162,14 @@ function signalCard(signal,records,date){
   const parentCode=String(signal.cb_code).slice(0,4);
   const price=show(r.close_price??r.effective_cb_price??r.reference_price);
   const convPrice=show(r.current_conversion_price??v.conversion_price);
-  const convValue=show(r.conversion_value??v.conversion_value);
+  const rawConvVal=r.conversion_value??v.conversion_value;
+  const convValue=show(rawConvVal);
+  const isCvHigh=rawConvVal!==null&&rawConvVal!==undefined&&Number(rawConvVal)>100;
   const prem=v.premium_rate_pct??r.premium_rate;
   const premText=prem===null||prem===undefined?blank:`${prem>=0?'+':''}${show(prem)}%`;
   const premClass=prem!==null&&prem!==undefined?(prem>=0?'c-up':'c-down'):'';
-  const secured=r.is_secured==='有'||r.is_secured==='是'?'<span style="color:#d6324a;font-weight:700">有擔保</span>':(r.is_secured==='無'||r.is_secured==='否'?'無擔保':(r.is_secured||blank));
+  const isSecured=r.is_secured==='有'||r.is_secured==='是'||r.is_secured==='擔保';
+  const securedStr=isSecured?'擔保':(r.is_secured==='無'||r.is_secured==='否'||r.is_secured==='無擔保'?'無擔保':(r.is_secured||blank));
   const stockPrice=show(r.p_close_price??v.parent_stock_close_price);
   const balanceRatio=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(r.balance_ratio)}%`;
   const issueDateStr=formatDate(r.issue_date)||blank;
@@ -167,21 +180,27 @@ function signalCard(signal,records,date){
   const underwriteMethod = aucInfo.underwriting_method || (aucInfo.avg_price ? "競拍" : "詢圈");
   const isAuction = underwriteMethod === "競拍" || (aucInfo.avg_price !== null && aucInfo.avg_price !== undefined);
   const aucPriceVal = aucInfo.avg_price !== null && aucInfo.avg_price !== undefined
-    ? `${show(aucInfo.avg_price)} 元 <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`
-    : (isAuction
-        ? `— <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`
-        : `<span class="tag-method method-inquiry">詢圈</span>`);
+    ? `${show(aucInfo.avg_price)} 元 <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" onclick="event.stopPropagation()" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`
+    : `— <a href="${auctionQueryUrl}" target="_blank" rel="noopener" class="auction-tag-btn" onclick="event.stopPropagation()" style="margin-left:5px" title="前往查詢 ${rawName} 官方競拍得標均價">查看競拍結果 ↗</a>`;
 
   return `<details class="signal-card" data-code="${signal.cb_code}">
     <summary class="signal-summary">
       <div class="summary-left">
         <div class="summary-title">
           <span class="cb-company">${rawName}</span>
-          <span class="cb-codes">${parentCode} • ${signal.cb_code}</span>
+          ${issueDateStr!==blank?`<span class="cb-issue-date">發行日 ${issueDateStr}</span>`:''}
           ${issued}
         </div>
+        <div class="summary-metrics">
+          <span class="metric-item"><span class="m-lbl">轉換價值</span><strong class="m-val ${isCvHigh ? 'cv-high' : ''}">${convValue}</strong></span>
+          <span class="metric-item"><span class="m-lbl">折溢價</span><strong class="m-val ${premClass}">${premText}</strong></span>
+          <span class="metric-item"><span class="m-lbl">當日成交量</span><strong class="m-val">${volume}</strong></span>
+          ${isAuction ? `<span class="metric-item"><span class="m-lbl">競拍均價</span><strong class="m-val">${aucPriceVal}</strong></span>` : ''}
+        </div>
         <div class="summary-tags">
+          ${securedStr!==blank?`<span class="${isSecured ? 'tag-secured' : 'tag-unsecured'}">${securedStr}</span>`:''}
           ${balanceRatio!==blank?`<span class="tag-remain">剩餘 ${balanceRatio}</span>`:''}
+          ${!isAuction?`<span class="tag-method method-inquiry">詢圈</span>`:''}
           <span class="tag-strat">${names[signal.strategy_code]||signal.strategy_code}</span>
           ${types}
         </div>
@@ -197,16 +216,12 @@ function signalCard(signal,records,date){
     </summary>
     <div class="signal-detail-body">
       <div class="detail-grid">
-        <div class="detail-row"><span class="dt-lbl">轉換價值</span><span class="dt-val">${convValue}</span></div>
-        <div class="detail-row"><span class="dt-lbl">折溢價</span><span class="dt-val ${premClass}">${premText}</span></div>
-        <div class="detail-row"><span class="dt-lbl">當日成交量</span><span class="dt-val">${volume}</span></div>
-        <div class="detail-row"><span class="dt-lbl">是否擔保</span><span class="dt-val">${secured}</span></div>
-        <div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>
-        <div class="detail-row"><span class="dt-lbl">剩餘比率</span><span class="dt-val">${balanceRatio}</span></div>
+        <div class="detail-row"><span class="dt-lbl">CB代號</span><span class="dt-val">${signal.cb_code}</span></div>
         <div class="detail-row"><span class="dt-lbl">發行日</span><span class="dt-val">${issueDateStr}</span></div>
         <div class="detail-row"><span class="dt-lbl">到期日</span><span class="dt-val">${maturityDateStr}</span></div>
         <div class="detail-row"><span class="dt-lbl">重要日程</span><span class="dt-val">${eventDate?`<span class="fact">${eventDate}</span>`:""}</span></div>
-        <div class="detail-row"><span class="dt-lbl">競拍均價</span><span class="dt-val">${aucPriceVal}</span></div>
+        <div class="detail-row"><span class="dt-lbl">股票代號</span><span class="dt-val">${parentCode}</span></div>
+        <div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>
       </div>
       <a href="cb-detail.html?code=${encodeURIComponent(signal.cb_code)}" class="detail-btn">
         📄 ${rawName} CB詳細內容（查看走勢圖）

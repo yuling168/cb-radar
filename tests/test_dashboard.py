@@ -869,6 +869,7 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert [header["sort"] for header in parser.headers] == [
         "cb_name",
         "reference_price",
+        "price_change",
         "volume_lots",
         "conversion_value",
         "premium_rate",
@@ -904,6 +905,8 @@ def test_dashboard_every_column_has_type_aware_sorting_and_sticky_headers():
     assert 'balance_ratio: "number"' in source
     assert 'p_close_price: "number"' in source
     assert 'reference_price: "number"' in source
+    assert 'price_change: "number"' in source
+    assert '當日漲跌' in source
     assert 'p_volume_lots: "number"' in source
     assert 'conversion_value: "number"' in source
     assert 'premium_rate: "number"' in source
@@ -951,3 +954,60 @@ def test_dashboard_shards_are_manifested_bounded_and_semantically_complete(tmp_p
 
     _, changed_again = build_dashboard.build_dashboard_shards()
     assert changed_again == 0
+
+
+def test_homepage_signal_card_layout_and_highlight():
+    index = HOME_PATH.read_text(encoding="utf-8")
+    assert "summary-metrics" in index
+    assert "轉換價值" in index
+    assert "折溢價" in index
+    assert "當日成交量" in index
+    assert "競拍均價" in index
+    assert 'class="summary-metrics"' in index
+
+    # 1. 詢圈不用再寫「競拍均價」標題，放在剩餘比例右邊
+    assert 'isAuction ? `<span class="metric-item"><span class="m-lbl">競拍均價' in index
+    assert '!isAuction?`<span class="tag-method method-inquiry">詢圈</span>`' in index
+    remain_tag_idx = index.find('tag-remain')
+    inquiry_tag_idx = index.find('method-inquiry')
+    assert remain_tag_idx != -1 and inquiry_tag_idx != -1
+    assert remain_tag_idx < inquiry_tag_idx
+
+    # 2. 策略名用黃色淡底
+    assert ".tag-strat{display:inline-block;padding:2px 7px;border-radius:6px;background:#fef9c3;color:#854d0e;border:1px solid #fef08a" in index
+
+    # 3. CB名右側放發行日（小小即可）
+    assert "cb-issue-date" in index
+    assert "發行日 ${issueDateStr}" in index
+    cb_company_idx = index.find("cb-company")
+    issue_date_idx = index.find("cb-issue-date")
+    assert cb_company_idx != -1 and issue_date_idx != -1
+    assert cb_company_idx < issue_date_idx
+
+    # 是否擔保放到第一層
+    assert "tag-secured" in index and "tag-unsecured" in index and "${securedStr}" in index
+
+    detail_grid_start = index.find('<div class="detail-grid">')
+    detail_grid_end = index.find('<a href="cb-detail.html', detail_grid_start)
+    assert detail_grid_start != -1 and detail_grid_end != -1
+    detail_grid_content = index[detail_grid_start:detail_grid_end]
+
+    # 內層不用放 轉換價值、折溢價、當日成交量、競拍均價、是否擔保、剩餘比率
+    assert '轉換價值</span>' not in detail_grid_content
+    assert '折溢價</span>' not in detail_grid_content
+    assert '當日成交量</span>' not in detail_grid_content
+    assert '競拍均價</span>' not in detail_grid_content
+    assert '是否擔保</span>' not in detail_grid_content
+    assert '剩餘比率</span>' not in detail_grid_content
+
+    # 股票代號\母股股價放到最下方，先股票代號
+    stock_code_idx = detail_grid_content.find('<div class="detail-row"><span class="dt-lbl">股票代號</span><span class="dt-val">${parentCode}</span></div>')
+    stock_price_idx = detail_grid_content.find('<div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>')
+    assert stock_code_idx != -1 and stock_price_idx != -1
+    assert stock_code_idx < stock_price_idx
+    assert 'detail-row' not in detail_grid_content[stock_price_idx + len('<div class="detail-row"><span class="dt-lbl">母股股價</span><span class="dt-val">${stockPrice}</span></div>'):]
+
+    assert '<span class="cb-codes">${parentCode}' not in index
+    assert "isCvHigh" in index
+    assert "cv-high" in index
+    assert ".cv-high{color:#d6324a" in index
