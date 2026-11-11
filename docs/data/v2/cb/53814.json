@@ -1,0 +1,1 @@
+{"schema_version":2,"cb_code":"53814","cb_name":"光譜四","columns":["trade_date","reference_price","close_price","volume_lots","conversion_value","premium_rate","p_close_price","balance_ratio","balance_units"],"rows":[["2026-11-11",102.45,102.45,439,87.72727273,16.78238342,19.3,null,null]]}
