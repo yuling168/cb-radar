@@ -695,37 +695,37 @@
     const NODE_COORDS = {
       'EARLY_BEAR': {
         point: { x: 120, y: 178 },
-        card: { x: 50, y: 65, width: 115, height: 60 },
+        card: { x: 45, y: 65, width: 120, height: 68 },
         color: '#4ade80',
         glow: 'url(#greenGlow)'
       },
       'MAIN_BEAR': {
         point: { x: 275, y: 290 },
-        card: { x: 200, y: 340, width: 115, height: 60 },
+        card: { x: 195, y: 335, width: 120, height: 68 },
         color: '#4ade80',
         glow: 'url(#greenGlow)'
       },
       'BOTTOM': {
         point: { x: 475, y: 360 },
-        card: { x: 420, y: 380, width: 110, height: 56 },
+        card: { x: 415, y: 375, width: 120, height: 68 },
         color: '#4ade80',
         glow: 'url(#greenGlow)'
       },
       'EARLY_BULL': {
         point: { x: 647, y: 280 },
-        card: { x: 590, y: 315, width: 110, height: 56 },
+        card: { x: 590, y: 315, width: 120, height: 68 },
         color: '#f87171',
         glow: 'url(#redGlow)'
       },
       'MAIN_BULL': {
         point: { x: 800, y: 140 },
-        card: { x: 715, y: 65, width: 110, height: 56 },
+        card: { x: 715, y: 65, width: 120, height: 68 },
         color: '#f87171',
         glow: 'url(#redGlow)'
       },
       'TOPPING': {
         point: { x: 885, y: 102 },
-        card: { x: 855, y: 20, width: 115, height: 60 },
+        card: { x: 855, y: 20, width: 120, height: 68 },
         color: '#f87171',
         glow: 'url(#redGlow)'
       }
@@ -838,18 +838,24 @@
         cardBg.setAttribute('height', config.card.height);
         cardBg.setAttribute('rx', '8');
         cardBg.setAttribute('fill', isDark ? '#1e293b' : '#ffffff');
-        cardBg.setAttribute('stroke', isSelected ? (isDark ? '#38bdf8' : '#2563eb') : (hasVolatile ? '#f59e0b' : (isDark ? '#334155' : '#cbd5e1')));
-        cardBg.setAttribute('stroke-width', isSelected ? '2.5' : (hasVolatile ? '1.5' : '1'));
+        const defaultBorder = isDark ? '#334155' : '#cbd5e1';
+        const activeBorder = isDark ? '#38bdf8' : '#2563eb';
+        cardBg.setAttribute('stroke', isSelected ? activeBorder : defaultBorder);
+        cardBg.setAttribute('stroke-width', isSelected ? '2.5' : '1.2');
         cardBg.setAttribute('filter', 'url(#cardShadow)');
         cardG.appendChild(cardBg);
 
-        // Stage Title inside card
+        // Stage Title inside card (字體放大二倍加粗，多頭用紅色，空頭用綠色)
+        const isBull = (sInfo.side === '多頭') || ['EARLY_BULL', 'MAIN_BULL', 'TOPPING'].includes(stageCode);
+        const titleColor = isBull ? (isDark ? '#f87171' : '#dc2626') : (isDark ? '#4ade80' : '#16a34a');
         const titleText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         titleText.setAttribute('x', config.card.x + 10);
-        titleText.setAttribute('y', config.card.y + 20);
-        titleText.setAttribute('fill', isDark ? '#94a3b8' : '#475569');
-        titleText.setAttribute('font-size', '13');
-        titleText.setAttribute('font-weight', '700');
+        titleText.setAttribute('y', config.card.y + 30);
+        titleText.setAttribute('fill', titleColor);
+        titleText.style.fill = isBull ? 'var(--up-red)' : 'var(--down-green)';
+        titleText.setAttribute('font-size', '24');
+        titleText.setAttribute('font-weight', '900');
+        titleText.setAttribute('letter-spacing', '0.5px');
         titleText.textContent = sInfo.name;
         cardG.appendChild(titleText);
 
@@ -857,7 +863,7 @@
         if (hasNew) {
           const badgeBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
           badgeBg.setAttribute('x', config.card.x + config.card.width - 48);
-          badgeBg.setAttribute('y', config.card.y + 8);
+          badgeBg.setAttribute('y', config.card.y + 9);
           badgeBg.setAttribute('width', '40');
           badgeBg.setAttribute('height', '16');
           badgeBg.setAttribute('rx', '4');
@@ -866,7 +872,7 @@
 
           const badgeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
           badgeText.setAttribute('x', config.card.x + config.card.width - 28);
-          badgeText.setAttribute('y', config.card.y + 20);
+          badgeText.setAttribute('y', config.card.y + 21);
           badgeText.setAttribute('fill', '#0f172a');
           badgeText.setAttribute('font-size', '10');
           badgeText.setAttribute('font-weight', '800');
@@ -876,8 +882,8 @@
         } else if (hasVolatile) {
           // Subtle flame indicator on card if has >5% moves
           const volInd = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-          volInd.setAttribute('x', config.card.x + config.card.width - 12);
-          volInd.setAttribute('y', config.card.y + 20);
+          volInd.setAttribute('x', config.card.x + config.card.width - 10);
+          volInd.setAttribute('y', config.card.y + 22);
           volInd.setAttribute('font-size', '11');
           volInd.setAttribute('text-anchor', 'end');
           volInd.textContent = `⚡${sInfo.volatile_cbs.length}`;
@@ -889,9 +895,9 @@
         // Count Text (e.g. 183 檔 >)
         const countText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         countText.setAttribute('x', config.card.x + 10);
-        countText.setAttribute('y', config.card.y + (hasNew ? 44 : 40));
+        countText.setAttribute('y', config.card.y + 55);
         countText.setAttribute('fill', isDark ? '#60a5fa' : '#2563eb');
-        countText.setAttribute('font-size', '16');
+        countText.setAttribute('font-size', '15');
         countText.setAttribute('font-weight', '800');
         countText.textContent = `${sInfo.count} 檔 ❯`;
         cardG.appendChild(countText);
@@ -1131,8 +1137,8 @@
           }
         }
 
-        // Yahoo Finance Technical Analysis URL for Mother Stock
-        const yahooTechUrl = `https://tw.stock.yahoo.com/quote/${item.stock_code}.TWO/technical-analysis`;
+        // WantGoo Technical Analysis URL for Mother Stock (玩股網技術線圖)
+        const wantgooUrl = `https://www.wantgoo.com/stock/${encodeURIComponent(item.stock_code)}/technical-chart`;
 
         // CB Detail URL (Open in same window so back button returns here)
         const cbDetailUrl = `cb-detail.html?code=${encodeURIComponent(item.cb_code)}`;
@@ -1151,7 +1157,7 @@
             <td>${item.conversion_price !== null ? item.conversion_price.toFixed(2) : '—'}</td>
             <td class="${premiumClass}">${item.premium_rate !== null ? item.premium_rate.toFixed(2) + '%' : '—'}</td>
             <td>
-              <a href="${yahooTechUrl}" target="_blank" rel="noopener noreferrer" class="stock-link" title="點擊開新頁開啟 ${item.stock_name} Yahoo 技術線圖">
+              <a href="${wantgooUrl}" target="_blank" rel="noopener noreferrer" class="stock-link" title="點擊開新頁開啟 ${item.stock_name} 玩股網技術線圖">
                 ${item.stock_name} <span style="font-size: 0.72rem; opacity: 0.85;">↗</span>
               </a>
             </td>
