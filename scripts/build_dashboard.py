@@ -9,9 +9,15 @@ import shutil
 import tempfile
 from datetime import date
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from cb_price import effective_cb_price_source_sql, effective_cb_price_sql
 from strategy_registry import active_strategy_codes, get_strategy
+from stock_cycle_engine import evaluate_stock_cycles_for_date
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -857,6 +863,11 @@ def build_dashboard_shards() -> tuple[int, int]:
                     _write_json(staging / "auctions.json", {"schema_version": 2, "records": auction_records})
         except Exception:
             pass
+        try:
+            cycle_payload = evaluate_stock_cycles_for_date(DB_PATH, latest_date)
+            _write_json(staging / "stock_cycle.json", cycle_payload)
+        except Exception as exc:
+            print(f"Warning: Failed to generate stock_cycle.json: {exc}")
         manifest = {
             "schema_version": SHARD_SCHEMA_VERSION,
             "latest_trade_date": latest_date,

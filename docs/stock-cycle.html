@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>母股循環階段（神奇均線 43MA / 87MA / 284MA）— CB Radar</title>
+  <link rel="stylesheet" href="site-shell.css">
+  <style>
+    :root {
+      /* 預設淺色底（與首頁等其他頁面保持完全一致的紙質綠底風格） */
+      --bg-page: #f4f7f3;
+      --card-bg: #ffffff;
+      --card-border: #dce4de;
+      --text-main: #17211b;
+      --text-muted: #637068;
+      --panel-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
+      --table-header-bg: #edf2ee;
+      --table-border: #e2e8e3;
+      --table-hover: rgba(24, 92, 66, 0.035);
+      --popover-bg: #ffffff;
+      --popover-border: #2563eb;
+      --popover-shadow: 0 10px 30px rgba(0, 0, 0, 0.12), 0 0 12px rgba(37, 99, 235, 0.18);
+      --popover-text: #17211b;
+      --popover-item-border: #edf2ee;
+      --search-bg: #ffffff;
+      --search-border: #cbd5e1;
+      --search-text: #17211b;
+      --up-red: #dc2626;
+      --down-green: #16a34a;
+      --badge-new: #d97706;
+      --stock-link-bg: #eff6ff;
+      --stock-link-border: #bfdbfe;
+      --stock-link-text: #1d4ed8;
+      --stock-link-hover-bg: #dbeafe;
+      --stock-link-hover-border: #60a5fa;
+      --stock-link-hover-text: #1e40af;
+      --wave-blue: #2563eb;
+      --watermark-opacity: 0.35;
+      --nav-link: #185c42;
+      --nav-active: #0f3d2b;
+      --accent-text: #185c42;
+    }
+
+    [data-theme="dark"] {
+      /* 深色底模式（原版配色） */
+      --bg-page: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #253349;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --panel-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+      --table-header-bg: #152238;
+      --table-border: #243247;
+      --table-hover: rgba(255, 255, 255, 0.04);
+      --popover-bg: #0b1329;
+      --popover-border: #38bdf8;
+      --popover-shadow: 0 12px 35px rgba(0, 0, 0, 0.8), 0 0 15px rgba(56, 189, 248, 0.35);
+      --popover-text: #f8fafc;
+      --popover-item-border: #243247;
+      --search-bg: #0f172a;
+      --search-border: #334155;
+      --search-text: #f8fafc;
+      --up-red: #f87171;
+      --down-green: #4ade80;
+      --badge-new: #eab308;
+      --stock-link-bg: rgba(59, 130, 246, 0.12);
+      --stock-link-border: rgba(59, 130, 246, 0.35);
+      --stock-link-text: #60a5fa;
+      --stock-link-hover-bg: rgba(59, 130, 246, 0.25);
+      --stock-link-hover-border: rgba(96, 165, 250, 0.6);
+      --stock-link-hover-text: #93c5fd;
+      --wave-blue: #3b82f6;
+      --watermark-opacity: 0.85;
+      --nav-link: #38bdf8;
+      --nav-active: #f8fafc;
+      --accent-text: #38bdf8;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg-page);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .page {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px 20px 80px;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px 18px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border) !important;
+      margin-bottom: 24px;
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      align-items: center;
+    }
+    nav a {
+      color: var(--nav-link) !important;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    nav a:hover {
+      text-decoration: underline;
+    }
+    nav a.active {
+      color: var(--nav-active) !important;
+      border-bottom: 2px solid var(--nav-active) !important;
+      padding-bottom: 2px;
+    }
+
+    /* Theme Toggle Button */
+    .theme-toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      transition: all 0.2s ease;
+    }
+    .theme-toggle-btn:hover {
+      border-color: var(--wave-blue);
+      background: var(--table-hover);
+    }
+
+    .tag-bear { background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.4); }
+    .tag-bull { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+
+    /* Chart Container */
+    .chart-panel {
+      position: relative;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px 20px 32px;
+      overflow: visible;
+      margin-bottom: 28px;
+      box-shadow: var(--panel-shadow);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .wave-svg-container {
+      width: 82%;
+      max-width: 1120px;
+      margin: 0 auto;
+      position: relative;
+    }
+    svg.wave-canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      overflow: visible;
+    }
+
+    /* Stage Nodes / Cards overlaying the wave */
+    .stage-node-btn {
+      cursor: pointer;
+      transition: transform 0.2s, filter 0.2s;
+    }
+    .stage-node-btn:hover {
+      filter: brightness(1.2);
+    }
+    .stage-node-btn.selected rect.card-bg {
+      stroke: #38bdf8;
+      stroke-width: 2px;
+      filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.5));
+    }
+
+    /* Floating Hover Popover for High Volatility CBs (>= 5%) */
+    .hover-popover {
+      position: absolute;
+      display: none;
+      z-index: 1000;
+      background: var(--popover-bg);
+      border: 1.5px solid var(--popover-border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: var(--popover-shadow);
+      width: 330px;
+      max-width: calc(100vw - 32px);
+      box-sizing: border-box;
+      pointer-events: auto; /* Allow mouse inside to scroll list */
+      transition: opacity 0.15s ease-out;
+      opacity: 0;
+    }
+    .hover-popover.active {
+      display: block;
+      opacity: 1;
+    }
+    .popover-header {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--popover-text);
+      border-bottom: 1px solid var(--popover-item-border);
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .popover-close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+    .popover-close-btn:hover {
+      color: var(--text-main);
+      background: var(--table-header-bg);
+    }
+    .popover-badge {
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      background: rgba(234, 179, 8, 0.2);
+      color: #facc15;
+      border: 1px solid rgba(234, 179, 8, 0.4);
+    }
+    .popover-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 240px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 6px;
+    }
+    .popover-list::-webkit-scrollbar {
+      width: 8px;
+    }
+    .popover-list::-webkit-scrollbar-track {
+      background: var(--table-header-bg);
+      border-radius: 4px;
+    }
+    .popover-list::-webkit-scrollbar-thumb {
+      background: var(--card-border);
+      border-radius: 4px;
+    }
+    .popover-list::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+    .popover-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 0.88rem;
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--popover-item-border);
+    }
+    .popover-item-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .popover-item-sub {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+    }
+    .popover-item-name {
+      color: var(--popover-text);
+      font-weight: 600;
+    }
+    .popover-item-val {
+      font-family: monospace;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .popover-empty {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding: 10px 0;
+      text-align: center;
+    }
+
+    .chart-footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      margin-top: 18px;
+      line-height: 1.6;
+    }
+    .chart-footer .highlight-new {
+      color: var(--badge-new);
+      font-weight: 600;
+    }
+
+    /* Detail Table Drawer / Panel */
+    .table-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: var(--panel-shadow);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .panel-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .panel-title-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .panel-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .panel-action-box {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+    }
+    .panel-action-box strong {
+      color: var(--accent-text);
+    }
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .search-input {
+      background: var(--search-bg);
+      border: 1px solid var(--search-border);
+      color: var(--search-text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      outline: none;
+      min-width: 260px;
+      transition: border-color 0.15s;
+    }
+    .search-input:focus {
+      border-color: var(--wave-blue);
+    }
+
+    /* Data Table */
+    .table-container {
+      overflow-x: auto;
+      max-height: 700px;
+    }
+    table.cycle-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      text-align: left;
+    }
+    table.cycle-table th {
+      background: var(--table-header-bg);
+      color: var(--text-muted);
+      padding: 12px 10px;
+      font-weight: 600;
+      border-bottom: 2px solid var(--card-border);
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    table.cycle-table th:hover {
+      color: var(--text-main);
+    }
+    table.cycle-table td {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--table-border);
+      vertical-align: middle;
+      white-space: nowrap;
+      color: var(--text-main);
+    }
+    table.cycle-table tr:hover td {
+      background: var(--table-hover);
+    }
+    
+    /* Interactive Links */
+    a.cb-link {
+      color: var(--text-main);
+      text-decoration: underline;
+      font-weight: 700;
+      transition: color 0.15s, text-shadow 0.15s;
+    }
+    a.cb-link.cb-link-down {
+      color: var(--down-green) !important;
+    }
+    a.cb-link.cb-link-up {
+      color: var(--up-red) !important;
+    }
+    a.cb-link:hover {
+      color: var(--wave-blue) !important;
+      text-shadow: 0 0 8px rgba(37, 99, 235, 0.3);
+    }
+    a.stock-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--stock-link-text);
+      text-decoration: none;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: var(--stock-link-bg);
+      border: 1px solid var(--stock-link-border);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      transition: all 0.15s ease;
+    }
+    a.stock-link:hover {
+      color: var(--stock-link-hover-text);
+      border-color: var(--stock-link-hover-border);
+      background: var(--stock-link-hover-bg);
+      text-decoration: underline;
+    }
+
+    .new-badge {
+      display: inline-block;
+      background: #eab308;
+      color: #0f172a;
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      text-transform: uppercase;
+    }
+    /* Volatility Badges: +5% in Red, -5% in Green */
+    .vol-badge-up {
+      display: inline-block;
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 4px;
+      margin-left: 6px;
+    }
+    .vol-badge-down {
+      display: inline-block;
+      background: rgba(74, 222, 128, 0.2);
+      color: #4ade80;
+      border: 1px solid rgba(74, 222, 128, 0.4);
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 4px;
+      margin-left: 6px;
+    }
+
+    .num-up { color: var(--up-red); font-weight: 700; }
+    .num-down { color: var(--down-green); font-weight: 700; }
+    .num-neutral { color: var(--text-muted); }
+    .tag-bubble {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .sort-indicator {
+      font-size: 0.75rem;
+      margin-left: 4px;
+      color: var(--wave-blue);
+    }
+    @media (max-width: 768px) {
+      .page {
+        padding: 14px 10px 60px;
+      }
+      .chart-panel {
+        padding: 16px 8px 24px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      }
+      .wave-svg-container {
+        width: 100%;
+        max-width: 100%;
+      }
+      .hover-popover {
+        width: 300px;
+        padding: 10px 12px;
+        font-size: 0.85rem;
+      }
+      .popover-list {
+        max-height: 180px;
+      }
+      .stage-node-btn {
+        -webkit-tap-highlight-color: transparent;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav aria-label="導覽">
+      <div class="nav-links">
+        <a href="index.html">首頁</a>
+        <a href="stock-cycle.html" class="active">母股循環階段</a>
+        <a href="institutional.html">三大法人</a>
+        <a href="strategy-a.html">創10日新高</a>
+        <a href="strategy-b.html">CB突破轉換價</a>
+        <a href="strategy-c.html">CB資優生</a>
+        <a href="strategy-g.html">時間發動</a>
+        <a href="daily-market.html">每日行情</a>
+      </div>
+      <button id="themeToggleBtn" type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="點擊切換深色 / 淺色模式">
+        🌙 深色模式
+      </button>
+    </nav>
+
+    <!-- Interactive Wave Chart Panel -->
+    <div class="chart-panel" id="chartPanel">
+      <div class="wave-svg-container">
+        <svg class="wave-canvas" viewBox="0 0 1000 460" id="waveSvg">
+          <defs>
+            <!-- Drop shadow for cards -->
+            <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.3"/>
+            </filter>
+            <!-- Glow filters for nodes -->
+            <filter id="greenGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#4ade80" flood-opacity="0.8"/>
+            </filter>
+            <filter id="redGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#f87171" flood-opacity="0.8"/>
+            </filter>
+            <!-- Arrow marker -->
+            <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--wave-blue)"/>
+            </marker>
+          </defs>
+
+          <!-- Wave Curve Path -->
+          <!-- Bearish wave segment (Orange): Left high down to bottom trough -->
+          <path d="M 30 140 C 100 140, 180 240, 275 290 C 340 325, 410 360, 475 360" 
+                fill="none" stroke="#f59e0b" stroke-width="12" stroke-linecap="round"/>
+
+          <!-- Bullish wave segment (Blue): From bottom trough up to peak and down right -->
+          <path d="M 475 360 C 580 360, 720 220, 800 140 C 850 90, 930 85, 965 160" 
+                fill="none" stroke="var(--wave-blue)" stroke-width="12" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+          <!-- Background Side Watermarks -->
+          <text x="110" y="380" fill="#f59e0b" font-size="28" font-weight="900" class="watermark-text" letter-spacing="4">空頭</text>
+          <text x="860" y="380" fill="var(--wave-blue)" font-size="28" font-weight="900" class="watermark-text" letter-spacing="4">多頭</text>
+
+          <!-- Dynamic SVG Group for Nodes & Cards -->
+          <g id="svgNodesLayer"></g>
+        </svg>
+
+        <!-- Floating Hover Popover -->
+        <div class="hover-popover" id="hoverPopover">
+          <div class="popover-header">
+            <span id="popoverTitle">🔥 漲跌幅超過 5% 清單</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span class="popover-badge" id="popoverBadge">0 檔</span>
+              <button type="button" class="popover-close-btn" onclick="hidePopoverImmediately()" title="關閉">✕</button>
+            </div>
+          </div>
+          <div class="popover-list" id="popoverList"></div>
+        </div>
+      </div>
+
+      <div class="chart-footer" id="chartFooter">
+        上市中可轉債 <span id="totalCbCount">--</span> 檔（依母股階段。資料日 <span id="dataDate">--</span>）。
+      </div>
+    </div>
+
+    <!-- Expanded Detail Table Drawer -->
+    <div class="table-panel" id="tablePanel">
+      <div class="panel-header">
+        <div class="panel-title-area">
+          <h2 class="panel-title" id="stageTitle">
+            <span class="tag-bubble" id="stageBadge">--</span>
+            <span id="stageName">請點選上方階段查看清單</span>
+            <span style="font-size: 0.95rem; color: var(--text-muted); font-weight: normal;" id="stageCountInfo"></span>
+          </h2>
+          <div class="panel-action-box" id="stageActionBox"></div>
+        </div>
+        <div class="filter-bar">
+          <input type="text" id="searchInput" class="search-input" placeholder="搜尋 CB 名稱 / 母股名稱...">
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="cycle-table">
+          <thead>
+            <tr>
+              <th onclick="sortTable('cb_name')">CB 名稱 <span id="sort-cb_name" class="sort-indicator"></span></th>
+              <th onclick="sortTable('cb_close')">CB 收盤價 <span id="sort-cb_close" class="sort-indicator"></span></th>
+              <th onclick="sortTable('cb_change_pct')">CB 當日漲跌 <span id="sort-cb_change_pct" class="sort-indicator">▼</span></th>
+              <th onclick="sortTable('cb_volume')">CB 成交量 <span id="sort-cb_volume" class="sort-indicator"></span></th>
+              <th onclick="sortTable('conversion_price')">轉換價 <span id="sort-conversion_price" class="sort-indicator"></span></th>
+              <th onclick="sortTable('premium_rate')">溢價率 % <span id="sort-premium_rate" class="sort-indicator"></span></th>
+              <th onclick="sortTable('stock_name')">母股名稱 <span id="sort-stock_name" class="sort-indicator"></span></th>
+              <th onclick="sortTable('stock_close')">母股收盤 <span id="sort-stock_close" class="sort-indicator"></span></th>
+              <th onclick="sortTable('ma43')">43MA <span id="sort-ma43" class="sort-indicator"></span></th>
+              <th onclick="sortTable('ma87')">87MA <span id="sort-ma87" class="sort-indicator"></span></th>
+              <th onclick="sortTable('ma284')">284MA <span id="sort-ma284" class="sort-indicator"></span></th>
+              <th onclick="sortTable('consecutive_days')">已維持天數 <span id="sort-consecutive_days" class="sort-indicator"></span></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr>
+              <td colspan="12" style="text-align: center; color: #64748b; padding: 40px;">載入中...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let cycleData = null;
+    let currentStage = 'EARLY_BEAR';
+    // 預設依 CB 當日漲跌幅從高到低排序 (sortField: 'cb_change_pct', sortAsc: false)
+    let sortField = 'cb_change_pct';
+    let sortAsc = false;
+    let searchQuery = '';
+    let popoverHideTimer = null;
+
+    // Theme Management (預設淺色底與全站其他頁面一致，支援右上角一鍵切換深色/淺色)
+    function initTheme() {
+      const saved = localStorage.getItem('stock_cycle_theme') || 'light';
+      setTheme(saved);
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = (current === 'dark') ? 'light' : 'dark';
+      setTheme(next);
+    }
+
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('stock_cycle_theme', theme);
+      const btn = document.getElementById('themeToggleBtn');
+      if (btn) {
+        btn.innerHTML = (theme === 'dark') ? '☀️ 淺色模式' : '🌙 深色模式';
+      }
+      if (cycleData) renderSvgNodes();
+    }
+
+    initTheme();
+
+    // Node layout positions on the SVG curve (x, y coordinate for point & card)
+    const NODE_COORDS = {
+      'EARLY_BEAR': {
+        point: { x: 120, y: 178 },
+        card: { x: 50, y: 65, width: 115, height: 60 },
+        color: '#4ade80',
+        glow: 'url(#greenGlow)'
+      },
+      'MAIN_BEAR': {
+        point: { x: 275, y: 290 },
+        card: { x: 200, y: 340, width: 115, height: 60 },
+        color: '#4ade80',
+        glow: 'url(#greenGlow)'
+      },
+      'BOTTOM': {
+        point: { x: 475, y: 360 },
+        card: { x: 420, y: 380, width: 110, height: 56 },
+        color: '#4ade80',
+        glow: 'url(#greenGlow)'
+      },
+      'EARLY_BULL': {
+        point: { x: 647, y: 280 },
+        card: { x: 590, y: 315, width: 110, height: 56 },
+        color: '#f87171',
+        glow: 'url(#redGlow)'
+      },
+      'MAIN_BULL': {
+        point: { x: 800, y: 140 },
+        card: { x: 715, y: 65, width: 110, height: 56 },
+        color: '#f87171',
+        glow: 'url(#redGlow)'
+      },
+      'TOPPING': {
+        point: { x: 885, y: 102 },
+        card: { x: 855, y: 20, width: 115, height: 60 },
+        color: '#f87171',
+        glow: 'url(#redGlow)'
+      }
+    };
+
+    async function loadData() {
+      try {
+        const res = await fetch('data/v2/stock_cycle.json?t=' + Date.now());
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        cycleData = await res.json();
+
+        // 恢復先前選中的階段（若有從上一頁返回或儲存狀態）
+        const savedStage = (location.hash ? location.hash.replace('#', '') : null) || sessionStorage.getItem('stock_cycle_selected_stage');
+        if (savedStage && cycleData.stages && cycleData.stages[savedStage]) {
+          currentStage = savedStage;
+        }
+
+        renderHeaderInfo();
+        renderSvgNodes();
+        selectStage(currentStage);
+      } catch (err) {
+        console.error('Failed to load stock cycle data:', err);
+        document.getElementById('tableBody').innerHTML = 
+          `<tr><td colspan="12" style="text-align: center; color: #f87171; padding: 40px;">載入資料失敗：${err.message}</td></tr>`;
+      }
+    }
+
+    function renderHeaderInfo() {
+      if (!cycleData) return;
+      document.getElementById('totalCbCount').textContent = cycleData.total_cbs;
+      document.getElementById('dataDate').textContent = cycleData.date.replace(/-/g, '/');
+    }
+
+    function renderSvgNodes() {
+      if (!cycleData || !cycleData.stages) return;
+      const g = document.getElementById('svgNodesLayer');
+      g.innerHTML = '';
+
+      Object.entries(NODE_COORDS).forEach(([stageCode, config]) => {
+        const sInfo = cycleData.stages[stageCode] || { count: 0, new_count: 0, name: stageCode, volatile_cbs: [] };
+        const isSelected = (stageCode === currentStage);
+        const hasNew = (sInfo.new_count > 0);
+        const hasVolatile = (sInfo.volatile_cbs && sInfo.volatile_cbs.length > 0);
+
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', `stage-node-btn ${isSelected ? 'selected' : ''}`);
+        group.setAttribute('id', `node-${stageCode}`);
+        
+        // Click / Touch to select (手機觸控即時響應，優先選取階段並關閉浮動彈窗)
+        group.onclick = () => selectStage(stageCode);
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let isTap = true;
+        group.addEventListener('touchstart', (e) => {
+          isTap = true;
+          if (e.touches && e.touches[0]) {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+          }
+        }, { passive: true });
+        group.addEventListener('touchmove', (e) => {
+          if (e.touches && e.touches[0]) {
+            const dx = Math.abs(e.touches[0].clientX - touchStartX);
+            const dy = Math.abs(e.touches[0].clientY - touchStartY);
+            if (dx > 10 || dy > 10) isTap = false;
+          }
+        }, { passive: true });
+        group.addEventListener('touchend', () => {
+          if (isTap) {
+            selectStage(stageCode);
+          }
+        });
+
+        // Hover events for 5% volatility popover (fixed anchored position with 600ms grace period)
+        group.onmouseenter = () => showPopover(stageCode);
+        group.onmouseleave = () => scheduleHidePopover();
+
+        const isDark = (document.documentElement.getAttribute('data-theme') === 'dark');
+
+        // Connecting subtle line from card to point
+        const connLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        connLine.setAttribute('x1', config.point.x);
+        connLine.setAttribute('y1', config.point.y);
+        connLine.setAttribute('x2', config.card.x + config.card.width / 2);
+        connLine.setAttribute('y2', config.card.y + config.card.height / 2);
+        connLine.setAttribute('stroke', isDark ? '#475569' : '#cbd5e1');
+        connLine.setAttribute('stroke-dasharray', '2 2');
+        connLine.setAttribute('stroke-width', '1.5');
+        group.appendChild(connLine);
+
+        // Circular Node Dot on the curve
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', config.point.x);
+        circle.setAttribute('cy', config.point.y);
+        circle.setAttribute('r', '9');
+        circle.setAttribute('fill', config.color);
+        circle.setAttribute('stroke', isDark ? '#0f172a' : '#ffffff');
+        circle.setAttribute('stroke-width', '2.5');
+        circle.setAttribute('filter', config.glow);
+        group.appendChild(circle);
+
+        // Card Container Box
+        const cardG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        const cardBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        cardBg.setAttribute('class', 'card-bg');
+        cardBg.setAttribute('x', config.card.x);
+        cardBg.setAttribute('y', config.card.y);
+        cardBg.setAttribute('width', config.card.width);
+        cardBg.setAttribute('height', config.card.height);
+        cardBg.setAttribute('rx', '8');
+        cardBg.setAttribute('fill', isDark ? '#1e293b' : '#ffffff');
+        cardBg.setAttribute('stroke', isSelected ? (isDark ? '#38bdf8' : '#2563eb') : (hasVolatile ? '#f59e0b' : (isDark ? '#334155' : '#cbd5e1')));
+        cardBg.setAttribute('stroke-width', isSelected ? '2.5' : (hasVolatile ? '1.5' : '1'));
+        cardBg.setAttribute('filter', 'url(#cardShadow)');
+        cardG.appendChild(cardBg);
+
+        // Stage Title inside card
+        const titleText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        titleText.setAttribute('x', config.card.x + 10);
+        titleText.setAttribute('y', config.card.y + 20);
+        titleText.setAttribute('fill', isDark ? '#94a3b8' : '#475569');
+        titleText.setAttribute('font-size', '13');
+        titleText.setAttribute('font-weight', '700');
+        titleText.textContent = sInfo.name;
+        cardG.appendChild(titleText);
+
+        // If there's new entrant, draw new badge
+        if (hasNew) {
+          const badgeBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          badgeBg.setAttribute('x', config.card.x + config.card.width - 48);
+          badgeBg.setAttribute('y', config.card.y + 8);
+          badgeBg.setAttribute('width', '40');
+          badgeBg.setAttribute('height', '16');
+          badgeBg.setAttribute('rx', '4');
+          badgeBg.setAttribute('fill', '#eab308');
+          cardG.appendChild(badgeBg);
+
+          const badgeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          badgeText.setAttribute('x', config.card.x + config.card.width - 28);
+          badgeText.setAttribute('y', config.card.y + 20);
+          badgeText.setAttribute('fill', '#0f172a');
+          badgeText.setAttribute('font-size', '10');
+          badgeText.setAttribute('font-weight', '800');
+          badgeText.setAttribute('text-anchor', 'middle');
+          badgeText.textContent = `新進 ${sInfo.new_count}`;
+          cardG.appendChild(badgeText);
+        } else if (hasVolatile) {
+          // Subtle flame indicator on card if has >5% moves
+          const volInd = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          volInd.setAttribute('x', config.card.x + config.card.width - 12);
+          volInd.setAttribute('y', config.card.y + 20);
+          volInd.setAttribute('font-size', '11');
+          volInd.setAttribute('text-anchor', 'end');
+          volInd.textContent = `⚡${sInfo.volatile_cbs.length}`;
+          volInd.setAttribute('fill', '#f59e0b');
+          volInd.setAttribute('font-weight', 'bold');
+          cardG.appendChild(volInd);
+        }
+
+        // Count Text (e.g. 183 檔 >)
+        const countText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        countText.setAttribute('x', config.card.x + 10);
+        countText.setAttribute('y', config.card.y + (hasNew ? 44 : 40));
+        countText.setAttribute('fill', isDark ? '#60a5fa' : '#2563eb');
+        countText.setAttribute('font-size', '16');
+        countText.setAttribute('font-weight', '800');
+        countText.textContent = `${sInfo.count} 檔 ❯`;
+        cardG.appendChild(countText);
+
+        group.appendChild(cardG);
+        g.appendChild(group);
+      });
+    }
+
+    /* Popover Hover Logic (With Mouse Hover Bridge Support) */
+    const popover = document.getElementById('hoverPopover');
+    const chartPanel = document.getElementById('chartPanel');
+
+    // When mouse is inside popover, cancel hide timer so user can comfortably scroll
+    popover.addEventListener('mouseenter', () => {
+      if (popoverHideTimer) {
+        clearTimeout(popoverHideTimer);
+        popoverHideTimer = null;
+      }
+    });
+    popover.addEventListener('mouseleave', () => {
+      scheduleHidePopover();
+    });
+
+    function formatPrice(val) {
+      if (val === null || val === undefined || isNaN(val)) return '—';
+      return parseFloat(Number(val).toFixed(2)).toString();
+    }
+
+    function showPopover(stageCode) {
+      if (popoverHideTimer) {
+        clearTimeout(popoverHideTimer);
+        popoverHideTimer = null;
+      }
+      if (!cycleData || !cycleData.stages) return;
+      const sInfo = cycleData.stages[stageCode];
+      if (!sInfo) return;
+
+      const titleEl = document.getElementById('popoverTitle');
+      const badgeEl = document.getElementById('popoverBadge');
+      const listEl = document.getElementById('popoverList');
+
+      const vList = sInfo.volatile_cbs || [];
+      titleEl.textContent = `【${sInfo.name}】漲跌幅 5% 以上標的`;
+      badgeEl.textContent = `${vList.length} 檔`;
+
+      if (vList.length === 0) {
+        listEl.innerHTML = `<div class="popover-empty">今日此階段無漲跌幅達 ±5% 之可轉債</div>`;
+      } else {
+        listEl.innerHTML = vList.map(item => {
+          const isUp = (item.cb_change_pct > 0);
+          const colorClass = isUp ? 'num-up' : 'num-down';
+          // 漲5%顯示紅字，-5%顯示綠字
+          let linkClass = 'cb-link';
+          if (item.cb_change_pct !== null && Math.abs(item.cb_change_pct) >= 5.0) {
+            linkClass = isUp ? 'cb-link cb-link-up' : 'cb-link cb-link-down';
+          }
+          const sign = isUp ? '+' : '';
+
+          const convValStr = (item.conversion_value !== null && item.conversion_value !== undefined) 
+            ? item.conversion_value.toFixed(1) 
+            : '—';
+          const premRateStr = (item.premium_rate !== null && item.premium_rate !== undefined) 
+            ? item.premium_rate.toFixed(1) + '%' 
+            : '—';
+          const volStr = (item.cb_volume !== null && item.cb_volume !== undefined) 
+            ? item.cb_volume.toLocaleString() + '張' 
+            : '0張';
+
+          return `
+            <div class="popover-item">
+              <div class="popover-item-top">
+                <a href="cb-detail.html?code=${encodeURIComponent(item.cb_code)}" class="${linkClass}" title="開啟 CB 詳細頁（原頁開啟）">
+                  ${item.cb_name}
+                </a>
+                <span class="popover-item-val ${colorClass}">
+                  ${item.cb_close !== null ? formatPrice(item.cb_close) : '—'} 
+                  <span style="font-size: 0.78rem;">(${sign}${item.cb_change_pct.toFixed(2)}%)</span>
+                </span>
+              </div>
+              <div class="popover-item-sub">
+                <span>價值: ${convValStr}</span>
+                <span>溢價: ${premRateStr}</span>
+                <span>量: ${volStr}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // 先顯示以取得正確的高寬
+      popover.classList.add('active');
+
+      // 嚴格將清單顯示在卡片方框以上或以下，絕不遮擋方框（支援手機觸控與桌機點選）
+      const nodeEl = document.getElementById(`node-${stageCode}`);
+      if (nodeEl) {
+        const nodeRect = nodeEl.getBoundingClientRect();
+        const panelRect = chartPanel.getBoundingClientRect();
+        const popWidth = popover.offsetWidth || 330;
+        const popHeight = popover.offsetHeight || 220;
+
+        // 水平置中於方框，並確保不超出左右邊界
+        const nodeCenterX = nodeRect.left + nodeRect.width / 2;
+        let left = nodeCenterX - panelRect.left - popWidth / 2;
+        if (left < 10) left = 10;
+        if (left + popWidth > panelRect.width - 10) {
+          left = panelRect.width - popWidth - 10;
+        }
+
+        // 垂直定位：【核心非重疊原則】
+        // 只有在上方空間充裕 (spaceAbove >= popHeight + 15) 時才放上方；
+        // 初跌段 (EARLY_BEAR) 與其他上方空間不足的階段，一律置於「方框以下」(top = nodeRect.bottom - panelRect.top + 12)
+        // 如此一來，清單頂端永遠在方框底端 12px 之下，在手機小螢幕上完全不可能遮擋到「初跌」方框！
+        const spaceAbove = nodeRect.top - panelRect.top;
+        let top;
+        if (stageCode !== 'EARLY_BEAR' && stageCode !== 'TOPPING' && stageCode !== 'MAIN_BULL' && spaceAbove >= popHeight + 15) {
+          top = nodeRect.top - panelRect.top - popHeight - 12;
+        } else {
+          top = nodeRect.bottom - panelRect.top + 12;
+        }
+
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
+      }
+    }
+
+    function scheduleHidePopover() {
+      if (popoverHideTimer) clearTimeout(popoverHideTimer);
+      // 600ms grace period for mouse movement into popover or scrollbar
+      popoverHideTimer = setTimeout(() => {
+        popover.classList.remove('active');
+      }, 600);
+    }
+
+    function hidePopoverImmediately() {
+      if (popoverHideTimer) clearTimeout(popoverHideTimer);
+      popoverHideTimer = null;
+      popover.classList.remove('active');
+    }
+
+    function selectStage(stageCode) {
+      hidePopoverImmediately();
+      currentStage = stageCode;
+      sessionStorage.setItem('stock_cycle_selected_stage', stageCode);
+      history.replaceState(null, '', `#${stageCode}`);
+
+      renderSvgNodes();
+
+      const sInfo = cycleData.stages[stageCode] || { name: stageCode, count: 0, new_count: 0, cbs: [], action: '' };
+      
+      const badge = document.getElementById('stageBadge');
+      badge.textContent = sInfo.side || '階段';
+      badge.className = `tag-bubble ${sInfo.side === '多頭' ? 'tag-bull' : 'tag-bear'}`;
+
+      document.getElementById('stageName').textContent = `【${sInfo.name}】階段可轉債`;
+      document.getElementById('stageCountInfo').textContent = `（共 ${sInfo.count} 檔${sInfo.new_count > 0 ? `，含今日新進 ${sInfo.new_count} 檔` : ''}）`;
+      
+      document.getElementById('stageActionBox').innerHTML = `操作建議：<strong>${sInfo.action || '觀望'}</strong> ｜ ${sInfo.description || ''}`;
+
+      renderTable();
+    }
+
+    function renderTable() {
+      if (!cycleData) return;
+      const sInfo = cycleData.stages[currentStage];
+      if (!sInfo || !sInfo.cbs) {
+        document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">查無此階段資料</td></tr>`;
+        return;
+      }
+
+      // Update sort indicators on headers
+      document.querySelectorAll('.sort-indicator').forEach(el => el.textContent = '');
+      const activeSortIndicator = document.getElementById(`sort-${sortField}`);
+      if (activeSortIndicator) {
+        activeSortIndicator.textContent = sortAsc ? '▲' : '▼';
+      }
+
+      let list = [...sInfo.cbs];
+
+      // Filter by search query (CB 名稱 / 母股名稱)
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        list = list.filter(item => 
+          item.cb_name.toLowerCase().includes(q) ||
+          item.cb_code.toLowerCase().includes(q) ||
+          item.stock_name.toLowerCase().includes(q) ||
+          item.stock_code.toLowerCase().includes(q)
+        );
+      }
+
+      // Sort
+      list.sort((a, b) => {
+        let va = a[sortField];
+        let vb = b[sortField];
+        if (va === null || va === undefined) return 1;
+        if (vb === null || vb === undefined) return -1;
+        if (typeof va === 'string') {
+          return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+        return sortAsc ? (va - vb) : (vb - va);
+      });
+
+      if (list.length === 0) {
+        document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">無符合條件之可轉債</td></tr>`;
+        return;
+      }
+
+      const rows = list.map(item => {
+        const premiumClass = (item.premium_rate !== null) 
+          ? (item.premium_rate > 0 ? 'num-up' : 'num-down') 
+          : 'num-neutral';
+        const newBadge = item.is_new_entrant ? `<span class="new-badge">新進</span>` : '';
+
+        // Format CB price change & close price color
+        let chgHtml = `<span class="num-neutral">—</span>`;
+        let cbPriceClass = 'num-neutral';
+        if (item.cb_change !== null && item.cb_change_pct !== null) {
+          if (item.cb_change > 0) {
+            chgHtml = `<span class="num-up">▲ +${item.cb_change.toFixed(2)} (+${item.cb_change_pct.toFixed(2)}%)</span>`;
+            cbPriceClass = 'num-up';
+          } else if (item.cb_change < 0) {
+            chgHtml = `<span class="num-down">▼ ${item.cb_change.toFixed(2)} (${item.cb_change_pct.toFixed(2)}%)</span>`;
+            cbPriceClass = 'num-down';
+          } else {
+            chgHtml = `<span class="num-neutral">0.00 (0.00%)</span>`;
+            cbPriceClass = 'num-neutral';
+          }
+        }
+
+        // 漲5%CB名稱顯示紅字，-5%顯示綠色（移除名稱旁+5%/-5%標籤）
+        let linkClass = 'cb-link';
+        if (item.cb_change_pct !== null && Math.abs(item.cb_change_pct) >= 5.0) {
+          if (item.cb_change_pct > 0) {
+            linkClass = 'cb-link cb-link-up'; // 紅字
+          } else {
+            linkClass = 'cb-link cb-link-down'; // 綠字
+          }
+        }
+
+        // Yahoo Finance Technical Analysis URL for Mother Stock
+        const yahooTechUrl = `https://tw.stock.yahoo.com/quote/${item.stock_code}.TWO/technical-analysis`;
+
+        // CB Detail URL (Open in same window so back button returns here)
+        const cbDetailUrl = `cb-detail.html?code=${encodeURIComponent(item.cb_code)}`;
+
+        return `
+          <tr>
+            <td>
+              <a href="${cbDetailUrl}" class="${linkClass}" title="點擊前往 CB 詳細頁（原頁開啟）">
+                ${item.cb_name}
+              </a>
+              ${newBadge}
+            </td>
+            <td class="${cbPriceClass}" style="font-weight: 700;">${formatPrice(item.cb_close)}</td>
+            <td>${chgHtml}</td>
+            <td>${item.cb_volume ? item.cb_volume.toLocaleString() : '0'} 張</td>
+            <td>${item.conversion_price !== null ? item.conversion_price.toFixed(2) : '—'}</td>
+            <td class="${premiumClass}">${item.premium_rate !== null ? item.premium_rate.toFixed(2) + '%' : '—'}</td>
+            <td>
+              <a href="${yahooTechUrl}" target="_blank" rel="noopener noreferrer" class="stock-link" title="點擊開新頁開啟 ${item.stock_name} Yahoo 技術線圖">
+                ${item.stock_name} <span style="font-size: 0.72rem; opacity: 0.85;">↗</span>
+              </a>
+            </td>
+            <td style="font-weight: 700;">${formatPrice(item.stock_close)}</td>
+            <td style="color: var(--text-muted);">${item.ma43 !== null ? item.ma43.toFixed(2) : '—'}</td>
+            <td style="color: var(--text-muted);">${item.ma87 !== null ? item.ma87.toFixed(2) : '—'}</td>
+            <td style="color: var(--text-muted);">${item.ma284 !== null ? item.ma284.toFixed(2) : '—'}</td>
+            <td style="color: var(--text-main); font-weight: 600;">${item.consecutive_days || 1} 天</td>
+          </tr>
+        `;
+      }).join('');
+
+      document.getElementById('tableBody').innerHTML = rows;
+    }
+
+    function sortTable(field) {
+      if (sortField === field) {
+        sortAsc = !sortAsc;
+      } else {
+        sortField = field;
+        sortAsc = false;
+      }
+      renderTable();
+    }
+
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      renderTable();
+    });
+
+    // Dismiss popover when clicking/tapping outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#hoverPopover') && !e.target.closest('.stage-node-btn')) {
+        hidePopoverImmediately();
+      }
+    });
+    document.addEventListener('touchstart', (e) => {
+      if (!e.target.closest('#hoverPopover') && !e.target.closest('.stage-node-btn')) {
+        hidePopoverImmediately();
+      }
+    }, { passive: true });
+
+    window.addEventListener('DOMContentLoaded', loadData);
+  </script>
+</body>
+</html>
