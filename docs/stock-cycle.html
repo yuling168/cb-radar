@@ -344,9 +344,25 @@
     .panel-action-box {
       font-size: 0.95rem;
       color: var(--text-muted);
+      line-height: 1.6;
     }
-    .panel-action-box strong {
-      color: var(--accent-text);
+    .panel-action-box strong.action-highlight {
+      font-size: 1.2rem;
+      font-weight: 800;
+      color: var(--wave-blue);
+      background: rgba(37, 99, 235, 0.08);
+      border: 1px solid rgba(37, 99, 235, 0.25);
+      padding: 2px 10px;
+      border-radius: 6px;
+      margin: 0 4px;
+      display: inline-block;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+    [data-theme="dark"] .panel-action-box strong.action-highlight {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.3);
     }
     .filter-bar {
       display: flex;
@@ -1030,10 +1046,10 @@
       badge.textContent = sInfo.side || '階段';
       badge.className = `tag-bubble ${sInfo.side === '多頭' ? 'tag-bull' : 'tag-bear'}`;
 
-      document.getElementById('stageName').textContent = `【${sInfo.name}】階段可轉債`;
+      document.getElementById('stageName').textContent = `【${sInfo.name}】`;
       document.getElementById('stageCountInfo').textContent = `（共 ${sInfo.count} 檔${sInfo.new_count > 0 ? `，含今日新進 ${sInfo.new_count} 檔` : ''}）`;
       
-      document.getElementById('stageActionBox').innerHTML = `操作建議：<strong>${sInfo.action || '觀望'}</strong> ｜ ${sInfo.description || ''}`;
+      document.getElementById('stageActionBox').innerHTML = `操作建議：<strong class="action-highlight">${sInfo.action || '觀望'}</strong> ｜ ${sInfo.description || ''}`;
 
       renderTable();
     }
