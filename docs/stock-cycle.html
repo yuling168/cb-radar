@@ -177,9 +177,14 @@
       filter: brightness(1.2);
     }
     .stage-node-btn.selected rect.card-bg {
+      stroke: var(--wave-blue);
+      stroke-width: 3px;
+      filter: drop-shadow(0 0 12px rgba(37, 99, 235, 0.45));
+    }
+    [data-theme="dark"] .stage-node-btn.selected rect.card-bg {
       stroke: #38bdf8;
-      stroke-width: 2px;
-      filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.5));
+      stroke-width: 3px;
+      filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.6));
     }
 
     /* Floating Hover Popover for High Volatility CBs (>= 5%) */
@@ -806,13 +811,19 @@
 
         const isDark = (document.documentElement.getAttribute('data-theme') === 'dark');
 
+        const isBull = (sInfo.side === '多頭') || ['EARLY_BULL', 'MAIN_BULL', 'TOPPING'].includes(stageCode);
+        const stageColor = isBull 
+          ? (isDark ? '#f87171' : '#dc2626') 
+          : (isDark ? '#4ade80' : '#16a34a');
+
         // Connecting subtle line from card to point
         const connLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
         connLine.setAttribute('x1', config.point.x);
         connLine.setAttribute('y1', config.point.y);
         connLine.setAttribute('x2', config.card.x + config.card.width / 2);
         connLine.setAttribute('y2', config.card.y + config.card.height / 2);
-        connLine.setAttribute('stroke', isDark ? '#475569' : '#cbd5e1');
+        connLine.setAttribute('stroke', stageColor);
+        connLine.setAttribute('stroke-opacity', isDark ? '0.6' : '0.45');
         connLine.setAttribute('stroke-dasharray', '2 2');
         connLine.setAttribute('stroke-width', '1.5');
         group.appendChild(connLine);
@@ -838,20 +849,19 @@
         cardBg.setAttribute('height', config.card.height);
         cardBg.setAttribute('rx', '8');
         cardBg.setAttribute('fill', isDark ? '#1e293b' : '#ffffff');
-        const defaultBorder = isDark ? '#334155' : '#cbd5e1';
+        // 框線顏色：未選取的方框依多空套用對應紅/綠色邊框，選取中的方框則用高亮深藍/天藍並加粗外框
+        const unselectedBorder = stageColor;
         const activeBorder = isDark ? '#38bdf8' : '#2563eb';
-        cardBg.setAttribute('stroke', isSelected ? activeBorder : defaultBorder);
-        cardBg.setAttribute('stroke-width', isSelected ? '2.5' : '1.2');
+        cardBg.setAttribute('stroke', isSelected ? activeBorder : unselectedBorder);
+        cardBg.setAttribute('stroke-width', isSelected ? '3' : '2');
         cardBg.setAttribute('filter', 'url(#cardShadow)');
         cardG.appendChild(cardBg);
 
         // Stage Title inside card (字體放大二倍加粗，多頭用紅色，空頭用綠色)
-        const isBull = (sInfo.side === '多頭') || ['EARLY_BULL', 'MAIN_BULL', 'TOPPING'].includes(stageCode);
-        const titleColor = isBull ? (isDark ? '#f87171' : '#dc2626') : (isDark ? '#4ade80' : '#16a34a');
         const titleText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         titleText.setAttribute('x', config.card.x + 10);
         titleText.setAttribute('y', config.card.y + 30);
-        titleText.setAttribute('fill', titleColor);
+        titleText.setAttribute('fill', stageColor);
         titleText.style.fill = isBull ? 'var(--up-red)' : 'var(--down-green)';
         titleText.setAttribute('font-size', '24');
         titleText.setAttribute('font-weight', '900');
