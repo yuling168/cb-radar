@@ -107,7 +107,7 @@ def test_workflow_runs_strategies_after_parent_stock_collection_before_dashboard
     assert "python strategy_b.py" in workflow
     assert "python strategy_c.py" in workflow
     assert "python strategy_g.py" in workflow
-    assert workflow.count("continue-on-error: true") == 3
+    assert workflow.count("continue-on-error: true") == 4
     master_section = workflow[workflow.index("- name: Run CB master collector"):workflow.index("- name: Refresh strict daily CB parent mapping")]
     a_section = workflow[workflow.index("- name: Run published Strategy A-v2 date"):workflow.index("- name: Run strategy B-v1")]
     assert "continue-on-error" not in master_section

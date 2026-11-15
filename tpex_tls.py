@@ -150,6 +150,10 @@ def _verify_intermediate_chain(
 ) -> None:
     openssl = shutil.which("openssl")
     if not openssl:
+        git_openssl = Path("C:/Program Files/Git/usr/bin/openssl.exe")
+        if git_openssl.exists():
+            openssl = str(git_openssl)
+    if not openssl:
         raise TpexCABootstrapError("OpenSSL is required to verify the TWCA intermediate chain")
     result = runner(
         [openssl, "verify", "-CAfile", str(certifi_bundle), str(intermediate_path)],

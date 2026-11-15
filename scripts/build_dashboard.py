@@ -702,8 +702,143 @@ def _file_metadata(path: Path, root: Path, rows: list[dict[str, object]]) -> dic
     }
 
 
-CB_SERIES_COLUMNS = ("trade_date", "reference_price", "close_price", "volume_lots",
-                     "conversion_value", "premium_rate", "p_close_price", "balance_ratio", "balance_units")
+CB_SERIES_COLUMNS = (
+    "trade_date",
+    "reference_price",
+    "close_price",
+    "volume_lots",
+    "conversion_value",
+    "premium_rate",
+    "p_close_price",
+    "balance_ratio",
+    "balance_units",
+    "p_open_price",
+    "p_high_price",
+    "p_low_price",
+    "p_volume_lots",
+    "ma43",
+    "ma87",
+    "ma284",
+    "foreign_net_lots",
+    "trust_net_lots",
+    "short_diff",
+    "short_balance",
+    "borrow_diff",
+    "borrow_balance",
+    "monthly_revenue",
+    "revenue_yoy",
+)
+
+
+def _calc_mas_for_series(stock_code: str, dates: list[str], closes: list[float | None], ma_map: dict):
+    n = len(closes)
+    for period, key in ((43, "ma43"), (87, "ma87"), (284, "ma284")):
+        rolling_sum = 0.0
+        valid_cnt = 0
+        for i in range(n):
+            val = closes[i]
+            if val is not None:
+                rolling_sum += val
+                valid_cnt += 1
+            if i >= period:
+                old_val = closes[i - period]
+                if old_val is not None:
+                    rolling_sum -= old_val
+                    valid_cnt -= 1
+            avg = round(rolling_sum / period, 2) if (i >= period - 1 and valid_cnt == period) else None
+            date_key = (str(stock_code), str(dates[i]))
+            if date_key not in ma_map:
+                ma_map[date_key] = {}
+            ma_map[date_key][key] = avg
+
+
+def _load_mother_stock_indicators(db_path: Path | None = None) -> dict[str, dict]:
+    """Preload institutional, margin, revenue, OHLC, and moving average metrics."""
+    target_path = db_path or DB_PATH
+    if not target_path.is_file():
+        return {"inst": {}, "margin": {}, "rev": {}, "ma": {}, "ohlc": {}, "cb_to_stock": {}}
+
+    with sqlite3.connect(f"file:{target_path.as_posix()}?mode=ro", uri=True) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+        cb_to_stock = {}
+        if "cb_master" in tables:
+            for r in connection.execute("SELECT cb_code, stock_code FROM cb_master"):
+                cb_to_stock[str(r[0])] = str(r[1])
+
+        inst_map = {}
+        if "institutional_daily" in tables:
+            for r in connection.execute("SELECT stock_code, trade_date, foreign_net_shares, trust_net_shares FROM institutional_daily"):
+                fn = round(r[2] / 1000) if r[2] is not None else None
+                tn = round(r[3] / 1000) if r[3] is not None else None
+                inst_map[(str(r[0]), str(r[1]))] = (fn, tn)
+
+        margin_map = {}
+        if "stock_margin_daily" in tables:
+            for r in connection.execute("SELECT stock_code, trade_date, short_buy, short_sell, short_cash_repay, short_balance FROM stock_margin_daily"):
+                s_buy = r[2] or 0
+                s_sell = r[3] or 0
+                s_repay = r[4] or 0
+                diff = s_sell - s_buy - s_repay if (r[2] is not None or r[3] is not None) else None
+                margin_map[(str(r[0]), str(r[1]))] = (diff, r[5])
+
+        rev_map = {}
+        if "stock_monthly_revenue" in tables:
+            for r in connection.execute("SELECT stock_code, year_month, revenue_curr_month, yoy_growth_pct FROM stock_monthly_revenue"):
+                rev_val = round(r[2] / 1000.0, 2) if r[2] is not None else None
+                rev_map[(str(r[0]), str(r[1]))] = (rev_val, r[3])
+
+        ohlc_map = {}
+        ma_map = {}
+        if "stock_daily_market" in tables:
+            stock_cols = {row[1] for row in connection.execute("PRAGMA table_info(stock_daily_market)")}
+            has_ohl = {"p_open_price", "p_high_price", "p_low_price"} <= stock_cols
+            if has_ohl:
+                stock_cursor = connection.execute(
+                    "SELECT p_stock_code, trade_date, p_open_price, p_high_price, p_low_price, p_close_price FROM stock_daily_market ORDER BY p_stock_code, trade_date"
+                )
+                cur_stock = None
+                closes = []
+                dates = []
+                for s_code, t_date, o, h, l, c in stock_cursor:
+                    ohlc_map[(str(s_code), str(t_date))] = (o, h, l)
+                    if s_code != cur_stock:
+                        if cur_stock is not None and closes:
+                            _calc_mas_for_series(cur_stock, dates, closes, ma_map)
+                        cur_stock = s_code
+                        closes = []
+                        dates = []
+                    closes.append(c)
+                    dates.append(t_date)
+                if cur_stock is not None and closes:
+                    _calc_mas_for_series(cur_stock, dates, closes, ma_map)
+            else:
+                stock_cursor = connection.execute(
+                    "SELECT p_stock_code, trade_date, p_close_price FROM stock_daily_market ORDER BY p_stock_code, trade_date"
+                )
+                cur_stock = None
+                closes = []
+                dates = []
+                for s_code, t_date, c in stock_cursor:
+                    if s_code != cur_stock:
+                        if cur_stock is not None and closes:
+                            _calc_mas_for_series(cur_stock, dates, closes, ma_map)
+                        cur_stock = s_code
+                        closes = []
+                        dates = []
+                    closes.append(c)
+                    dates.append(t_date)
+                if cur_stock is not None and closes:
+                    _calc_mas_for_series(cur_stock, dates, closes, ma_map)
+
+        return {
+            "inst": inst_map,
+            "margin": margin_map,
+            "rev": rev_map,
+            "ma": ma_map,
+            "ohlc": ohlc_map,
+            "cb_to_stock": cb_to_stock,
+        }
 
 
 def _monthly_balance_ratios() -> dict[tuple[str, str], tuple[float | None, int | None]]:
@@ -730,6 +865,7 @@ def _monthly_balance_ratios() -> dict[tuple[str, str], tuple[float | None, int |
 def _cb_series_groups(
     rows: list[dict[str, object]],
     monthly_ratios: dict[tuple[str, str], tuple[float | None, int | None]] | None = None,
+    mother_indicators: dict[str, dict] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Group published market rows into one compact, date-ordered series per CB.
 
@@ -737,6 +873,7 @@ def _cb_series_groups(
     can be visualized cleanly across months without artificial drop-to-zero spikes.
     """
     monthly_ratios = monthly_ratios or {}
+    mother_indicators = mother_indicators or {"inst": {}, "margin": {}, "rev": {}, "ma": {}, "ohlc": {}, "cb_to_stock": {}}
     ratio_idx = CB_SERIES_COLUMNS.index("balance_ratio")
     units_idx = CB_SERIES_COLUMNS.index("balance_units")
     groups: dict[str, dict[str, object]] = {}
@@ -753,12 +890,47 @@ def _cb_series_groups(
         entry = groups.setdefault(code, {"cb_name": cb_rows[-1].get("cb_name"), "rows": []})
         entry["cb_name"] = cb_rows[-1].get("cb_name")
         
-        last_ratio = None
-        last_units = None
+        initial_units = cb_rows[0].get("issue_units")
+        last_units = initial_units
+        last_ratio = 100.0 if initial_units is not None else None
         
         for row in cb_rows:
-            month = str(row["trade_date"])[:7]
-            values = [row.get(column) for column in CB_SERIES_COLUMNS]
+            trade_date = str(row["trade_date"])
+            month = trade_date[:7]
+            stock_code = mother_indicators.get("cb_to_stock", {}).get(code, code[:4])
+            
+            val_map = dict(row)
+            
+            # Enrich with mother stock indicators without mutating original row
+            inst = mother_indicators["inst"].get((stock_code, trade_date))
+            val_map["foreign_net_lots"] = inst[0] if inst else None
+            val_map["trust_net_lots"] = inst[1] if inst else None
+            
+            margin = mother_indicators["margin"].get((stock_code, trade_date))
+            val_map["short_diff"] = margin[0] if margin else None
+            val_map["short_balance"] = margin[1] if margin else None
+            
+            rev = mother_indicators["rev"].get((stock_code, month))
+            val_map["monthly_revenue"] = rev[0] if rev else None
+            val_map["revenue_yoy"] = rev[1] if rev else None
+            
+            ma = mother_indicators["ma"].get((stock_code, trade_date))
+            val_map["ma43"] = ma.get("ma43") if ma else None
+            val_map["ma87"] = ma.get("ma87") if ma else None
+            val_map["ma284"] = ma.get("ma284") if ma else None
+            
+            ohlc = mother_indicators.get("ohlc", {}).get((stock_code, trade_date))
+            if ohlc:
+                val_map["p_open_price"] = ohlc[0]
+                val_map["p_high_price"] = ohlc[1]
+                val_map["p_low_price"] = ohlc[2]
+            else:
+                val_map["p_open_price"] = None
+                val_map["p_high_price"] = None
+                val_map["p_low_price"] = None
+
+            val_map["borrow_diff"] = None
+            val_map["borrow_balance"] = None
             
             # Check official monthly info
             m_info = monthly_ratios.get((code, month))
@@ -778,8 +950,9 @@ def _cb_series_groups(
                 last_ratio = row.get("balance_ratio")
                 last_units = row.get("balance_units")
                 
-            values[ratio_idx] = last_ratio
-            values[units_idx] = last_units
+            val_map["balance_ratio"] = last_ratio
+            val_map["balance_units"] = last_units
+            values = [val_map.get(column) for column in CB_SERIES_COLUMNS]
             entry["rows"].append(values)
             
     return groups
@@ -811,7 +984,15 @@ def build_dashboard_shards() -> tuple[int, int]:
         staging = Path(directory) / "v2"
         market_manifest = {}
         institutional_manifest = {}
+        monthly_ratios = _monthly_balance_ratios()
+        mother_indicators = _load_mother_stock_indicators()
         for month, rows in sorted(record_groups.items()):
+            for row in rows:
+                code = str(row.get("cb_code"))
+                m_info = monthly_ratios.get((code, month))
+                if m_info and m_info[1] is not None:
+                    row["balance_ratio"] = m_info[0]
+                    row["balance_units"] = m_info[1]
             path = staging / "market" / f"{month}.json"
             _write_json(path, {"schema_version": SHARD_SCHEMA_VERSION, "month": month, "records": rows})
             market_manifest[month] = _file_metadata(path, staging, rows)
@@ -819,7 +1000,7 @@ def build_dashboard_shards() -> tuple[int, int]:
             path = staging / "institutional" / f"{month}.json"
             _write_json(path, {"schema_version": SHARD_SCHEMA_VERSION, "month": month, "institutional_records": rows})
             institutional_manifest[month] = _file_metadata(path, staging, rows)
-        for cb_code, series in _cb_series_groups(records, _monthly_balance_ratios()).items():
+        for cb_code, series in _cb_series_groups(records, monthly_ratios, mother_indicators).items():
             _write_json(staging / "cb" / f"{cb_code}.json", {
                 "schema_version": SHARD_SCHEMA_VERSION, "cb_code": cb_code, "cb_name": series["cb_name"],
                 "columns": list(CB_SERIES_COLUMNS), "rows": series["rows"],

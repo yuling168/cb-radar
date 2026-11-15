@@ -16,3 +16,4 @@ __pycache__/
 .latest-snapshot/
 exports/
 .snapshot-download/
+.vscode/

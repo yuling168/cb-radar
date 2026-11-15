@@ -657,7 +657,7 @@ def _fallback_mops_url(master: dict[str, object], year_month: str) -> str:
         "issuer_stock_code": str(master["stock_code"]),
         "bond_kind": "5",
         "bond_yrn": str(master["series_number"]),
-        "bond_subn": f"$M{int(master['series_number']):08d}",
+        "bond_subn": str(master.get("bond_subn") or "$M00000001"),
         "monyr_reg": year_month.replace("-", ""),
         "step": "0",
         "firstin": "ture",

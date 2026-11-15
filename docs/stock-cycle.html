@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>母股循環階段（神奇均線 43MA / 87MA / 284MA）— CB Radar</title>
   <link rel="stylesheet" href="site-shell.css">
+  <script src="site-theme.js"></script>
   <style>
     :root {
       /* 預設淺色底（與首頁等其他頁面保持完全一致的紙質綠底風格） */
@@ -375,19 +376,46 @@
       gap: 12px;
       align-items: center;
     }
+    .search-box-wrapper {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
     .search-input {
       background: var(--search-bg);
       border: 1px solid var(--search-border);
       color: var(--search-text);
-      padding: 8px 14px;
+      padding: 8px 32px 8px 14px;
       border-radius: 8px;
       font-size: 0.9rem;
       outline: none;
-      min-width: 260px;
-      transition: border-color 0.15s;
+      min-width: 280px;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     .search-input:focus {
       border-color: var(--wave-blue);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    .search-clear-btn {
+      position: absolute;
+      right: 8px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 2px 6px;
+      border-radius: 50%;
+      line-height: 1;
+      display: none;
+      transition: all 0.15s;
+    }
+    .search-clear-btn:hover {
+      color: var(--text-main);
+      background: rgba(0, 0, 0, 0.08);
+    }
+    [data-theme="dark"] .search-clear-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
     }
 
     /* Data Table */
@@ -512,6 +540,60 @@
       font-size: 0.8rem;
       font-weight: 600;
     }
+    /* Stage Pill on Table Rows (Shown in Search Mode) */
+    .stage-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      margin-left: 6px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .stage-pill-bear {
+      background: rgba(234, 88, 12, 0.12);
+      color: #c2410c;
+      border: 1px solid rgba(234, 88, 12, 0.35);
+    }
+    .stage-pill-bear:hover {
+      background: rgba(234, 88, 12, 0.22);
+      border-color: #c2410c;
+    }
+    .stage-pill-bull {
+      background: rgba(37, 99, 235, 0.12);
+      color: #1d4ed8;
+      border: 1px solid rgba(37, 99, 235, 0.35);
+    }
+    .stage-pill-bull:hover {
+      background: rgba(37, 99, 235, 0.22);
+      border-color: #1d4ed8;
+    }
+    .stage-pill-other {
+      background: rgba(100, 116, 139, 0.12);
+      color: #475569;
+      border: 1px solid rgba(100, 116, 139, 0.35);
+    }
+    [data-theme="dark"] .stage-pill-bear {
+      background: rgba(249, 115, 22, 0.2);
+      color: #fb923c;
+      border-color: rgba(249, 115, 22, 0.45);
+    }
+    [data-theme="dark"] .stage-pill-bull {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border-color: rgba(59, 130, 246, 0.45);
+    }
+    [data-theme="dark"] .stage-pill-other {
+      background: rgba(148, 163, 184, 0.2);
+      color: #cbd5e1;
+      border-color: rgba(148, 163, 184, 0.4);
+    }
     .sort-indicator {
       font-size: 0.75rem;
       margin-left: 4px;
@@ -631,7 +713,10 @@
           <div class="panel-action-box" id="stageActionBox"></div>
         </div>
         <div class="filter-bar">
-          <input type="text" id="searchInput" class="search-input" placeholder="搜尋 CB 名稱 / 母股名稱...">
+          <div class="search-box-wrapper">
+            <input type="text" id="searchInput" class="search-input" placeholder="搜尋 CB 名稱 / 母股名稱 (全階段)...">
+            <button type="button" id="searchClearBtn" class="search-clear-btn" onclick="clearSearch()" title="清除搜尋">✕</button>
+          </div>
         </div>
       </div>
 
@@ -672,29 +757,10 @@
     let searchQuery = '';
     let popoverHideTimer = null;
 
-    // Theme Management (預設淺色底與全站其他頁面一致，支援右上角一鍵切換深色/淺色)
-    function initTheme() {
-      const saved = localStorage.getItem('stock_cycle_theme') || 'light';
-      setTheme(saved);
-    }
-
-    function toggleTheme() {
-      const current = document.documentElement.getAttribute('data-theme') || 'light';
-      const next = (current === 'dark') ? 'light' : 'dark';
-      setTheme(next);
-    }
-
-    function setTheme(theme) {
-      document.documentElement.setAttribute('data-theme', theme);
-      localStorage.setItem('stock_cycle_theme', theme);
-      const btn = document.getElementById('themeToggleBtn');
-      if (btn) {
-        btn.innerHTML = (theme === 'dark') ? '☀️ 淺色模式' : '🌙 深色模式';
-      }
-      if (cycleData) renderSvgNodes();
-    }
-
-    initTheme();
+    // Theme Management: listen to site-theme.js event for SVG node updates
+    window.addEventListener('themechange', () => {
+      if (typeof cycleData !== 'undefined' && cycleData) renderSvgNodes();
+    });
 
     // Node layout positions on the SVG curve (x, y coordinate for point & card)
     const NODE_COORDS = {
@@ -1048,34 +1114,114 @@
       popover.classList.remove('active');
     }
 
+    function getAllCbs() {
+      if (!cycleData || !cycleData.stages) return [];
+      const all = [];
+      const seen = new Set();
+      const order = cycleData.display_order || Object.keys(cycleData.stages);
+      const allStageKeys = Array.from(new Set([...order, ...Object.keys(cycleData.stages)]));
+      allStageKeys.forEach(sKey => {
+        const sObj = cycleData.stages[sKey];
+        if (sObj && Array.isArray(sObj.cbs)) {
+          sObj.cbs.forEach(cb => {
+            if (!seen.has(cb.cb_code)) {
+              seen.add(cb.cb_code);
+              all.push({
+                ...cb,
+                stage_code: cb.stage || sKey,
+                stage_name: sObj.name || cb.stage || sKey,
+                stage_side: sObj.side || ''
+              });
+            }
+          });
+        }
+      });
+      return all;
+    }
+
+    function clearSearch() {
+      const input = document.getElementById('searchInput');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+      searchQuery = '';
+      const clearBtn = document.getElementById('searchClearBtn');
+      if (clearBtn) clearBtn.style.display = 'none';
+      renderTable();
+    }
+
     function selectStage(stageCode) {
       hidePopoverImmediately();
       currentStage = stageCode;
       sessionStorage.setItem('stock_cycle_selected_stage', stageCode);
       history.replaceState(null, '', `#${stageCode}`);
 
+      // 切換階段時若有搜尋關鍵字，自動清除搜尋，讓使用者直接檢視該階段完整標的
+      if (searchQuery.trim()) {
+        searchQuery = '';
+        const input = document.getElementById('searchInput');
+        if (input) input.value = '';
+        const clearBtn = document.getElementById('searchClearBtn');
+        if (clearBtn) clearBtn.style.display = 'none';
+      }
+
       renderSvgNodes();
-
-      const sInfo = cycleData.stages[stageCode] || { name: stageCode, count: 0, new_count: 0, cbs: [], action: '' };
-      
-      const badge = document.getElementById('stageBadge');
-      badge.textContent = sInfo.side || '階段';
-      badge.className = `tag-bubble ${sInfo.side === '多頭' ? 'tag-bull' : 'tag-bear'}`;
-
-      document.getElementById('stageName').textContent = `【${sInfo.name}】`;
-      document.getElementById('stageCountInfo').textContent = `（共 ${sInfo.count} 檔${sInfo.new_count > 0 ? `，含今日新進 ${sInfo.new_count} 檔` : ''}）`;
-      
-      document.getElementById('stageActionBox').innerHTML = `操作建議：<strong class="action-highlight">${sInfo.action || '觀望'}</strong> ｜ ${sInfo.description || ''}`;
-
       renderTable();
     }
 
     function renderTable() {
       if (!cycleData) return;
-      const sInfo = cycleData.stages[currentStage];
-      if (!sInfo || !sInfo.cbs) {
-        document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">查無此階段資料</td></tr>`;
-        return;
+      const sInfo = cycleData.stages[currentStage] || { name: currentStage, count: 0, new_count: 0, cbs: [], action: '' };
+
+      const isSearching = !!searchQuery.trim();
+      const clearBtn = document.getElementById('searchClearBtn');
+      if (clearBtn) {
+        clearBtn.style.display = isSearching ? 'inline-block' : 'none';
+      }
+
+      let list = [];
+
+      if (isSearching) {
+        // 全階段搜尋：不限當前已選階段，直接搜尋所有循環階段的 CB
+        const q = searchQuery.trim().toLowerCase();
+        const allList = getAllCbs();
+        list = allList.filter(item => 
+          (item.cb_name && item.cb_name.toLowerCase().includes(q)) ||
+          (item.cb_code && item.cb_code.toLowerCase().includes(q)) ||
+          (item.stock_name && item.stock_name.toLowerCase().includes(q)) ||
+          (item.stock_code && item.stock_code.toLowerCase().includes(q))
+        );
+
+        // 更新搜尋狀態標題與說明
+        const badge = document.getElementById('stageBadge');
+        badge.textContent = '全階段搜尋';
+        badge.className = 'tag-bubble tag-bull';
+
+        document.getElementById('stageName').textContent = `【搜尋「${searchQuery.trim()}」】`;
+        document.getElementById('stageCountInfo').textContent = `（共 ${list.length} 檔符合條件）`;
+        document.getElementById('stageActionBox').innerHTML = `搜尋範圍：<strong class="action-highlight">全部循環階段</strong> ｜ 點選標的階段標籤可切換階段，或 <a href="javascript:void(0)" onclick="clearSearch()" style="color:var(--wave-blue);font-weight:700;text-decoration:underline;">清除搜尋</a> 返回【${sInfo.name}】階段`;
+      } else {
+        // 未搜尋狀態：顯示當前選定階段
+        if (!sInfo || !sInfo.cbs) {
+          document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">查無此階段資料</td></tr>`;
+          return;
+        }
+
+        list = sInfo.cbs.map(cb => ({
+          ...cb,
+          stage_code: cb.stage || currentStage,
+          stage_name: sInfo.name,
+          stage_side: sInfo.side || ''
+        }));
+
+        const badge = document.getElementById('stageBadge');
+        badge.textContent = sInfo.side || '階段';
+        badge.className = `tag-bubble ${sInfo.side === '多頭' ? 'tag-bull' : 'tag-bear'}`;
+
+        document.getElementById('stageName').textContent = `【${sInfo.name}】`;
+        document.getElementById('stageCountInfo').textContent = `（共 ${sInfo.count} 檔${sInfo.new_count > 0 ? `，含今日新進 ${sInfo.new_count} 檔` : ''}）`;
+        document.getElementById('stageActionBox').innerHTML = `操作建議：<strong class="action-highlight">${sInfo.action || '觀望'}</strong> ｜ ${sInfo.description || ''}`;
       }
 
       // Update sort indicators on headers
@@ -1083,19 +1229,6 @@
       const activeSortIndicator = document.getElementById(`sort-${sortField}`);
       if (activeSortIndicator) {
         activeSortIndicator.textContent = sortAsc ? '▲' : '▼';
-      }
-
-      let list = [...sInfo.cbs];
-
-      // Filter by search query (CB 名稱 / 母股名稱)
-      if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        list = list.filter(item => 
-          item.cb_name.toLowerCase().includes(q) ||
-          item.cb_code.toLowerCase().includes(q) ||
-          item.stock_name.toLowerCase().includes(q) ||
-          item.stock_code.toLowerCase().includes(q)
-        );
       }
 
       // Sort
@@ -1111,7 +1244,8 @@
       });
 
       if (list.length === 0) {
-        document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">無符合條件之可轉債</td></tr>`;
+        const msg = isSearching ? `無符合「${searchQuery.trim()}」之可轉債（已搜尋全部循環階段）` : '無符合條件之可轉債';
+        document.getElementById('tableBody').innerHTML = `<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 30px;">${msg}</td></tr>`;
         return;
       }
 
@@ -1147,6 +1281,13 @@
           }
         }
 
+        // 階段標籤：在搜尋模式下顯示該標的所屬的循環階段（例如「台特化一」顯示「主跌」），點擊可切換至該階段
+        let stagePillHtml = '';
+        if (isSearching && item.stage_name) {
+          const pillType = (item.stage_side === '多頭') ? 'stage-pill-bull' : ((item.stage_side === '空頭') ? 'stage-pill-bear' : 'stage-pill-other');
+          stagePillHtml = `<span class="stage-pill ${pillType}" onclick="event.stopPropagation(); selectStage('${item.stage_code}');" title="點擊切換至【${item.stage_name}】階段">${item.stage_name}</span>`;
+        }
+
         // WantGoo Technical Analysis URL for Mother Stock (玩股網技術線圖)
         const wantgooUrl = `https://www.wantgoo.com/stock/${encodeURIComponent(item.stock_code)}/technical-chart`;
 
@@ -1159,6 +1300,7 @@
               <a href="${cbDetailUrl}" class="${linkClass}" title="點擊前往 CB 詳細頁（原頁開啟）">
                 ${item.cb_name}
               </a>
+              ${stagePillHtml}
               ${newBadge}
             </td>
             <td class="${cbPriceClass}" style="font-weight: 700;">${formatPrice(item.cb_close)}</td>
@@ -1193,9 +1335,15 @@
       renderTable();
     }
 
-    document.getElementById('searchInput').addEventListener('input', (e) => {
+    const searchInputEl = document.getElementById('searchInput');
+    searchInputEl.addEventListener('input', (e) => {
       searchQuery = e.target.value;
       renderTable();
+    });
+    searchInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        clearSearch();
+      }
     });
 
     // Dismiss popover when clicking/tapping outside

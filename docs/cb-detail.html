@@ -3,31 +3,125 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CB Radar｜CB 量價走勢</title>
+  <title>CB Radar｜CB 量價與母股籌碼走勢</title>
   <style>
-    :root { --ink:#17211b; --muted:#637068; --line:#dce4de; --paper:#f4f7f3; --card:#fff; --green:#185c42; --up:#d6324a; --down:#1f9d55; --orange:#f08c00; --blue:#1c9ad6; }
+    :root {
+      --ink: #17211b;
+      --muted: #637068;
+      --line: #dce4de;
+      --paper: #f4f7f3;
+      --card: #fff;
+      --green: #185c42;
+      --green-soft: #e8f3ee;
+      --up: #d6324a;
+      --down: #1f9d55;
+      --orange: #f08c00;
+      --blue: #1c9ad6;
+    }
     * { box-sizing: border-box; }
-    body { margin:0; background:var(--paper); color:var(--ink); font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif; }
-    .page { max-width:1180px; margin:auto; padding:28px 16px 56px; }
-    nav { display:flex; flex-wrap:wrap; gap:8px 16px; border-bottom:1px solid var(--line); padding-bottom:14px; }
-    a { color:var(--green); font-weight:700; text-decoration:none; }
-    h1 { font-size:clamp(1.6rem,4vw,2.6rem); margin:22px 0 4px; }
-    .muted { color:var(--muted); }
-    .panel { margin-top:14px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
-    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
-    .ranges button { border:1px solid #cbd7cf; border-radius:8px; background:#fff; color:var(--green); font:inherit; font-weight:800; padding:5px 12px; cursor:pointer; }
-    .ranges button.active { background:var(--green); color:#fff; }
-    .legend { min-height:2.6em; font-size:.92rem; line-height:1.5; font-variant-numeric:tabular-nums; margin:8px 0; }
-    .legend b { margin-left:10px; } .legend b:first-child { margin-left:0; }
-    .c-price { color:#e53935; } .c-cv { color:var(--orange); } .c-vol { color:var(--blue); } .c-prem { color:var(--up); } .c-conv { color:#f08c00; }
-    .chart-price-wrap { position: relative; touch-action: pan-y; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    }
+    .page {
+      max-width: 1180px;
+      margin: auto;
+      padding: 28px 16px 56px;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+    }
+    a { color: var(--green); font-weight: 700; text-decoration: none; }
+    h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); margin: 22px 0 4px; }
+    .muted { color: var(--muted); }
+    .panel {
+      margin-top: 14px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .ranges button {
+      border: 1px solid #cbd7cf;
+      border-radius: 8px;
+      background: #fff;
+      color: var(--green);
+      font: inherit;
+      font-weight: 800;
+      padding: 5px 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .ranges button.active {
+      background: var(--green);
+      color: #fff;
+    }
+    .legend {
+      min-height: 2.4em;
+      font-size: 0.92rem;
+      line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+      margin: 8px 0;
+    }
+    .legend b { margin-left: 10px; }
+    .legend b:first-child { margin-left: 0; }
+    .c-price { color: #e53935; }
+    .c-cv { color: var(--orange); }
+    .c-vol { color: var(--blue); }
+    .c-prem { color: var(--up); }
+    .c-conv { color: #f08c00; }
+    .c-ma43 { color: #f59e0b; }
+    .c-ma87 { color: #3b82f6; }
+    .c-ma284 { color: #db2777; }
+    .c-foreign { color: #d6324a; }
+    .c-trust { color: #8b5cf6; }
+    .c-short { color: #e11d48; }
+    .c-rev { color: #f08c00; }
+    .c-yoy { color: #059669; }
+
+    .ma-toggles {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: #f8faf9;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 3px 10px;
+      font-size: 0.82rem;
+      user-select: none;
+    }
+    .toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .toggle-label input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--green);
+    }
+
+    .chart-wrap { position: relative; touch-action: pan-y; }
     .chart-tooltip {
       position: absolute;
       top: 8px;
       left: 8px;
       z-index: 10;
       pointer-events: none;
-      background: rgba(255, 255, 255, 0.92);
+      background: rgba(255, 255, 255, 0.94);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       border: 1px solid rgba(0, 0, 0, 0.1);
@@ -38,16 +132,69 @@
       color: #333;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
       font-variant-numeric: tabular-nums;
-      min-width: 105px;
+      min-width: 110px;
     }
     .chart-tooltip .tt-date { font-weight: 700; color: #17211b; margin-bottom: 2px; }
     .chart-tooltip .tt-row { display: flex; justify-content: space-between; gap: 8px; }
     .chart-tooltip .tt-lbl { color: var(--muted); }
     .chart-tooltip .tt-val { font-weight: 700; }
-    #chartPrice, #chartPrem, #chartConv { touch-action: pan-y; }
-    #chartPrice { height:380px; } #chartPrem, #chartConv { height:140px; margin-top:6px; }
+
+    #chartPrice, #chartPrem, #chartConv, #chartStockK, #chartInst, #chartMargin, #chartBorrow, #chartRevenue {
+      touch-action: pan-y;
+    }
+    #chartPrice { height: 380px; }
+    #chartPrem, #chartConv { height: 140px; margin-top: 6px; }
+    #chartStockK { height: 360px; margin-top: 6px; }
+    #chartInst, #chartMargin, #chartBorrow, #chartRevenue { height: 130px; margin-top: 6px; }
+
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      margin: 22px 0 10px;
+      color: var(--green);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 2px solid var(--line);
+      padding-top: 18px;
+    }
+    .indicator-title {
+      font-size: 0.88rem;
+      font-weight: 700;
+      margin-top: 14px;
+      margin-bottom: 2px;
+      color: var(--ink);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .indicator-legend {
+      font-size: 0.82rem;
+      color: var(--muted);
+      font-weight: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .indicator-legend b {
+      font-weight: 700;
+      margin-left: 8px;
+    }
+    .indicator-legend b:first-child {
+      margin-left: 0;
+    }
+    .empty-badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      background: #f3f4f6;
+      color: #6b7280;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-weight: 600;
+      margin-left: 6px;
+    }
+
     #tv-attr-logo { display: none !important; }
-    .state { padding:40px 10px; text-align:center; color:var(--muted); }
     .back-btn {
       display: inline-flex;
       align-items: center;
@@ -66,36 +213,125 @@
     }
     .back-btn:hover { background: #d4e5dc; }
     .back-btn:active { transform: scale(0.98); }
-
   </style>
   <link rel="stylesheet" href="site-shell.css">
+  <script src="site-theme.js"></script>
 </head>
 <body>
   <main class="page">
-    <nav aria-label="全站導覽"><a href="index.html">首頁</a><a href="stock-cycle.html">母股循環階段</a><a href="institutional.html">法人籌碼</a><a href="strategy-a.html">成交量10日新高</a><a href="strategy-b.html">CB突破轉換價</a><a href="strategy-c.html">CB資優生</a><a href="strategy-g.html">時間發動</a><a href="daily-market.html">每日行情</a></nav>
+    <nav aria-label="全站導覽">
+      <div class="nav-links">
+        <a href="index.html">首頁</a>
+        <a href="stock-cycle.html">母股循環階段</a>
+        <a href="institutional.html">法人籌碼</a>
+        <a href="strategy-a.html">成交量10日新高</a>
+        <a href="strategy-b.html">CB突破轉換價</a>
+        <a href="strategy-c.html">CB資優生</a>
+        <a href="strategy-g.html">時間發動</a>
+        <a href="daily-market.html">每日行情</a>
+      </div>
+      <button id="themeToggleBtn" type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="點擊切換深色 / 淺色模式">🌙 深色</button>
+    </nav>
     <div style="margin: 12px 0 8px;">
       <button type="button" class="back-btn" onclick="goBack()">← 返回上一頁</button>
     </div>
     <h1 id="title">CB 量價走勢</h1>
     <div class="muted" id="sub">載入中…</div>
+
+    <!-- 上半部：CB 相關走勢 -->
     <section class="panel">
       <div class="toolbar">
         <div class="legend" id="legend"></div>
-        <div class="ranges" id="ranges">
-          <button type="button" data-d="30" class="active">30天</button><button type="button" data-m="3">3個月</button><button type="button" data-m="6">6個月</button><button type="button" data-m="12">1年</button><button type="button" data-m="0">全部</button>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div class="ma-toggles">
+            <label class="toggle-label" title="切換顯示 CB 87MA">
+              <input type="checkbox" id="toggleCbMa87" checked>
+              <span class="c-ma87" style="font-weight:700">87MA</span>
+            </label>
+            <label class="toggle-label" title="切換顯示 CB 284MA">
+              <input type="checkbox" id="toggleCbMa284" checked>
+              <span class="c-ma284" style="font-weight:700">284MA</span>
+            </label>
+          </div>
+          <div class="ranges" id="ranges">
+            <button type="button" data-d="30" class="active">30天</button>
+            <button type="button" data-m="3">3個月</button>
+            <button type="button" data-m="6">6個月</button>
+            <button type="button" data-m="12">1年</button>
+            <button type="button" data-m="0">全部</button>
+          </div>
         </div>
       </div>
-      <div class="chart-price-wrap">
+      <div class="chart-wrap">
         <div id="priceTooltip" class="chart-tooltip"></div>
         <div id="chartPrice"></div>
       </div>
-      <div class="muted" style="font-size:.8rem;margin-top:6px">溢價率（%）</div>
+      <div class="muted" style="font-size:.8rem;margin-top:8px">溢價率（%）</div>
       <div id="chartPrem"></div>
-      <div class="muted" style="font-size:.8rem;margin-top:6px">可轉債剩餘張數（張）</div>
+      <div class="muted" style="font-size:.8rem;margin-top:8px">可轉債剩餘張數（張）</div>
       <div id="chartConv"></div>
-      <div class="muted" style="font-size:.78rem;margin-top:8px">CB 價格使用「參考價」欄（無開高低資料，以折線呈現）；橘色虛線為轉換價值，藍色虛線為 100 基準（轉換價值高於此線代表超過 100%），藍柱為成交量（張）。圖表元件：<a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts</a>（Apache 2.0）。</div>
+      <div class="muted" style="font-size:.78rem;margin-top:8px">
+        CB 價格使用「參考價」欄（無開高低資料，以紅折線呈現）；橘色虛線為轉換價值，藍色虛線為 100 基準（轉換價值高於此線代表超過 100%），藍柱為成交量（張）。
+      </div>
+
+      <!-- 下半部：母股技術與籌碼分析 -->
+      <div class="section-title">
+        <span>母股技術分析與籌碼指標（股票代號：<span id="stockCodeText">—</span>）</span>
+        <div class="ma-toggles">
+          <label class="toggle-label" title="切換顯示 43MA">
+            <input type="checkbox" id="toggleMa43" checked>
+            <span class="c-ma43" style="font-weight:700">43MA</span>
+          </label>
+          <label class="toggle-label" title="切換顯示 87MA">
+            <input type="checkbox" id="toggleMa87" checked>
+            <span class="c-ma87" style="font-weight:700">87MA</span>
+          </label>
+          <label class="toggle-label" title="切換顯示 284MA">
+            <input type="checkbox" id="toggleMa284" checked>
+            <span class="c-ma284" style="font-weight:700">284MA</span>
+          </label>
+        </div>
+      </div>
+      <div class="legend" id="stockLegend"></div>
+      <div class="chart-wrap">
+        <div id="stockTooltip" class="chart-tooltip"></div>
+        <div id="chartStockK"></div>
+      </div>
+
+      <!-- 副圖 A：外資與投信買賣超 -->
+      <div class="indicator-title">
+        <span>外資與投信買賣超（張）</span>
+        <span class="indicator-legend" id="instLegend"></span>
+      </div>
+      <div id="chartInst"></div>
+
+      <!-- 副圖 B：融券走勢 -->
+      <div class="indicator-title">
+        <span>融券走勢（雙軸：柱狀＝當日增減，折線＝累積餘額）</span>
+        <span class="indicator-legend" id="marginLegend"></span>
+      </div>
+      <div id="chartMargin"></div>
+
+      <!-- 副圖 C：借券走勢 -->
+      <div class="indicator-title">
+        <span>借券走勢（雙軸：柱狀＝當日增減，折線＝累積餘額）<span class="empty-badge" id="borrowBadge" style="display:none">暫無資料</span></span>
+        <span class="indicator-legend" id="borrowLegend"></span>
+      </div>
+      <div id="chartBorrow"></div>
+
+      <!-- 副圖 D：每月營收走勢 -->
+      <div class="indicator-title">
+        <span>每月營收走勢（雙軸：橘柱＝當月營收 百萬元，綠線＝年增率 YoY %）</span>
+        <span class="indicator-legend" id="revLegend"></span>
+      </div>
+      <div id="chartRevenue"></div>
+
+      <div class="muted" style="font-size:.78rem;margin-top:12px;border-top:1px dashed var(--line);padding-top:8px">
+        均線說明：<b class="c-ma43">43MA</b>（黃線，築底/做頭短期趨勢）、<b class="c-ma87">87MA</b>（藍線，初升/初跌中長波段扣抵線）、<b class="c-ma284">284MA</b>（深粉紅線，主升/主跌神奇生命線）。圖表元件：<a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView Lightweight Charts</a>（Apache 2.0）。
+      </div>
     </section>
   </main>
+
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
@@ -127,16 +363,18 @@
           const latest = await (await fetch("./data/v2/latest.json", { cache: "no-store" })).json();
           const related = latest.records.filter((r) => String(r.cb_code).startsWith(code));
           if (related.length) $("#sub").innerHTML += `　你是否要找：${related.map((r) => `<a href="cb-detail.html?code=${encodeURIComponent(r.cb_code)}">${r.cb_name}（${r.cb_code}）</a>`).join("、")}`;
-        } catch (e) { /* suggestions are optional */ }
+        } catch (e) { /* suggestions optional */ }
         return;
       }
       const payload = await response.json();
       const idx = Object.fromEntries(payload.columns.map((c, i) => [c, i]));
       const rows = payload.rows;
-      $("#title").textContent = `${payload.cb_name}（${payload.cb_code}）量價走勢`;
+      const stockCode = code.slice(0, 4);
+      $("#stockCodeText").textContent = stockCode;
+      $("#title").textContent = `${payload.cb_name}（${payload.cb_code}）量價與籌碼分析`;
       document.title = `CB Radar｜${payload.cb_name}`;
       const last = rows[rows.length - 1];
-      $("#sub").innerHTML = `CB代號：${payload.cb_code} · 股票代號：${code.slice(0, 4)} · 資料 ${rows.length} 日，最新 ${ymd(last[idx.trade_date])} · <a href="https://www.wantgoo.com/stock/${encodeURIComponent(code.slice(0, 4))}/technical-chart" target="_blank" rel="noopener noreferrer">母股 K 線（玩股網）</a>`;
+      $("#sub").innerHTML = `CB代號：${payload.cb_code} · 股票代號：${stockCode} · 資料 ${rows.length} 日，最新 ${ymd(last[idx.trade_date])} · <a href="https://www.wantgoo.com/stock/${encodeURIComponent(stockCode)}/technical-chart" target="_blank" rel="noopener noreferrer">母股 K 線（玩股網）</a>`;
 
       const has = (v) => v !== null && v !== undefined;
       const pick = (col) => rows.map((r) => has(r[idx[col]]) ? { time: r[idx.trade_date], value: r[idx[col]] } : { time: r[idx.trade_date] });
@@ -146,10 +384,20 @@
       const convOf = (r) => (idx.balance_units !== undefined && r[idx.balance_units] !== null && r[idx.balance_units] !== undefined) ? r[idx.balance_units] : null;
       const convData = rows.map((r) => convOf(r) !== null ? { time: r[idx.trade_date], value: convOf(r), color: "rgba(240,140,0,.85)" } : { time: r[idx.trade_date] });
       const byDate = new Map(rows.map((r) => [r[idx.trade_date], r]));
+      const rowIdxMap = new Map(rows.map((r, i) => [r[idx.trade_date], i]));
+      function dirBadge(cur, prevVal) {
+        if (cur === null || cur === undefined || prevVal === null || prevVal === undefined) return "";
+        const diff = cur - prevVal;
+        if (diff > 0.0001) return '<span style="color:#d6324a;font-weight:800;margin-left:2px">↑往上</span>';
+        if (diff < -0.0001) return '<span style="color:#1f9d55;font-weight:800;margin-left:2px">↓往下</span>';
+        return '<span style="color:#6b7280;margin-left:2px">持平</span>';
+      }
 
-      if (!cvData.some((p) => has(p.value)) || !premData.some((p) => has(p.value))) $("#sub").innerHTML += "　<b style=\"color:#c62828\">此 CB 在資料庫沒有母股價格／餘額資料，因此沒有轉換價值、溢價率與已轉換比例（不補假資料）。</b>";
+      if (!cvData.some((p) => has(p.value)) || !premData.some((p) => has(p.value))) {
+        $("#sub").innerHTML += "　<b style=\"color:#c62828\">此 CB 在資料庫沒有母股價格／餘額資料，因此沒有轉換價值、溢價率與已轉換比例（不補假資料）。</b>";
+      }
 
-      // 依全期資料計算固定 Y 軸刻度上限，使放大縮小、切換區間時數據刻度保持固定
+      // 固定 Y 軸刻度上限
       const validPrices = priceData.map((p) => p.value).filter(has);
       const validCvs = cvData.map((p) => p.value).filter(has);
       const maxVal = Math.max(105, ...validPrices, ...validCvs);
@@ -184,11 +432,22 @@
         },
       };
 
+      // 1. CB 走勢圖表
       const priceChart = LightweightCharts.createChart($("#chartPrice"), { ...base, autoSize: true });
       const premChart = LightweightCharts.createChart($("#chartPrem"), { ...base, autoSize: true });
       const convChart = LightweightCharts.createChart($("#chartConv"), { ...base, autoSize: true });
 
-      ["#chartPrice", "#chartPrem", "#chartConv"].forEach((sel) => {
+      // 2. 母股技術與籌碼圖表
+      const stockChart = LightweightCharts.createChart($("#chartStockK"), { ...base, autoSize: true });
+      const instChart = LightweightCharts.createChart($("#chartInst"), { ...base, autoSize: true });
+      const marginChart = LightweightCharts.createChart($("#chartMargin"), { ...base, autoSize: true });
+      const borrowChart = LightweightCharts.createChart($("#chartBorrow"), { ...base, autoSize: true });
+      const revChart = LightweightCharts.createChart($("#chartRevenue"), { ...base, autoSize: true });
+
+      const allCharts = [priceChart, premChart, convChart, stockChart, instChart, marginChart, borrowChart, revChart];
+
+      // 防止圖表滾輪阻止頁面上下滑動
+      ["#chartPrice", "#chartPrem", "#chartConv", "#chartStockK", "#chartInst", "#chartMargin", "#chartBorrow", "#chartRevenue"].forEach((sel) => {
         const el = $(sel);
         if (el) {
           el.addEventListener("wheel", (e) => {
@@ -199,6 +458,7 @@
         }
       });
 
+      // CB 圖表 Series
       const convSeries = convChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "", priceFormat: { type: "volume" } });
       convSeries.setData(convData);
       convChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.22, bottom: 0 }, entireTextOnly: true });
@@ -213,8 +473,195 @@
       const premSeries = premChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, title: "" });
       priceSeries.setData(priceData); cvSeries.setData(cvData); volSeries.setData(volData); premSeries.setData(premData);
 
-      function renderTooltip(date, point) {
-        const r = byDate.get(date) || last;
+      // CB 價格 87MA 與 284MA (284MA 為深粉紅 #db2777)
+      function calcCB_MA(col, period) {
+        const res = [];
+        let sum = 0, count = 0;
+        for (let i = 0; i < rows.length; i++) {
+          const val = rows[i][idx[col]];
+          if (has(val)) { sum += val; count++; }
+          if (i >= period) {
+            const oldVal = rows[i - period][idx[col]];
+            if (has(oldVal)) { sum -= oldVal; count--; }
+          }
+          if (i >= period - 1 && count === period) {
+            res.push({ time: rows[i][idx.trade_date], value: Math.round((sum / period) * 100) / 100 });
+          } else {
+            res.push({ time: rows[i][idx.trade_date] });
+          }
+        }
+        return res;
+      }
+
+      const cbMa87Data = calcCB_MA("reference_price", 87);
+      const cbMa284Data = calcCB_MA("reference_price", 284);
+      const cbMa87Series = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#3b82f6", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: "" });
+      const cbMa284Series = priceChart.addLineSeries({ autoscaleInfoProvider: fixedScale, color: "#db2777", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: "" });
+      cbMa87Series.setData(cbMa87Data);
+      cbMa284Series.setData(cbMa284Data);
+
+      $("#toggleCbMa87").addEventListener("change", (e) => cbMa87Series.applyOptions({ visible: e.target.checked }));
+      $("#toggleCbMa284").addEventListener("change", (e) => cbMa284Series.applyOptions({ visible: e.target.checked }));
+
+      // 母股 K 線 Series (紅漲綠跌)
+      const stockCandleData = rows
+        .filter((r) => has(r[idx.p_close_price]))
+        .map((r) => {
+          const close = r[idx.p_close_price];
+          const open = has(r[idx.p_open_price]) ? r[idx.p_open_price] : close;
+          const high = has(r[idx.p_high_price]) ? Math.max(r[idx.p_high_price], open, close) : Math.max(open, close);
+          const low = has(r[idx.p_low_price]) ? Math.min(r[idx.p_low_price], open, close) : Math.min(open, close);
+          return { time: r[idx.trade_date], open, high, low, close };
+        });
+      const stockSeries = stockChart.addCandlestickSeries({
+        upColor: "#d6324a",
+        downColor: "#1f9d55",
+        borderUpColor: "#d6324a",
+        borderDownColor: "#1f9d55",
+        wickUpColor: "#d6324a",
+        wickDownColor: "#1f9d55",
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      stockSeries.setData(stockCandleData);
+
+      // 母股 43/87/284 神奇均線（284MA 改為深粉紅 #db2777）
+      const ma43Series = stockChart.addLineSeries({ color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: "" });
+      const ma87Series = stockChart.addLineSeries({ color: "#3b82f6", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: "" });
+      const ma284Series = stockChart.addLineSeries({ color: "#db2777", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: "" });
+      ma43Series.setData(rows.map(r => has(r[idx.ma43]) ? { time: r[idx.trade_date], value: r[idx.ma43] } : { time: r[idx.trade_date] }));
+      ma87Series.setData(rows.map(r => has(r[idx.ma87]) ? { time: r[idx.trade_date], value: r[idx.ma87] } : { time: r[idx.trade_date] }));
+      ma284Series.setData(rows.map(r => has(r[idx.ma284]) ? { time: r[idx.trade_date], value: r[idx.ma284] } : { time: r[idx.trade_date] }));
+
+      // 均線勾選顯示/隱藏切換
+      $("#toggleMa43").addEventListener("change", (e) => ma43Series.applyOptions({ visible: e.target.checked }));
+      $("#toggleMa87").addEventListener("change", (e) => ma87Series.applyOptions({ visible: e.target.checked }));
+      $("#toggleMa284").addEventListener("change", (e) => ma284Series.applyOptions({ visible: e.target.checked }));
+
+      // 母股成交量
+      const stockVolSeries = stockChart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "stockVol",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      stockChart.priceScale("stockVol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+      stockVolSeries.setData(rows.map((r) => {
+        if (!has(r[idx.p_volume_lots])) return { time: r[idx.trade_date] };
+        const isUp = (r[idx.p_close_price] || 0) >= (r[idx.p_open_price] || r[idx.p_close_price] || 0);
+        return {
+          time: r[idx.trade_date],
+          value: r[idx.p_volume_lots],
+          color: isUp ? "rgba(214, 50, 74, 0.4)" : "rgba(31, 157, 85, 0.4)",
+        };
+      }));
+
+      // 外資與投信買賣超 Series
+      const foreignSeries = instChart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      foreignSeries.setData(rows.map((r) => {
+        if (!has(r[idx.foreign_net_lots])) return { time: r[idx.trade_date] };
+        const v = r[idx.foreign_net_lots];
+        return {
+          time: r[idx.trade_date],
+          value: v,
+          color: v >= 0 ? "rgba(214, 50, 74, 0.75)" : "rgba(31, 157, 85, 0.75)",
+        };
+      }));
+      const trustSeries = instChart.addLineSeries({
+        color: "#8b5cf6",
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      trustSeries.setData(rows.map((r) => has(r[idx.trust_net_lots]) ? { time: r[idx.trade_date], value: r[idx.trust_net_lots] } : { time: r[idx.trade_date] }));
+
+      // 融券走勢 Series (雙軸：柱狀＝當日增減，折線＝累積餘額)
+      const shortDiffSeries = marginChart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "diff",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      marginChart.priceScale("diff").applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+      shortDiffSeries.setData(rows.map((r) => {
+        if (!has(r[idx.short_diff])) return { time: r[idx.trade_date] };
+        const v = r[idx.short_diff];
+        return {
+          time: r[idx.trade_date],
+          value: v,
+          color: v >= 0 ? "rgba(214, 50, 74, 0.75)" : "rgba(31, 157, 85, 0.75)",
+        };
+      }));
+      const shortBalSeries = marginChart.addLineSeries({
+        color: "#e11d48",
+        lineWidth: 2,
+        priceScaleId: "right",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      marginChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
+      shortBalSeries.setData(rows.map((r) => has(r[idx.short_balance]) ? { time: r[idx.trade_date], value: r[idx.short_balance] } : { time: r[idx.trade_date] }));
+
+      // 借券走勢 Series (預留槽位)
+      const hasBorrow = rows.some((r) => has(r[idx.borrow_balance]) || has(r[idx.borrow_diff]));
+      $("#borrowBadge").style.display = hasBorrow ? "none" : "inline-block";
+      const borrowDiffSeries = borrowChart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "bdiff",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      borrowChart.priceScale("bdiff").applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+      borrowDiffSeries.setData(rows.map((r) => has(r[idx.borrow_diff]) ? { time: r[idx.trade_date], value: r[idx.borrow_diff], color: r[idx.borrow_diff] >= 0 ? "rgba(214, 50, 74, 0.75)" : "rgba(31, 157, 85, 0.75)" } : { time: r[idx.trade_date] }));
+
+      const borrowBalSeries = borrowChart.addLineSeries({
+        color: "#0284c7",
+        lineWidth: 2,
+        priceScaleId: "right",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      borrowBalSeries.setData(rows.map((r) => has(r[idx.borrow_balance]) ? { time: r[idx.trade_date], value: r[idx.borrow_balance] } : { time: r[idx.trade_date] }));
+
+      // 每月營收走勢 Series (雙軸：柱狀＝營收 百萬元，折線＝年增率 YoY %)
+      const revSeries = revChart.addHistogramSeries({
+        color: "rgba(240, 140, 0, 0.75)",
+        priceScaleId: "right",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      revChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
+      revSeries.setData(rows.map((r) => has(r[idx.monthly_revenue]) ? { time: r[idx.trade_date], value: r[idx.monthly_revenue] } : { time: r[idx.trade_date] }));
+
+      const yoySeries = revChart.addLineSeries({
+        color: "#059669",
+        lineWidth: 2,
+        priceScaleId: "yoy",
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "",
+      });
+      revChart.priceScale("yoy").applyOptions({ scaleMargins: { top: 0.2, bottom: 0.2 } });
+      yoySeries.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: "" });
+      yoySeries.setData(rows.map((r) => has(r[idx.revenue_yoy]) ? { time: r[idx.trade_date], value: r[idx.revenue_yoy] } : { time: r[idx.trade_date] }));
+
+      // Tooltip 呈現
+      function renderTooltips(date, point) {
+        const i = rowIdxMap.get(date);
+        const r = (i !== undefined) ? rows[i] : last;
+        const prev = (i !== undefined && i > 0) ? rows[i - 1] : null;
         const tooltip = $("#priceTooltip");
         if (tooltip) {
           if (point && point.x < 140 && point.y < 130) {
@@ -228,54 +675,146 @@
           const cv = fmt(r[idx.conversion_value]);
           const vol = fmt(r[idx.volume_lots], 0);
           const prem = r[idx.premium_rate] !== null && r[idx.premium_rate] !== undefined ? `${fmt(r[idx.premium_rate])}%` : "—";
+          const cb87Val = cbMa87Data[i] ? cbMa87Data[i].value : null;
+          const prevCb87 = (i > 0 && cbMa87Data[i - 1]) ? cbMa87Data[i - 1].value : null;
+          const cb87Str = fmt(cb87Val) + dirBadge(cb87Val, prevCb87);
+
+          const cb284Val = cbMa284Data[i] ? cbMa284Data[i].value : null;
+          const prevCb284 = (i > 0 && cbMa284Data[i - 1]) ? cbMa284Data[i - 1].value : null;
+          const cb284Str = fmt(cb284Val) + dirBadge(cb284Val, prevCb284);
+
           tooltip.innerHTML = `
             <div class="tt-date">${ymd(r[idx.trade_date])}</div>
-            <div class="tt-row"><span class="tt-lbl">參考價</span><span class="tt-val c-price">${p}</span></div>
+            <div class="tt-row"><span class="tt-lbl">CB參考價</span><span class="tt-val c-price">${p}</span></div>
+            <div class="tt-row"><span class="tt-lbl">87MA</span><span class="tt-val c-ma87">${cb87Str}</span></div>
+            <div class="tt-row"><span class="tt-lbl">284MA</span><span class="tt-val c-ma284">${cb284Str}</span></div>
             <div class="tt-row"><span class="tt-lbl">轉換價值</span><span class="tt-val c-cv">${cv}</span></div>
             <div class="tt-row"><span class="tt-lbl">成交量</span><span class="tt-val c-vol">${vol}</span></div>
             <div class="tt-row"><span class="tt-lbl">溢價率</span><span class="tt-val c-prem">${prem}</span></div>
           `;
         }
+
+        const stockTt = $("#stockTooltip");
+        if (stockTt) {
+          if (point && point.x < 140 && point.y < 130) {
+            stockTt.style.left = "auto";
+            stockTt.style.right = "55px";
+          } else {
+            stockTt.style.left = "8px";
+            stockTt.style.right = "auto";
+          }
+          const sp = fmt(r[idx.p_close_price]);
+          const sv = fmt(r[idx.p_volume_lots], 0);
+          const m43 = fmt(r[idx.ma43]) + dirBadge(r[idx.ma43], prev ? prev[idx.ma43] : null);
+          const m87 = fmt(r[idx.ma87]) + dirBadge(r[idx.ma87], prev ? prev[idx.ma87] : null);
+          const m284 = fmt(r[idx.ma284]) + dirBadge(r[idx.ma284], prev ? prev[idx.ma284] : null);
+          stockTt.innerHTML = `
+            <div class="tt-date">${ymd(r[idx.trade_date])}</div>
+            <div class="tt-row"><span class="tt-lbl">母股收盤</span><span class="tt-val">${sp}</span></div>
+            <div class="tt-row"><span class="tt-lbl">成交量</span><span class="tt-val">${sv} 張</span></div>
+            <div class="tt-row"><span class="tt-lbl">43MA</span><span class="tt-val c-ma43">${m43}</span></div>
+            <div class="tt-row"><span class="tt-lbl">87MA</span><span class="tt-val c-ma87">${m87}</span></div>
+            <div class="tt-row"><span class="tt-lbl">284MA</span><span class="tt-val c-ma284">${m284}</span></div>
+          `;
+        }
       }
 
-      function legend(date) {
-        const r = byDate.get(date) || last;
-        $("#legend").innerHTML = `${ymd(r[idx.trade_date])}<b class="c-price">參考價 ${fmt(r[idx.reference_price])}</b><b class="c-cv">轉換價值 ${fmt(r[idx.conversion_value])}</b><b class="c-vol">成交量 ${fmt(r[idx.volume_lots], 0)}</b><b class="c-prem">溢價率 ${fmt(r[idx.premium_rate])}%</b><b class="c-conv">剩餘張數 ${fmt(convOf(r), 0)} 張</b>`;
-      }
-      legend(last[idx.trade_date]);
-      renderTooltip(last[idx.trade_date]);
+      // Legend 更新函數
+      function updateAllLegends(date) {
+        const i = rowIdxMap.get(date);
+        const r = (i !== undefined) ? rows[i] : last;
+        const prev = (i !== undefined && i > 0) ? rows[i - 1] : null;
 
+        const cb87Val = cbMa87Data[i] ? cbMa87Data[i].value : null;
+        const prevCb87 = (i > 0 && cbMa87Data[i - 1]) ? cbMa87Data[i - 1].value : null;
+        const dCb87 = dirBadge(cb87Val, prevCb87);
+
+        const cb284Val = cbMa284Data[i] ? cbMa284Data[i].value : null;
+        const prevCb284 = (i > 0 && cbMa284Data[i - 1]) ? cbMa284Data[i - 1].value : null;
+        const dCb284 = dirBadge(cb284Val, prevCb284);
+
+        // CB Legend
+        $("#legend").innerHTML = `${ymd(r[idx.trade_date])}<b class="c-price">參考價 ${fmt(r[idx.reference_price])}</b><b class="c-cv">轉換價值 ${fmt(r[idx.conversion_value])}</b><b class="c-ma87">87MA ${fmt(cb87Val)}${dCb87}</b><b class="c-ma284">284MA ${fmt(cb284Val)}${dCb284}</b><b class="c-vol">成交量 ${fmt(r[idx.volume_lots], 0)}</b><b class="c-prem">溢價率 ${fmt(r[idx.premium_rate])}%</b><b class="c-conv">剩餘張數 ${fmt(convOf(r), 0)} 張</b>`;
+
+        // Stock Legend
+        const pClose = fmt(r[idx.p_close_price]);
+        const pOpen = fmt(r[idx.p_open_price]);
+        const pHigh = fmt(r[idx.p_high_price]);
+        const pLow = fmt(r[idx.p_low_price]);
+        const pVol = fmt(r[idx.p_volume_lots], 0);
+
+        const m43 = fmt(r[idx.ma43]);
+        const d43 = dirBadge(r[idx.ma43], prev ? prev[idx.ma43] : null);
+
+        const m87 = fmt(r[idx.ma87]);
+        const d87 = dirBadge(r[idx.ma87], prev ? prev[idx.ma87] : null);
+
+        const m284 = fmt(r[idx.ma284]);
+        const d284 = dirBadge(r[idx.ma284], prev ? prev[idx.ma284] : null);
+
+        $("#stockLegend").innerHTML = `${ymd(r[idx.trade_date])}<b>收盤價 ${pClose}</b>（開 ${pOpen} / 高 ${pHigh} / 低 ${pLow}）<b class="c-ma43">43MA ${m43}${d43}</b><b class="c-ma87">87MA ${m87}${d87}</b><b class="c-ma284">284MA ${m284}${d284}</b><b>成交量 ${pVol} 張</b>`;
+
+        // Inst Legend
+        const fn = fmt(r[idx.foreign_net_lots], 0);
+        const tn = fmt(r[idx.trust_net_lots], 0);
+        $("#instLegend").innerHTML = `<b class="c-foreign">外資買賣超：${fn} 張</b><b class="c-trust">投信買賣超：${tn} 張</b>`;
+
+        // Margin Legend
+        const sd = fmt(r[idx.short_diff], 0);
+        const sb = fmt(r[idx.short_balance], 0);
+        $("#marginLegend").innerHTML = `<b class="c-short">融券當日增減：${sd} 張</b><b class="c-short">融券餘額：${sb} 張</b>`;
+
+        // Borrow Legend
+        const bd = fmt(r[idx.borrow_diff], 0);
+        const bb = fmt(r[idx.borrow_balance], 0);
+        $("#borrowLegend").innerHTML = `<b>借券當日增減：${bd} 張</b><b>借券餘額：${bb} 張</b>`;
+
+        // Revenue Legend
+        let revVal = r[idx.monthly_revenue];
+        let yoyVal = r[idx.revenue_yoy];
+        let revMonthTag = "";
+        if (!has(revVal)) {
+          for (let k = rows.length - 1; k >= 0; k--) {
+            if (has(rows[k][idx.monthly_revenue])) {
+              revVal = rows[k][idx.monthly_revenue];
+              yoyVal = rows[k][idx.revenue_yoy];
+              revMonthTag = `（最新 ${rows[k][idx.trade_date].slice(0, 7)}）`;
+              break;
+            }
+          }
+        }
+        const rev = fmt(revVal);
+        const yoy = yoyVal !== null && yoyVal !== undefined ? `${fmt(yoyVal)}%` : "—";
+        $("#revLegend").innerHTML = `<b class="c-rev">當月營收：${rev} 百萬元${revMonthTag}</b><b class="c-yoy">年增率 YoY：${yoy}</b>`;
+      }
+
+      updateAllLegends(last[idx.trade_date]);
+      renderTooltips(last[idx.trade_date]);
+
+      // 時間軸與游標全圖表完全連動同步
       let syncing = false;
       const link = (from, to) => from.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (syncing || !range) return;
-        syncing = true; to.timeScale().setVisibleLogicalRange(range); syncing = false;
+        syncing = true;
+        to.timeScale().setVisibleLogicalRange(range);
+        syncing = false;
       });
-      const all = [priceChart, premChart, convChart];
-      all.forEach((a) => all.forEach((b) => { if (a !== b) link(a, b); }));
-      const cross = (chart, otherChart, otherSeries, column) => chart.subscribeCrosshairMove((param) => {
-        if (!param.time) {
-          otherChart.clearCrosshairPosition();
-          legend(last[idx.trade_date]);
-          renderTooltip(last[idx.trade_date]);
-          return;
-        }
-        legend(param.time);
-        renderTooltip(param.time, param.point);
-        const row = byDate.get(param.time);
-        const v = row && row[idx[column]];
-        if (v !== null && v !== undefined) otherChart.setCrosshairPosition(v, param.time, otherSeries);
-      });
-      cross(priceChart, premChart, premSeries, "premium_rate");
-      cross(premChart, priceChart, priceSeries, "reference_price");
-      convChart.subscribeCrosshairMove((param) => {
-        const date = param.time || last[idx.trade_date];
-        legend(date);
-        renderTooltip(date, param.point);
+      allCharts.forEach((a) => allCharts.forEach((b) => { if (a !== b) link(a, b); }));
+
+      allCharts.forEach((chart) => {
+        chart.subscribeCrosshairMove((param) => {
+          const date = param.time || last[idx.trade_date];
+          updateAllLegends(date);
+          renderTooltips(date, param.point);
+        });
       });
 
       function setRange(days, months) {
         const end = new Date(`${last[idx.trade_date]}T00:00:00Z`);
-        if (!days && !months) { priceChart.timeScale().fitContent(); return; }
+        if (!days && !months) {
+          priceChart.timeScale().fitContent();
+          return;
+        }
         const start = new Date(end);
         if (days) {
           start.setUTCDate(start.getUTCDate() - days);
@@ -284,13 +823,34 @@
         }
         priceChart.timeScale().setVisibleRange({ from: start.toISOString().slice(0, 10), to: last[idx.trade_date] });
       }
+
       $("#ranges").addEventListener("click", (event) => {
-        const button = event.target.closest("button"); if (!button) return;
+        const button = event.target.closest("button");
+        if (!button) return;
         document.querySelectorAll("#ranges button").forEach((b) => b.classList.toggle("active", b === button));
         setRange(Number(button.dataset.d || 0), Number(button.dataset.m || 0));
       });
       setRange(30, 0);
+
+      function applyChartTheme(theme) {
+        const isDark = theme === "dark";
+        const chartOpt = isDark ? {
+          layout: { background: { color: "#1e293b" }, textColor: "#cbd5e1" },
+          grid: { vertLines: { color: "#334155" }, horzLines: { color: "#334155" } },
+          rightPriceScale: { borderColor: "#475569" },
+          timeScale: { borderColor: "#475569" },
+        } : {
+          layout: { background: { color: "#ffffff" }, textColor: "#444444" },
+          grid: { vertLines: { color: "#eef2ef" }, horzLines: { color: "#eef2ef" } },
+          rightPriceScale: { borderColor: "#dce4de" },
+          timeScale: { borderColor: "#dce4de" },
+        };
+        allCharts.forEach((c) => c.applyOptions(chartOpt));
+      }
+      window.addEventListener("themechange", (e) => applyChartTheme(e.detail.theme));
+      applyChartTheme(document.documentElement.getAttribute("data-theme") || "light");
     }
+
     main().catch((error) => fail(`載入失敗：${error.message}`));
   </script>
 </body>

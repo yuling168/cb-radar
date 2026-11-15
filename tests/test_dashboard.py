@@ -158,6 +158,9 @@ def test_dashboard_module_command_runs_from_a_clean_repo_root(tmp_path):
     shutil.copy2(source_root / "scripts" / "build_dashboard.py", repo_root / "scripts" / "build_dashboard.py")
     shutil.copy2(source_root / "cb_price.py", repo_root / "cb_price.py")
     shutil.copy2(source_root / "strategy_registry.py", repo_root / "strategy_registry.py")
+    shutil.copy2(source_root / "stock_cycle_engine.py", repo_root / "stock_cycle_engine.py")
+    shutil.copy2(source_root / "config.py", repo_root / "config.py")
+    shutil.copy2(source_root / "db.py", repo_root / "db.py")
     create_dashboard_database(repo_root / "data" / "cb_history.db")
 
     environment = os.environ.copy()
