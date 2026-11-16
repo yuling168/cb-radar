@@ -397,7 +397,7 @@ def balance_ratio(
 
 
 def add_cb_rolling_averages(records: list[dict[str, object]]) -> None:
-    """Add display-only CB rolling averages from observed cb_daily rows.
+    """Add display-only CB rolling averages and daily price changes from observed cb_daily rows.
 
     Rows are grouped by CB and ordered by their actual trade dates.  This never
     invents non-trading-day rows or substitutes missing prices; a metric remains
@@ -408,10 +408,29 @@ def add_cb_rolling_averages(records: list[dict[str, object]]) -> None:
         by_code.setdefault(str(record["cb_code"]), {})[str(record["trade_date"])] = record
     calendar = sorted({str(record["trade_date"]) for record in records})
     for observed_by_date in by_code.values():
+        prev_p = None
         for index, trade_date in enumerate(calendar):
             record = observed_by_date.get(trade_date)
             if record is None:
                 continue
+
+            # Calculate daily price change compared to previous observed trading day
+            cur_p = record.get("effective_cb_price")
+            if cur_p is None:
+                cur_p = record.get("close_price")
+            if cur_p is None:
+                cur_p = record.get("reference_price")
+            if cur_p is not None and prev_p is not None and prev_p > 0:
+                diff = round(cur_p - prev_p, 2)
+                pct = round(((cur_p - prev_p) / prev_p) * 100, 2)
+                record["price_change"] = diff
+                record["price_change_pct"] = pct
+            else:
+                record["price_change"] = None
+                record["price_change_pct"] = None
+            if cur_p is not None:
+                prev_p = cur_p
+
             for key, source, window in (
                 ("volume_ma5", "volume_lots", 5),
                 ("volume_ma10", "volume_lots", 10),
@@ -1018,10 +1037,26 @@ def build_dashboard_shards() -> tuple[int, int]:
             path = staging / "strategies" / f"{code}.json"
             _write_json(path, strategy_payload)
             strategy_manifest[code] = _file_metadata(path, staging, [*signals, *evaluations])
+        latest_records = [row for row in records if row["trade_date"] == latest_date]
+
+        def _get_top_moves(rec_list: list[dict[str, object]], top_n: int = 5) -> dict[str, list[dict[str, object]]]:
+            valid = [r for r in rec_list if r.get("price_change_pct") is not None]
+            with_vol = [r for r in valid if (r.get("volume_lots") or 0) > 0]
+            vol_sorted = sorted(rec_list, key=lambda x: x.get("volume_lots") or 0, reverse=True)
+            top_volume = [r for r in vol_sorted if (r.get("volume_lots") or 0) > 0][:10]
+            return {
+                "gainers_vol": sorted(with_vol, key=lambda x: x["price_change_pct"], reverse=True)[:top_n],
+                "gainers_all": sorted(valid, key=lambda x: x["price_change_pct"], reverse=True)[:top_n],
+                "losers_vol": sorted(with_vol, key=lambda x: x["price_change_pct"])[:top_n],
+                "losers_all": sorted(valid, key=lambda x: x["price_change_pct"])[:top_n],
+                "top_volume": top_volume,
+            }
+
         latest_payload = {
             "schema_version": SHARD_SCHEMA_VERSION,
             "trade_date": latest_date,
-            "records": [row for row in records if row["trade_date"] == latest_date],
+            "records": latest_records,
+            "market_ranks": _get_top_moves(latest_records, top_n=5),
             "institutional_records": [row for row in institutional if row["trade_date"] == latest_date],
             "strategy_signals": [row for row in payload["strategy_signals"] if row["trade_date"] == latest_date],
             "announcements": payload["announcements"],

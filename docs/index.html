@@ -57,9 +57,127 @@ details[open] .signal-summary{background:#f8faf8}
 .detail-row:last-child{border-bottom:none}
 .dt-lbl{color:var(--m);font-size:.88rem}
 .dt-val{font-weight:700;color:#17211b;font-variant-numeric:tabular-nums}
-.c-up{color:#d6324a}
-.c-down{color:#1f9d55}
-.c-flat{color:var(--m)}
+.c-up{color:#d6324a !important}
+.c-down{color:#16a34a !important}
+.c-flat{color:var(--m) !important}
+[data-theme="dark"] .c-up{color:#f87171 !important}
+[data-theme="dark"] .c-down{color:#34d399 !important}
+
+/* 每日強弱勢排行區塊樣式 */
+.rank-section{margin-top:16px}
+.rank-head-left{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rank-subhead{font-size:.84rem;color:var(--m);font-weight:600}
+.rank-filter-bar{display:inline-flex;background:#e8f0ea;border-radius:999px;padding:3px;gap:2px}
+[data-theme="dark"] .rank-filter-bar{background:#1e293b;border:1px solid #334155}
+.rank-filter-btn{border:none;background:transparent;padding:4px 12px;border-radius:999px;font-size:.8rem;font-weight:700;color:var(--m);cursor:pointer;transition:all .15s}
+.rank-filter-btn.active{background:#fff;color:var(--i);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+[data-theme="dark"] .rank-filter-btn.active{background:#334155;color:#f8fafc}
+
+.rank-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}
+@media(max-width:820px){.rank-grid{grid-template-columns:1fr;gap:12px}}
+
+.rank-col{border-radius:14px;background:#fff;border:1px solid var(--l);overflow:hidden;display:flex;flex-direction:column}
+[data-theme="dark"] .rank-col{background:#1e293b;border-color:#334155}
+.rank-col-gainers{border-top:3px solid #d6324a}
+.rank-col-losers{border-top:3px solid #16a34a}
+[data-theme="dark"] .rank-col-gainers{border-top:3px solid #f87171}
+[data-theme="dark"] .rank-col-losers{border-top:3px solid #34d399}
+
+.rank-col-header{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;border-bottom:1px solid var(--l);font-size:.95rem;font-weight:800}
+[data-theme="dark"] .rank-col-header{border-bottom-color:#334155}
+.gainer-header{background:#fff7f7;color:#b91c1c}
+.loser-header{background:#f3fbf5;color:#15803d}
+[data-theme="dark"] .gainer-header{background:rgba(220,38,38,.12);color:#fca5a5}
+[data-theme="dark"] .loser-header{background:rgba(22,163,74,.12);color:#86efac}
+.rank-col-title{display:flex;align-items:center;gap:6px}
+
+.rank-cards-list{display:flex;flex-direction:column}
+.rank-item-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;text-decoration:none;color:inherit;border-bottom:1px solid #edf2ee;transition:background .15s ease}
+[data-theme="dark"] .rank-item-card{border-bottom-color:#334155}
+.rank-item-card:last-child{border-bottom:none}
+.rank-item-card:hover{background:#f8faf8}
+[data-theme="dark"] .rank-item-card:hover{background:#243248}
+
+.rank-badge{flex-shrink:0;width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800;font-variant-numeric:tabular-nums}
+.rank-badge-gainer-1{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}
+.rank-badge-gainer-2{background:#ffedd5;color:#c2410c;border:1px solid #fdba74}
+.rank-badge-gainer-3{background:#fef3c7;color:#b45309;border:1px solid #fde68a}
+.rank-badge-gainer-sub{background:#f3f4f6;color:#4b5563}
+
+.rank-badge-loser-1{background:#dcfce7;color:#15803d;border:1px solid #86efac}
+.rank-badge-loser-2{background:#e0f2fe;color:#0369a1;border:1px solid #7dd3fc}
+.rank-badge-loser-3{background:#f1f5f9;color:#334155;border:1px solid #cbd5e1}
+.rank-badge-loser-sub{background:#f3f4f6;color:#4b5563}
+
+[data-theme="dark"] .rank-badge-gainer-1{background:rgba(239,68,68,.25);color:#fca5a5;border-color:#ef4444}
+[data-theme="dark"] .rank-badge-gainer-2{background:rgba(249,115,22,.25);color:#fdba74;border-color:#f97316}
+[data-theme="dark"] .rank-badge-gainer-3{background:rgba(245,158,11,.25);color:#fde68a;border-color:#f59e0b}
+[data-theme="dark"] .rank-badge-gainer-sub{background:#334155;color:#94a3b8}
+
+[data-theme="dark"] .rank-badge-loser-1{background:rgba(34,197,94,.25);color:#86efac;border-color:#22c55e}
+[data-theme="dark"] .rank-badge-loser-2{background:rgba(14,165,233,.25);color:#7dd3fc;border-color:#0ea5e9}
+[data-theme="dark"] .rank-badge-loser-3{background:#334155;color:#cbd5e1;border-color:#475569}
+[data-theme="dark"] .rank-badge-loser-sub{background:#334155;color:#94a3b8}
+
+.rank-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rank-title-row{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.rank-cb-name{font-size:.98rem;font-weight:800;color:var(--i);white-space:nowrap}
+[data-theme="dark"] .rank-cb-name{color:#f8fafc}
+.rank-cb-code{font-size:.8rem;color:var(--m);font-variant-numeric:tabular-nums}
+.rank-metrics-row{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;font-size:.78rem;font-variant-numeric:tabular-nums;color:var(--m)}
+.rank-metric{display:inline-flex;align-items:center;gap:3px}
+.rm-lbl{color:var(--m)}
+.rm-val{font-weight:700;color:var(--i)}
+[data-theme="dark"] .rm-val{color:#e2e8f0}
+
+.rank-price-col{display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;min-width:138px}
+.rank-price{font-size:1.15rem;font-weight:800;color:var(--i);font-variant-numeric:tabular-nums;line-height:1.2}
+[data-theme="dark"] .rank-price{color:#f8fafc}
+.rank-price-vol{font-size:.82rem;font-weight:700;color:var(--m);margin-left:4px}
+[data-theme="dark"] .rank-price-vol{color:#94a3b8}
+.rank-chg{font-size:.82rem;font-weight:800;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap}
+
+/* ★新發行標籤（深黃色） */
+.badge-new-issue{display:inline-flex;align-items:center;background:#fef9c3;color:#854d0e;border:1px solid #facc15;font-size:.72rem;font-weight:800;padding:1px 6px;border-radius:6px;white-space:nowrap;letter-spacing:.3px}
+[data-theme="dark"] .badge-new-issue{background:rgba(234,179,8,.2);color:#fde047;border-color:#eab308}
+
+/* 成交量排行樣式 */
+.rank-col-vol{border-top:3px solid #2563eb}
+[data-theme="dark"] .rank-col-vol{border-top:3px solid #60a5fa}
+.vol-header{background:#f0f7ff;color:#1d4ed8}
+[data-theme="dark"] .vol-header{background:rgba(37,99,235,.15);color:#93c5fd}
+.rank-badge-vol-1{background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe}
+.rank-badge-vol-2{background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe}
+.rank-badge-vol-3{background:#ede9fe;color:#5b21b6;border:1px solid #ddd6fe}
+.rank-badge-vol-sub{background:#f1f5f9;color:#475569}
+[data-theme="dark"] .rank-badge-vol-1{background:rgba(59,130,246,.25);color:#93c5fd;border-color:#3b82f6}
+[data-theme="dark"] .rank-badge-vol-2{background:rgba(99,102,241,.25);color:#a5b4fc;border-color:#6366f1}
+[data-theme="dark"] .rank-badge-vol-3{background:rgba(139,92,246,.25);color:#c4b5fd;border-color:#8b5cf6}
+[data-theme="dark"] .rank-badge-vol-sub{background:#334155;color:#94a3b8}
+
+/* 今日新觸發標的 - 策略分組樣式 */
+.strategy-group{margin-bottom:22px}
+.strategy-group:last-child{margin-bottom:0}
+.strategy-group-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding:6px 2px;border-bottom:2px solid var(--l)}
+[data-theme="dark"] .strategy-group-header{border-bottom-color:#334155}
+.strategy-title-wrap{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.strategy-tag-code{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;font-size:.8rem;font-weight:800}
+.tag-strat-a{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe}
+.tag-strat-b{background:#ffedd5;color:#c2410c;border:1px solid #fed7aa}
+.tag-strat-g{background:#ede9fe;color:#6d28d9;border:1px solid #ddd6fe}
+.tag-strat-c{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0}
+[data-theme="dark"] .tag-strat-a{background:rgba(59,130,246,.25);color:#93c5fd;border-color:#3b82f6}
+[data-theme="dark"] .tag-strat-b{background:rgba(249,115,22,.25);color:#fdba74;border-color:#f97316}
+[data-theme="dark"] .tag-strat-g{background:rgba(139,92,246,.25);color:#c4b5fd;border-color:#8b5cf6}
+[data-theme="dark"] .tag-strat-c{background:rgba(34,197,94,.25);color:#86efac;border-color:#22c55e}
+.strategy-name{margin:0;font-size:1.06rem;font-weight:800;color:var(--i)}
+[data-theme="dark"] .strategy-name{color:#f8fafc}
+.strategy-count-badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ef;color:var(--m);font-size:.76rem;font-weight:700}
+[data-theme="dark"] .strategy-count-badge{background:#334155;color:#94a3b8}
+.strategy-link-more{font-size:.82rem;color:var(--g);font-weight:700;text-decoration:none}
+.strategy-link-more:hover{text-decoration:underline}
+.strategy-cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:12px}
+@media(max-width:760px){.strategy-cards-grid{grid-template-columns:1fr}}
 .detail-btn{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;padding:12px 16px;background:#2b56df;color:#fff !important;font-weight:800;font-size:.95rem;border-radius:10px;text-decoration:none;box-shadow:0 2px 6px rgba(43,86,223,.2);transition:background .15s ease}
 .detail-btn:hover{background:#1e42bd}
 .fact{display:inline-block}
@@ -105,6 +223,64 @@ details[open] .signal-summary{background:#f8faf8}
 <div class="summary-stats-bar">
   <span>今日新觸發：<strong id="signalCount">—</strong> 檔</span><span class="sep">，</span><span>時間發動提醒：<strong id="gCount">—</strong> 檔</span><span class="sep">，</span><span>法人 / ETF 同步看好：<strong id="flowCount">—</strong> 檔</span>
 </div>
+<section class="section rank-section">
+  <div class="section-head">
+    <div class="rank-head-left">
+      <h2>每日強弱勢 CB</h2>
+      <span class="rank-subhead">當日漲跌幅最大前五檔</span>
+    </div>
+    <div class="rank-filter-bar" role="group" aria-label="成交量篩選">
+      <button type="button" id="rankFilterVol" class="rank-filter-btn active" title="僅顯示當日有成交量之標的">有成交 (量 > 0)</button>
+      <button type="button" id="rankFilterAll" class="rank-filter-btn" title="顯示全市場標的（包含無成交量僅參考價變動）">全部標的</button>
+    </div>
+  </div>
+  <div class="rank-grid">
+    <div class="rank-col rank-col-gainers">
+      <div class="rank-col-header gainer-header">
+        <span class="rank-col-title">🔥 今日強勢排行（漲幅 Top 5）</span>
+      </div>
+      <div id="gainersList" class="rank-cards-list">
+        <div class="rank-loading muted" style="padding:16px;text-align:center">資料計算中…</div>
+      </div>
+    </div>
+    <div class="rank-col rank-col-losers">
+      <div class="rank-col-header loser-header">
+        <span class="rank-col-title">❄️ 今日弱勢排行（跌幅 Top 5）</span>
+      </div>
+      <div id="losersList" class="rank-cards-list">
+        <div class="rank-loading muted" style="padding:16px;text-align:center">資料計算中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 今日成交量排行 Top 10 -->
+  <div class="volume-rank-block" style="margin-top:20px;border-top:1px dashed var(--l);padding-top:16px">
+    <div class="section-head" style="margin-bottom:10px">
+      <div class="rank-head-left">
+        <h3 style="margin:0;font-size:1.15rem;display:flex;align-items:center;gap:6px">📊 今日成交量排行（量大前 10 名）</h3>
+        <span class="rank-subhead">市場資金焦點與流動性最高標的</span>
+      </div>
+    </div>
+    <div class="rank-grid volume-rank-grid">
+      <div class="rank-col rank-col-vol">
+        <div class="rank-col-header vol-header">
+          <span class="rank-col-title">🔥 成交量第 1 ～ 5 名</span>
+        </div>
+        <div id="volumeListPart1" class="rank-cards-list">
+          <div class="rank-loading muted" style="padding:16px;text-align:center">資料計算中…</div>
+        </div>
+      </div>
+      <div class="rank-col rank-col-vol">
+        <div class="rank-col-header vol-header">
+          <span class="rank-col-title">⚡ 成交量第 6 ～ 10 名</span>
+        </div>
+        <div id="volumeListPart2" class="rank-cards-list">
+          <div class="rank-loading muted" style="padding:16px;text-align:center">資料計算中…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 <section class="section"><div class="section-head"><h2>今日新觸發標的</h2><div class="sort-control"><label for="sortKey">排序</label><select id="sortKey"><option value="">原始順序</option><option value="close_price">現CB價格</option><option value="conversion_value">轉換價值</option><option value="premium_rate_pct">溢價率</option><option value="converted_ratio_pct">已轉換比率</option><option value="volume_lots">當日CB量</option></select><button id="sortDirection" type="button" aria-label="切換排序方向" title="切換排序方向">▲</button></div></div><div id="signals" class="signal-list"></div></section>
 <section class="section"><h2>重要公告與新聞</h2><p class="muted">僅列現行 CB 發行公司且主旨屬可轉債、籌資、資本、併購或重大營運／財務事件的已保存公告。</p><div id="announcements" class="list"></div></section>
 </main><script src="data-loader.js?v=20261102b"></script><script>
@@ -156,7 +332,7 @@ function signalCard(signal,records,date){
   const volume=r.volume_lots===null||r.volume_lots===undefined?blank:`${whole.format(r.volume_lots)} 張`;
   const converted=r.balance_ratio===null||r.balance_ratio===undefined?blank:`${show(100-r.balance_ratio)}%`;
   const eventDate=nearerEventDate(r);
-  const issued=r.issue_date&&Math.floor((Date.parse(`${date}T00:00:00Z`)-Date.parse(`${r.issue_date}T00:00:00Z`))/86400000)<30&&date>=r.issue_date?`<span class="new-issue">新發行 ${r.issue_date.replaceAll("-","/").replace(/\/(0\d)/g,"/$1").replace(/\/(\d{2})$/,(_,d)=>`/${Number(d)}`)}</span>`:"";
+  const issued=r.issue_date&&Math.floor((Date.parse(`${date}T00:00:00Z`)-Date.parse(`${r.issue_date}T00:00:00Z`))/86400000)<30&&date>=r.issue_date?`<span class="badge-new-issue" style="margin-left:6px">★新發行 ${formatDate(r.issue_date)}</span>`:"";
 
   const rawName=signal.cb_name||r.cb_name||blank;
   const parentCode=String(signal.cb_code).slice(0,4);
@@ -230,7 +406,176 @@ function signalCard(signal,records,date){
   </details>`;
 }
 function sortValue(signal,records,date,key){const values=signal.condition_values||{},record=records.get(`${date}|${signal.cb_code}`)||{};if(key==="converted_ratio_pct")return record.balance_ratio===null||record.balance_ratio===undefined?null:100-record.balance_ratio;return key in values?values[key]:record[key]}
-function renderSignals(today,records,date){const rows=[...today];if(sortKey)rows.sort((a,b)=>{const av=sortValue(a,records,date,sortKey),bv=sortValue(b,records,date,sortKey);if(av===null||av===undefined)return bv===null||bv===undefined?0:1;if(bv===null||bv===undefined)return -1;return(sortDirection==="asc"?1:-1)*(av-bv)});$("#signals").innerHTML=rows.length?rows.map(s=>signalCard(s,records,date)).join(""):`<p class="muted">本日沒有新觸發訊號。</p>`;$("#sortDirection").textContent=sortDirection==="asc"?"▲":"▼"}
+const STRATEGY_ORDER = ['A', 'B', 'G', 'C'];
+const STRATEGY_ICONS = { A: '📈', B: '🚀', G: '⏰', C: '💎' };
+
+function renderSignals(today,records,date){
+  if(!today||!today.length){
+    $("#signals").innerHTML=`<p class="muted">本日沒有新觸發訊號。</p>`;
+    return;
+  }
+  const byStrategy=new Map();
+  for(const s of today){
+    const code=s.strategy_code||'OTHER';
+    if(!byStrategy.has(code))byStrategy.set(code,[]);
+    byStrategy.get(code).push(s);
+  }
+  for(const [code,items] of byStrategy.entries()){
+    if(sortKey){
+      items.sort((a,b)=>{
+        const av=sortValue(a,records,date,sortKey),bv=sortValue(b,records,date,sortKey);
+        if(av===null||av===undefined)return bv===null||bv===undefined?0:1;
+        if(bv===null||bv===undefined)return -1;
+        return(sortDirection==="asc"?1:-1)*(av-bv);
+      });
+    }
+  }
+  // 策略順序：A -> B -> G -> (其他) -> C (CB資優生放最後)
+  const sortedCodes=Array.from(byStrategy.keys()).sort((a,b)=>{
+    const getRank=c=>c==='C'?999:(STRATEGY_ORDER.indexOf(c)>=0?STRATEGY_ORDER.indexOf(c):500);
+    return getRank(a)-getRank(b);
+  });
+
+  const html=sortedCodes.map(code=>{
+    const items=byStrategy.get(code)||[];
+    const icon=STRATEGY_ICONS[code]||'📌';
+    const name=names[code]||code;
+    const tagCodeClass=`tag-strat-${code.toLowerCase()}`;
+    const pageUrl=(code==='A'||code==='B'||code==='C'||code==='G')?`strategy-${code.toLowerCase()}.html`:'';
+
+    return `<div class="strategy-group">
+      <div class="strategy-group-header">
+        <div class="strategy-title-wrap">
+          <span class="strategy-tag-code ${tagCodeClass}">${code}</span>
+          <h3 class="strategy-name">${icon} ${name}</h3>
+          <span class="strategy-count-badge">${items.length} 檔</span>
+        </div>
+        ${pageUrl?`<a href="${pageUrl}" class="strategy-link-more" title="前往 ${name} 策略專頁">查看策略專頁 ↗</a>`:''}
+      </div>
+      <div class="strategy-cards-grid">
+        ${items.map(s=>signalCard(s,records,date)).join("")}
+      </div>
+    </div>`;
+  }).join("");
+
+  $("#signals").innerHTML=html;
+  $("#sortDirection").textContent=sortDirection==="asc"?"▲":"▼";
+}
+
+let ranksData = null;
+let rankMode = "vol"; // "vol" 或 "all"
+let currentTradeDate = "";
+
+function isNewlyIssued(issueDate, tradeDate) {
+  if (!issueDate || !tradeDate) return false;
+  const t = Date.parse(`${tradeDate}T00:00:00Z`);
+  const iss = Date.parse(`${issueDate}T00:00:00Z`);
+  if (isNaN(t) || isNaN(iss)) return false;
+  const days = Math.floor((t - iss) / 86400000);
+  return days >= 0 && days <= 30;
+}
+
+function renderRankList(list, type, startRank = 1) {
+  if (!list || !list.length) {
+    return `<div class="rank-item-card muted" style="justify-content:center;padding:18px">今日無相符標的</div>`;
+  }
+  return list.map((cb, i) => {
+    const rank = startRank + i;
+    let badgeClass = '';
+    if (type === 'gainer') {
+      badgeClass = rank <= 3 ? `rank-badge-gainer-${rank}` : 'rank-badge-gainer-sub';
+    } else if (type === 'loser') {
+      badgeClass = rank <= 3 ? `rank-badge-loser-${rank}` : 'rank-badge-loser-sub';
+    } else {
+      badgeClass = rank <= 3 ? `rank-badge-vol-${rank}` : 'rank-badge-vol-sub';
+    }
+    
+    const priceVal = cb.close_price ?? cb.effective_cb_price ?? cb.reference_price;
+    const priceStr = show(priceVal);
+    const diff = cb.price_change;
+    const pct = cb.price_change_pct;
+
+    let chgText = blank;
+    let chgClass = "c-flat";
+    if (diff !== null && diff !== undefined && pct !== null && pct !== undefined) {
+      const signPct = pct > 0 ? `+${show(pct)}%` : (pct < 0 ? `-${show(Math.abs(pct))}%` : `0.00%`);
+      if (diff > 0) {
+        chgText = `▲ ${show(diff)} (${signPct})`;
+        chgClass = "c-up";
+      } else if (diff < 0) {
+        chgText = `▼ ${show(Math.abs(diff))} (${signPct})`;
+        chgClass = "c-down";
+      } else {
+        chgText = `平盤 0.0 (${signPct})`;
+        chgClass = "c-flat";
+      }
+    }
+
+    const vol = cb.volume_lots;
+    const volPart = (vol !== null && vol !== undefined) ? `<span class="rank-price-vol">(${whole.format(vol)}張)</span>` : '';
+    const cvVal = cb.conversion_value;
+    const cvStr = show(cvVal);
+    const isCvHigh = cvVal !== null && cvVal !== undefined && Number(cvVal) >= 100;
+    
+    const prem = cb.premium_rate;
+    const premStr = prem === null || prem === undefined ? blank : `${prem >= 0 ? '+' : ''}${show(prem)}%`;
+    const premClass = prem !== null && prem !== undefined ? (prem >= 0 ? 'c-up' : 'c-down') : '';
+
+    const isSecured = cb.is_secured === '有' || cb.is_secured === '是' || cb.is_secured === '擔保';
+    const securedStr = isSecured ? '擔保' : (cb.is_secured === '無' || cb.is_secured === '否' ? '無擔保' : '');
+    const securedBadge = securedStr ? `<span class="${isSecured ? 'tag-secured' : 'tag-unsecured'}" style="font-size:.72rem;padding:1px 5px">${securedStr}</span>` : '';
+    const remainBadge = cb.balance_ratio !== null && cb.balance_ratio !== undefined ? `<span class="tag-remain" style="font-size:.72rem;padding:1px 5px">剩 ${show(cb.balance_ratio)}%</span>` : '';
+    const newBadge = isNewlyIssued(cb.issue_date, currentTradeDate) ? `<span class="badge-new-issue" title="發行日 ${formatDate(cb.issue_date)}（未滿一個月）">★新發行</span>` : '';
+
+    return `<a href="cb-detail.html?code=${encodeURIComponent(cb.cb_code)}" class="rank-item-card" title="查看 ${cb.cb_name} (${cb.cb_code}) 走勢圖與詳細資訊">
+      <div class="rank-badge ${badgeClass}">${rank}</div>
+      <div class="rank-main">
+        <div class="rank-title-row">
+          <span class="rank-cb-name">${cb.cb_name}</span>
+          <span class="rank-cb-code">${cb.cb_code}</span>
+          ${newBadge}
+          ${securedBadge}
+          ${remainBadge}
+        </div>
+        <div class="rank-metrics-row">
+          <span class="rank-metric"><span class="rm-lbl">轉價</span><strong class="rm-val ${isCvHigh ? 'cv-high' : ''}">${cvStr}</strong></span>
+          <span class="rank-metric"><span class="rm-lbl">溢價</span><strong class="rm-val ${premClass}">${premStr}</strong></span>
+        </div>
+      </div>
+      <div class="rank-price-col">
+        <span class="rank-price">${priceStr}${volPart}</span>
+        <span class="rank-chg ${chgClass}">${chgText}</span>
+      </div>
+    </a>`;
+  }).join("");
+}
+
+function updateRankUI() {
+  if (!ranksData) return;
+  const gainers = rankMode === "vol" ? (ranksData.gainers_vol || []) : (ranksData.gainers_all || []);
+  const losers = rankMode === "vol" ? (ranksData.losers_vol || []) : (ranksData.losers_all || []);
+  const topVol = ranksData.top_volume || [];
+  $("#gainersList").innerHTML = renderRankList(gainers, 'gainer', 1);
+  $("#losersList").innerHTML = renderRankList(losers, 'loser', 1);
+  $("#volumeListPart1").innerHTML = renderRankList(topVol.slice(0, 5), 'vol', 1);
+  $("#volumeListPart2").innerHTML = renderRankList(topVol.slice(5, 10), 'vol', 6);
+}
+
+$("#rankFilterVol").addEventListener("click", () => {
+  if (rankMode === "vol") return;
+  rankMode = "vol";
+  $("#rankFilterVol").classList.add("active");
+  $("#rankFilterAll").classList.remove("active");
+  updateRankUI();
+});
+$("#rankFilterAll").addEventListener("click", () => {
+  if (rankMode === "all") return;
+  rankMode = "all";
+  $("#rankFilterAll").classList.add("active");
+  $("#rankFilterVol").classList.remove("active");
+  updateRankUI();
+});
+
 let auctionDataMap = new Map();
 const loadAuctions = (typeof CBRadarData !== 'undefined' && typeof CBRadarData.auctions === 'function')
   ? CBRadarData.auctions()
@@ -242,6 +587,7 @@ Promise.all([CBRadarData.latest(), loadAuctions]).then(async ([p, aucPayload])=>
     auctionDataMap = new Map(Object.entries(aucPayload.records));
   }
   const rs=p.records||[],ss=p.strategy_signals||[],fs=p.institutional_records||[],as=p.announcements||[],d=p.trade_date,today=ss.filter(r=>r.trade_date===d),gs=today.filter(r=>r.strategy_code==="G"),good=fs.filter(r=>r.trade_date===d&&r.foreign_net_lots>0&&r.trust_net_lots>0&&r.active_etf_change_lots>0),records=new Map(rs.map(r=>[`${d}|${r.cb_code}`,r]));
+  currentTradeDate = d;
   $("#date").textContent=`資料日期：${d||blank}`;
   $("#signalCount").textContent=today.length;
   $("#gCount").textContent=gs.length;
@@ -249,6 +595,62 @@ Promise.all([CBRadarData.latest(), loadAuctions]).then(async ([p, aucPayload])=>
   renderSignals(today,records,d);
   $("#sortKey").addEventListener("change",e=>{sortKey=e.target.value;renderSignals(today,records,d)});
   $("#sortDirection").addEventListener("click",()=>{sortDirection=sortDirection==="asc"?"desc":"asc";renderSignals(today,records,d)});
+
+  // 計算並渲染每日強弱勢與成交量排行
+  async function resolveRanks() {
+    const recs = p.records || [];
+    const hasChange = recs.some(r => r.price_change_pct !== null && r.price_change_pct !== undefined);
+    if (!hasChange) {
+      try {
+        const mf = await CBRadarData.manifest();
+        const dates = mf.market_dates || [];
+        const idx = dates.indexOf(d);
+        const prevDate = idx >= 0 && idx < dates.length - 1 ? dates[idx + 1] : null;
+        if (prevDate) {
+          const prevPayload = await CBRadarData.month("market", prevDate);
+          const prevRecords = (prevPayload && prevPayload.records) ? prevPayload.records.filter(r => r.trade_date === prevDate) : [];
+          const prevMap = new Map();
+          for (const r of prevRecords) {
+            const price = r.effective_cb_price ?? r.close_price ?? r.reference_price;
+            if (price !== null && price !== undefined) prevMap.set(String(r.cb_code), price);
+          }
+          for (const r of recs) {
+            const p1 = r.effective_cb_price ?? r.close_price ?? r.reference_price;
+            const p0 = prevMap.get(String(r.cb_code));
+            if (p1 !== null && p1 !== undefined && p0 !== null && p0 !== undefined && p0 > 0) {
+              const diff = Math.round((p1 - p0) * 100) / 100;
+              const pct = Math.round(((p1 - p0) / p0) * 10000) / 100;
+              r.price_change = diff;
+              r.price_change_pct = pct;
+              cbHistoryCache.set(String(r.cb_code), { diff, pct });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("無法取得前日資料以計算排行：", e);
+      }
+    } else {
+      for (const r of recs) {
+        if (r.price_change !== null && r.price_change !== undefined) {
+          cbHistoryCache.set(String(r.cb_code), { diff: r.price_change, pct: r.price_change_pct });
+        }
+      }
+    }
+
+    const valid = recs.filter(r => r.price_change_pct !== null && r.price_change_pct !== undefined);
+    const withVol = valid.filter(r => (r.volume_lots || 0) > 0);
+    const volSorted = [...recs].filter(r => (r.volume_lots || 0) > 0).sort((a, b) => (b.volume_lots || 0) - (a.volume_lots || 0));
+    return {
+      gainers_vol: (p.market_ranks && p.market_ranks.gainers_vol) || [...withVol].sort((a, b) => b.price_change_pct - a.price_change_pct).slice(0, 5),
+      gainers_all: (p.market_ranks && p.market_ranks.gainers_all) || [...valid].sort((a, b) => b.price_change_pct - a.price_change_pct).slice(0, 5),
+      losers_vol: (p.market_ranks && p.market_ranks.losers_vol) || [...withVol].sort((a, b) => a.price_change_pct - b.price_change_pct).slice(0, 5),
+      losers_all: (p.market_ranks && p.market_ranks.losers_all) || [...valid].sort((a, b) => a.price_change_pct - b.price_change_pct).slice(0, 5),
+      top_volume: (p.market_ranks && p.market_ranks.top_volume) || volSorted.slice(0, 10),
+    };
+  }
+
+  ranksData = await resolveRanks();
+  updateRankUI();
   function renderAnnouncements(items){
     if(!items||!items.length)return `<div class="notice muted">今日無重要 CB 相關訊息</div>`;
     return items.map(a=>{
