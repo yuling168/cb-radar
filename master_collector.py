@@ -1179,22 +1179,24 @@ def _get_mops_snapshot(
     request_counts: RequestCounts | None = None,
 ) -> dict[str, object]:
     absolute = urljoin(MOPS_BASE_URL, url)
-    last_error: MasterFormatError | None = None
+    last_error: Exception | None = None
     for attempt in range(5):
         time.sleep(0.15)
         if request_counts is not None:
             request_counts.mops_detail += 1
-        response = session.get(absolute, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        response.encoding = "utf-8"
-        if "查無債券基本資料" in _compact_html(response.text):
-            raise MopsNoDataError("MOPS explicitly reports no bond data")
         try:
+            response = session.get(absolute, timeout=HTTP_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            response.encoding = "utf-8"
+            if "查無債券基本資料" in _compact_html(response.text):
+                raise MopsNoDataError("MOPS explicitly reports no bond data")
             return parse_mops_snapshot(response.text, absolute)
-        except MasterFormatError as exc:
+        except MopsNoDataError:
+            raise
+        except (requests.RequestException, MasterFormatError) as exc:
             last_error = exc
             if attempt < 4:
-                time.sleep(attempt + 1)
+                time.sleep(min(2 ** (attempt + 1), 8))
     assert last_error is not None
     raise last_error
 
@@ -1209,15 +1211,22 @@ def _latest_fallback_mops_snapshot(
     issue_month = str(master["issue_date"])[:7]
     while year_month >= issue_month:
         url = _fallback_mops_url(master, year_month)
-        if request_counts is not None:
-            request_counts.mops_detail += 1
-        response = session.get(url, timeout=HTTP_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        response.encoding = "utf-8"
-        text = _compact_html(response.text)
-        if "查無債券基本資料" not in text and text:
-            snapshot = parse_mops_snapshot(response.text, url)
-            return url, snapshot
+        for attempt in range(3):
+            if request_counts is not None and attempt == 0:
+                request_counts.mops_detail += 1
+            try:
+                response = session.get(url, timeout=HTTP_TIMEOUT_SECONDS)
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                text = _compact_html(response.text)
+                if "查無債券基本資料" not in text and text:
+                    snapshot = parse_mops_snapshot(response.text, url)
+                    return url, snapshot
+                break
+            except requests.RequestException:
+                if attempt == 2:
+                    raise
+                time.sleep(attempt + 1)
         year_month = _month_before(year_month)
     raise MasterFormatError(
         f"No complete official MOPS snapshot found for active TPEx CB {master['cb_code']}"
@@ -1251,23 +1260,29 @@ def _get_mops_announcements(
     if cached is None:
         audit_url = f"{MOPS_CB_ANNOUNCEMENT_URL}?{urlencode(parameters)}"
         content = ""
+        last_req_exc: Exception | None = None
         for attempt in range(6):
             time.sleep(0.15)
             if request_counts is not None:
                 request_counts.mops_announcement += 1
-            response = session.post(
-                MOPS_CB_ANNOUNCEMENT_URL,
-                data=parameters,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2)",
-                },
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            response.encoding = "utf-8"
-            content = response.text
-            if "轉換公司債轉換價格變更公告" in _compact_html(content):
-                break
+            try:
+                response = session.post(
+                    MOPS_CB_ANNOUNCEMENT_URL,
+                    data=parameters,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; cb-radar/0.2)",
+                    },
+                    timeout=HTTP_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                response.encoding = "utf-8"
+                content = response.text
+                if "轉換公司債轉換價格變更公告" in _compact_html(content):
+                    break
+            except requests.RequestException as exc:
+                last_req_exc = exc
+                if attempt == 5:
+                    raise
             if attempt < 5:
                 time.sleep(min(2 ** (attempt + 1), 16))
         cached = (content, audit_url)
@@ -1330,8 +1345,15 @@ def _get_mops_rules_events(
     cb_code: str,
     collected_at: str,
 ) -> list[dict[str, object]]:
-    response = session.get(rules_url, timeout=HTTP_TIMEOUT_SECONDS)
-    response.raise_for_status()
+    for attempt in range(3):
+        try:
+            response = session.get(rules_url, timeout=HTTP_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            break
+        except requests.RequestException:
+            if attempt == 2:
+                raise
+            time.sleep(min(2 ** (attempt + 1), 8))
     if not response.content.startswith(b"%PDF"):
         raise MasterFormatError(f"MOPS conversion terms are not a PDF for {cb_code}")
     return parse_mops_rules_conversion_events(

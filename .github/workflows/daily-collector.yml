@@ -84,10 +84,23 @@ jobs:
         # This collector runs TWSE and TPEx independently.  It records every
         # failed attempt in announcement_fetch, retains any successful market,
         # then exits non-zero if either market ultimately fails.
-        run: >
-          python announcement_collector.py
-          --db data/cb_history.db
-          --market all
+        shell: bash
+        run: |
+          set -o pipefail
+          success=0
+          for attempt in 1 2 3; do
+            echo "::notice::Attempt $attempt of 3: running announcement_collector.py"
+            if python announcement_collector.py --db data/cb_history.db --market all; then
+              success=1
+              break
+            fi
+            echo "::warning::announcement_collector.py failed on attempt $attempt, retrying in 20s..."
+            sleep 20
+          done
+          if [[ $success -ne 1 ]]; then
+            echo "announcement_collector.py failed after 3 attempts" >&2
+            exit 1
+          fi
 
       - name: Run CB master collector
         id: master
@@ -95,8 +108,22 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python master_collector.py --database data/cb_history.db --date "${{ steps.collector.outputs.trade_date }}" 2>&1 | tee phase2-modules.log
-          exit "${PIPESTATUS[0]}"
+          success=0
+          for attempt in 1 2 3; do
+            echo "::notice::Attempt $attempt of 3: running master_collector.py"
+            python master_collector.py --database data/cb_history.db --date "${{ steps.collector.outputs.trade_date }}" 2>&1 | tee phase2-modules.log
+            status="${PIPESTATUS[0]}"
+            if [[ "$status" -eq 0 ]]; then
+              success=1
+              break
+            fi
+            echo "::warning::master_collector.py exited with $status on attempt $attempt, retrying in 30s..."
+            sleep 30
+          done
+          if [[ $success -ne 1 ]]; then
+            echo "master_collector.py failed after 3 attempts" >&2
+            exit 1
+          fi
 
       - name: Refresh strict daily CB parent mapping
         if: steps.collector.outputs.trade_date != ''
