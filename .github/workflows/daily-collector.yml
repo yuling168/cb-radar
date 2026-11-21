@@ -1,10 +1,11 @@
 name: CB Daily Collector
 
 on:
-  schedule:
-    # 台灣時間 15:50 (UTC 07:50) 與 16:30 (UTC 08:30) 備援，確保每日 17:30 前完成資料發布
-    - cron: "50 7 * * 1-5"
-    - cron: "30 8 * * 1-5"
+  # 已改由外部 cron-job.org 透過 workflow_dispatch 準時觸發，停用內建 schedule 避免重複執行
+  # schedule:
+  #   # 台灣時間 15:50 (UTC 07:50) 與 16:30 (UTC 08:30) 備援，確保每日 17:30 前完成資料發布
+  #   - cron: "50 7 * * 1-5"
+  #   - cron: "30 8 * * 1-5"
   workflow_dispatch:
     inputs:
       trade_date:

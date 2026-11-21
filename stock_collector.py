@@ -450,6 +450,7 @@ def _collect_stock_daily_market_impl(
     write_coverage: bool = True,
     progress=None,
     deadline_monotonic: float | None = None,
+    allow_missing_stocks: bool = True,
 ) -> dict[str, object]:
     if verified_mappings is None:
         with connect(db_path) as connection:
@@ -533,10 +534,10 @@ def _collect_stock_daily_market_impl(
         # is TPEx's formal market-volume source.
         twse_records = fetch_and_parse("TWSE MI_INDEX", lambda: fetch_twse_market(http, trade_date), lambda p: parse_twse_market(p, trade_date, target_codes))
         tpex_records = fetch_and_parse("TPEx dailyQuotes", lambda: fetch_tpex_daily_quotes(http, trade_date), lambda p: parse_tpex_market(p, trade_date, target_codes))
-        twse_intraday = fetch_and_parse("TWSE TWTC7U", lambda: _fetch_twse_component(http, TWSE_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_twse_volume_component(p, trade_date, target_codes))
+        twse_intraday = fetch_and_parse("TWSE TWTC7U", lambda: _fetch_twse_component(http, TWSE_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_twse_volume_component(p, trade_date, target_codes)) if trade_date >= date(2020, 10, 26) else {code: 0 for code in target_codes}
         twse_post_odd = fetch_and_parse("TWSE TWT53U", lambda: _fetch_twse_component(http, TWSE_POST_ODD_LOT_URL, trade_date), lambda p: parse_twse_volume_component(p, trade_date, target_codes))
         twse_fixed = fetch_and_parse("TWSE BFT41U", lambda: _fetch_twse_component(http, TWSE_FIXED_PRICE_URL, trade_date, fixed_price=True), lambda p: parse_twse_volume_component(p, trade_date, target_codes, fixed_price=True))
-        tpex_intraday = fetch_and_parse("TPEx oddQuote", lambda: _fetch_tpex_component(http, TPEX_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
+        tpex_intraday = fetch_and_parse("TPEx oddQuote", lambda: _fetch_tpex_component(http, TPEX_INTRADAY_ODD_LOT_URL, trade_date), lambda p: parse_tpex_volume_component(p, trade_date, target_codes)) if trade_date >= date(2020, 10, 26) else {code: 0 for code in target_codes}
         tpex_post_odd = fetch_and_parse("TPEx odd", lambda: _fetch_tpex_component(http, TPEX_POST_ODD_LOT_URL, trade_date, post_odd=True), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
         tpex_fixed = fetch_and_parse("TPEx fixPricing", lambda: _fetch_tpex_component(http, TPEX_FIXED_PRICE_URL, trade_date), lambda p: parse_tpex_volume_component(p, trade_date, target_codes, fixed_price=True))
         tpex_regular = fetch_and_parse("TPEx otc", lambda: _fetch_tpex_component(http, TPEX_DAILY_MARKET_URL, trade_date, otc=True), lambda p: parse_tpex_volume_component(p, trade_date, target_codes))
@@ -595,7 +596,7 @@ def _collect_stock_daily_market_impl(
                 }
                 for stock_code in sorted(missing_codes)
                 ])
-        if unverified_missing_codes:
+        if unverified_missing_codes and not allow_missing_stocks:
             raise StockMarketFormatError(
                 f"Parent stocks missing from official daily markets: {sorted(unverified_missing_codes)}"
             )
@@ -708,6 +709,7 @@ def collect_stock_daily_market(
     verified_mappings: Mapping[str, Mapping[str, str]] | None = None,
     suspension_verifier=verify_twse_suspensions, write_coverage: bool = True,
     progress=None, deadline_monotonic: float | None = None,
+    allow_missing_stocks: bool = True,
 ) -> dict[str, object]:
     """Collect one day, closing only a session this function created."""
     owns_session = session is None
@@ -718,6 +720,7 @@ def collect_stock_daily_market(
             verified_mappings=verified_mappings, suspension_verifier=suspension_verifier,
             write_coverage=write_coverage, progress=progress,
             deadline_monotonic=deadline_monotonic,
+            allow_missing_stocks=allow_missing_stocks,
         )
     finally:
         if owns_session:
